@@ -9,3 +9,9 @@ __pycache__/
 # Base de datos local
 database/*.db
 database/*.sqlite3
+
+# Variables de entorno
+.env
+
+
+test_db.py

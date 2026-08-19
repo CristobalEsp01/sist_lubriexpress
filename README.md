@@ -7,6 +7,7 @@ Sistema de escritorio local para la gestión integral de órdenes de trabajo, in
 
 * Python 3.8 o superior
 * Git
+* Postgresql (Instalado y corriendo localmente)
 
 ## Configuración del Entorno de Desarrollo
 
@@ -14,8 +15,8 @@ Sigue estos pasos para inicializar y levantar el entorno de trabajo en tu máqui
 
 ### 1. Clonar el repositorio
 ```bash
-git clone <URL_DEL_REPOSITORIO>
-cd lubri-express-sys
+git clone <https://github.com/CristobalEsp01/sist_lubriexpress.git>
+cd sist_lubriexpress
 ```
 
 ### 2. Crear el entorno virtual
@@ -53,30 +54,48 @@ Con el entorno virtual activado, instala los paquetes necesarios para el proyect
 pip install -r requirements.txt
 ```
 
+### 5. Configuracion de la Base de Datos (Postgresql)
+El sistema utiliza PostgreSQL para asegurar la integridad transaccional del Kardex. Para levantar la base de datos:
+1. Abre tu gestos de base de datos nativo (pgAdmin4 o DBeaver)
+2. Crea una nueva base de datos llamada exactamente "lubriexpress"
+3. Abre una hoja de consulta (SQL Editor o Query Tool) apuntando especificamente a esa nueva base de datos.
+4. Abre el archivo ```database/schema_lubriexpress.sql```, copia todo su contenido y ejecutalo. Esto generara la estructura completa de tablas, restricciones (contraints) y los triggers automaticos de inventario.
+
+### 6. Variables de entorno (.env)
+Las credenciales de conexion no estan escritas en el codigo por seguridad.
+
+1. En la raiz del proyecto, ubicar el archivo de plantilla ```.env.example```
+2. Duplicar el archivo y renombrar la copia exactamente como ```.env``` (este archivo esta incluido en el ```.gitignore```)
+3. Abrir el archivo ```.env``` y reemplazar la contrasenia de prueba por la clave real de tu instalacion local de PSQL.
+```bash
+DATABASE_URL=postgresql+psycopg2://postgres:TU_CONTRASEÑA@localhost:5432/lubriexpress
+```
+
 ### Estructura del Proyecto
 ```text
 sist_lubriexpress/
 ├── src/
-│   └── main.py                  # Código principal de la aplicación
+│   ├── database.py              # Motor de conexión y fábrica de sesiones
+│   ├── models.py                # Modelos ORM (SQLAlchemy) mapeados a la BD
 ├── database/
-│   ├── migrations/              # Scripts de migración y estructura de BD
-│   └── lubriexpress.db         # Base de datos local (ignorada en Git)
+│   └── schema_lubriexpress.sql  # Script oficial de creación de tablas y triggers
 ├── docs/
 │   ├── requirements/            # Levantamiento de requerimientos
-│   └── manuals/                 # Manuales y documentación técnica
-├── README.md                    # Documentación del proyecto
-├── requirements.txt             # Dependencias del proyecto
-├── .gitignore                   # Archivos ignorados por Git
-├── venv/                        # Entorno virtual local (no se sube)
-├── .git/                        # Metadatos de Git
-└──main.py                  # Código principal de la aplicación
+│   └── manuals/                 # Manuales y documentación técnica[cite: 2]
+├── .env.example                 # Plantilla de variables de entorno (Sí se sube a Git)
+├── .env                         # Credenciales locales (NO se sube a Git)
+├── main.py                       # Código principal de la aplicación
+├── README.md                    # Documentación del proyecto[cite: 2]
+├── requirements.txt             # Dependencias del proyecto[cite: 2]
+├── .gitignore                   # Archivos ignorados por Git[cite: 2]
+└── venv/                        # Entorno virtual local (no se sube)[cite: 2]
 ```
 
 ### Ejecución
 Para iniciar la aplicación en modo desarrollo, asegúrate de tener el entorno virtual activado y ejecuta:
 
 ```bash
-python src/main.py
+python main.py
 ```
 
 ### Consideraciones para el Control de Versiones
