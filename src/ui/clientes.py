@@ -1,0 +1,383 @@
+"""Mantenedor de Clientes y sus vehículos."""
+import re
+
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel,
+    QLineEdit, QMessageBox, QPushButton, QSpinBox, QSplitter, QTableWidgetItem,
+    QVBoxLayout, QWidget,
+)
+from sqlalchemy import func, or_, select
+from sqlalchemy.exc import IntegrityError
+
+from ..database import SessionLocal
+from ..models import Cliente, Vehiculo
+from ..rut import es_valido, formatear
+from .comunes import ItemNumerico, crear_tabla, reordenar
+
+COLUMNAS_CLIENTE = ["RUT", "Nombre", "Tipo", "Teléfono", "Vehículos"]
+COLUMNAS_VEHICULO = ["Patente", "Marca", "Modelo", "Año", "Combustible", "Transmisión"]
+# Sugerencias, no restricciones: el esquema acepta texto libre y los combos son editables.
+COMBUSTIBLES = ["", "Bencina", "Diésel", "Eléctrico", "Híbrido", "GLP"]
+TRANSMISIONES = ["", "Manual", "Automática", "CVT"]
+TRACCIONES = ["", "4x2", "4x4", "AWD"]
+PATENTE = re.compile(r"^([A-Z]{2}\d{4}|[A-Z]{4}\d{2})$")
+
+
+class FormularioCliente(QDialog):
+    """Alta y edición de un cliente."""
+
+    def __init__(self, parent=None, cliente_id: int | None = None):
+        super().__init__(parent)
+        self.cliente_id = cliente_id
+        self.setWindowTitle("Nuevo cliente" if cliente_id is None else "Editar cliente")
+        self.setMinimumWidth(380)
+
+        self.rut = QLineEdit(placeholderText="12.345.678-5")
+        self.nombre = QLineEdit()
+        self.tipo = QComboBox()
+        self.tipo.addItems(["PERSONA", "EMPRESA"])
+        self.telefono = QLineEdit(placeholderText="+56 9 1234 5678")
+
+        form = QFormLayout()
+        form.addRow("RUT *", self.rut)
+        form.addRow("Nombre / Razón social *", self.nombre)
+        form.addRow("Tipo", self.tipo)
+        form.addRow("Teléfono", self.telefono)
+
+        botones = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        botones.accepted.connect(self.accept)
+        botones.rejected.connect(self.reject)
+
+        layout = QVBoxLayout(self)
+        layout.addLayout(form)
+        layout.addWidget(botones)
+
+        if cliente_id is not None:
+            self._cargar()
+
+    def _cargar(self) -> None:
+        with SessionLocal() as db:
+            c = db.get(Cliente, self.cliente_id)
+            self.rut.setText(c.rut)
+            self.nombre.setText(c.nombre_completo)
+            self.tipo.setCurrentText(c.tipo_cliente)
+            self.telefono.setText(c.telefono or "")
+
+    def accept(self) -> None:
+        if not es_valido(self.rut.text()):
+            QMessageBox.warning(
+                self, "RUT inválido",
+                "El dígito verificador no corresponde. Revisa el RUT antes de guardar.",
+            )
+            return
+        if not self.nombre.text().strip():
+            QMessageBox.warning(self, "Falta el nombre", "El cliente necesita un nombre.")
+            return
+        if self.guardar():
+            super().accept()
+
+    def guardar(self) -> bool:
+        with SessionLocal() as db:
+            cliente = db.get(Cliente, self.cliente_id) if self.cliente_id else Cliente()
+            cliente.rut = formatear(self.rut.text())
+            cliente.nombre_completo = self.nombre.text().strip()
+            cliente.tipo_cliente = self.tipo.currentText()
+            cliente.telefono = self.telefono.text().strip() or None
+            if self.cliente_id is None:
+                db.add(cliente)
+            try:
+                db.commit()
+            except IntegrityError:
+                db.rollback()
+                QMessageBox.warning(
+                    self, "RUT repetido",
+                    f"Ya existe un cliente con el RUT {formatear(self.rut.text())}.",
+                )
+                return False
+            self.cliente_id = cliente.id
+        return True
+
+
+
+class FormularioVehiculo(QDialog):
+    """Alta y edición de un vehículo, siempre colgando de un cliente."""
+
+    def __init__(self, parent=None, cliente_id: int | None = None, vehiculo_id: int | None = None):
+        super().__init__(parent)
+        self.cliente_id = cliente_id
+        self.vehiculo_id = vehiculo_id
+        self.setWindowTitle("Nuevo vehículo" if vehiculo_id is None else "Editar vehículo")
+        self.setMinimumWidth(380)
+
+        self.patente = QLineEdit(placeholderText="BBBB12")
+        self.marca = QLineEdit()
+        self.modelo = QLineEdit()
+        self.anio = QSpinBox(minimum=1899, maximum=2100)
+        self.anio.setSpecialValueText("Sin dato")
+        self.color = QLineEdit()
+        self.combustible = self._combo(COMBUSTIBLES)
+        self.transmision = self._combo(TRANSMISIONES)
+        self.traccion = self._combo(TRACCIONES)
+        self.cilindrada = QLineEdit(placeholderText="1.6")
+
+        form = QFormLayout()
+        form.addRow("Patente *", self.patente)
+        form.addRow("Marca", self.marca)
+        form.addRow("Modelo", self.modelo)
+        form.addRow("Año", self.anio)
+        form.addRow("Color", self.color)
+        form.addRow("Combustible", self.combustible)
+        form.addRow("Transmisión", self.transmision)
+        form.addRow("Tracción", self.traccion)
+        form.addRow("Cilindrada", self.cilindrada)
+
+        botones = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        botones.accepted.connect(self.accept)
+        botones.rejected.connect(self.reject)
+
+        layout = QVBoxLayout(self)
+        layout.addLayout(form)
+        layout.addWidget(botones)
+
+        if vehiculo_id is not None:
+            self._cargar()
+
+    @staticmethod
+    def _combo(opciones: list[str]) -> QComboBox:
+        combo = QComboBox()
+        combo.setEditable(True)
+        combo.addItems(opciones)
+        return combo
+
+    def _cargar(self) -> None:
+        with SessionLocal() as db:
+            v = db.get(Vehiculo, self.vehiculo_id)
+            self.cliente_id = v.cliente_id
+            self.patente.setText(v.patente)
+            self.marca.setText(v.marca or "")
+            self.modelo.setText(v.modelo or "")
+            self.anio.setValue(v.anio_fabricacion or 1899)
+            self.color.setText(v.color or "")
+            self.combustible.setCurrentText(v.combustible or "")
+            self.transmision.setCurrentText(v.transmision or "")
+            self.traccion.setCurrentText(v.traccion or "")
+            self.cilindrada.setText(v.cilindrada or "")
+
+    def patente_normalizada(self) -> str:
+        return re.sub(r"[.\-\s]", "", self.patente.text()).upper()
+
+    def accept(self) -> None:
+        patente = self.patente_normalizada()
+        if not patente:
+            QMessageBox.warning(self, "Falta la patente", "El vehículo necesita una patente.")
+            return
+        if not PATENTE.match(patente):
+            confirmar = QMessageBox.question(
+                self, "Patente con formato raro",
+                f"'{patente}' no parece una patente chilena (BBBB12 o AA1234). ¿Guardar igual?",
+            )
+            if confirmar != QMessageBox.Yes:
+                return
+        if self.guardar(patente):
+            super().accept()
+
+    def guardar(self, patente: str) -> bool:
+        with SessionLocal() as db:
+            vehiculo = db.get(Vehiculo, self.vehiculo_id) if self.vehiculo_id else Vehiculo()
+            vehiculo.cliente_id = self.cliente_id
+            vehiculo.patente = patente
+            vehiculo.marca = self.marca.text().strip() or None
+            vehiculo.modelo = self.modelo.text().strip() or None
+            vehiculo.anio_fabricacion = self.anio.value() if self.anio.value() > 1899 else None
+            vehiculo.color = self.color.text().strip() or None
+            vehiculo.combustible = self.combustible.currentText().strip() or None
+            vehiculo.transmision = self.transmision.currentText().strip() or None
+            vehiculo.traccion = self.traccion.currentText().strip() or None
+            vehiculo.cilindrada = self.cilindrada.text().strip() or None
+            if self.vehiculo_id is None:
+                db.add(vehiculo)
+            try:
+                db.commit()
+            except IntegrityError:
+                db.rollback()
+                QMessageBox.warning(
+                    self, "Patente repetida",
+                    f"La patente {patente} ya está registrada en otro cliente.",
+                )
+                return False
+            self.vehiculo_id = vehiculo.id
+        return True
+
+
+
+class ClientesWidget(QWidget):
+    """Clientes arriba, vehículos del cliente seleccionado abajo."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        self.busqueda = QLineEdit(placeholderText="Buscar por RUT o nombre…")
+        self.busqueda.setClearButtonEnabled(True)
+        self.busqueda.textChanged.connect(self.recargar)
+
+        boton_nuevo = QPushButton("Nuevo cliente")
+        boton_nuevo.clicked.connect(self.nuevo_cliente)
+        boton_editar = QPushButton("Editar cliente")
+        boton_editar.clicked.connect(self.editar_cliente)
+
+        self.tabla = crear_tabla(COLUMNAS_CLIENTE, ancha=1, orden=1)  # ordena por Nombre
+        self.tabla.itemSelectionChanged.connect(self.recargar_vehiculos)
+        self.tabla.doubleClicked.connect(self.editar_cliente)
+
+        self.tabla_vehiculos = crear_tabla(COLUMNAS_VEHICULO, ancha=2, orden=0)  # ordena por Patente
+        self.tabla_vehiculos.doubleClicked.connect(self.editar_vehiculo)
+
+        self.titulo_vehiculos = QLabel("Vehículos")
+        self.boton_nuevo_vehiculo = QPushButton("Agregar vehículo")
+        self.boton_nuevo_vehiculo.clicked.connect(self.nuevo_vehiculo)
+        self.boton_editar_vehiculo = QPushButton("Editar vehículo")
+        self.boton_editar_vehiculo.clicked.connect(self.editar_vehiculo)
+
+        self.resumen = QLabel()
+
+        barra = QHBoxLayout()
+        barra.addWidget(self.busqueda, 1)
+        barra.addWidget(boton_nuevo)
+        barra.addWidget(boton_editar)
+
+        barra_vehiculos = QHBoxLayout()
+        barra_vehiculos.addWidget(self.titulo_vehiculos, 1)
+        barra_vehiculos.addWidget(self.boton_nuevo_vehiculo)
+        barra_vehiculos.addWidget(self.boton_editar_vehiculo)
+
+        arriba = QWidget()
+        layout_arriba = QVBoxLayout(arriba)
+        layout_arriba.setContentsMargins(0, 0, 0, 0)
+        layout_arriba.addLayout(barra)
+        layout_arriba.addWidget(self.tabla)
+
+        abajo = QWidget()
+        layout_abajo = QVBoxLayout(abajo)
+        layout_abajo.setContentsMargins(0, 0, 0, 0)
+        layout_abajo.addLayout(barra_vehiculos)
+        layout_abajo.addWidget(self.tabla_vehiculos)
+
+        division = QSplitter(Qt.Vertical)
+        division.addWidget(arriba)
+        division.addWidget(abajo)
+        division.setSizes([380, 220])
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(division)
+        layout.addWidget(self.resumen)
+
+        self.recargar()
+
+    def recargar(self) -> None:
+        texto = self.busqueda.text().strip()
+        consulta = (
+            select(Cliente, func.count(Vehiculo.id))
+            .outerjoin(Vehiculo)
+            .group_by(Cliente.id)
+            .order_by(Cliente.nombre_completo)
+        )
+        if texto:
+            patron = f"%{texto}%"
+            consulta = consulta.where(
+                or_(Cliente.rut.ilike(patron), Cliente.nombre_completo.ilike(patron))
+            )
+
+        with SessionLocal() as db:
+            filas = [
+                (c.id, c.rut, c.nombre_completo, c.tipo_cliente, c.telefono or "", n)
+                for c, n in db.execute(consulta).all()
+            ]
+
+        self.tabla.setSortingEnabled(False)
+        self.tabla.setRowCount(len(filas))
+        for fila, (cid, rut, nombre, tipo, telefono, vehiculos) in enumerate(filas):
+            for columna, texto_celda in enumerate([rut, nombre, tipo.capitalize(), telefono]):
+                item = QTableWidgetItem(texto_celda)
+                if columna == 0:
+                    item.setData(Qt.UserRole, cid)
+                self.tabla.setItem(fila, columna, item)
+            self.tabla.setItem(fila, 4, ItemNumerico(str(vehiculos), vehiculos))
+        reordenar(self.tabla)
+
+        self.resumen.setText(f"{len(filas)} cliente(s)")
+        self.recargar_vehiculos()
+
+    def cliente_seleccionado(self) -> int | None:
+        fila = self.tabla.currentRow()
+        if fila < 0 or not self.tabla.item(fila, 0):
+            return None
+        return self.tabla.item(fila, 0).data(Qt.UserRole)
+
+    def vehiculo_seleccionado(self) -> int | None:
+        fila = self.tabla_vehiculos.currentRow()
+        if fila < 0 or not self.tabla_vehiculos.item(fila, 0):
+            return None
+        return self.tabla_vehiculos.item(fila, 0).data(Qt.UserRole)
+
+    def recargar_vehiculos(self) -> None:
+        cliente_id = self.cliente_seleccionado()
+        hay_cliente = cliente_id is not None
+        self.boton_nuevo_vehiculo.setEnabled(hay_cliente)
+        self.boton_editar_vehiculo.setEnabled(hay_cliente)
+
+        if not hay_cliente:
+            self.titulo_vehiculos.setText("Vehículos — selecciona un cliente")
+            self.tabla_vehiculos.setRowCount(0)
+            return
+
+        with SessionLocal() as db:
+            cliente = db.get(Cliente, cliente_id)
+            nombre = cliente.nombre_completo
+            filas = [
+                (v.id, v.patente, v.marca or "", v.modelo or "",
+                 str(v.anio_fabricacion or ""), v.combustible or "", v.transmision or "")
+                for v in db.scalars(
+                    select(Vehiculo).where(Vehiculo.cliente_id == cliente_id).order_by(Vehiculo.patente)
+                )
+            ]
+
+        self.titulo_vehiculos.setText(f"Vehículos de {nombre} ({len(filas)})")
+        self.tabla_vehiculos.setSortingEnabled(False)
+        self.tabla_vehiculos.setRowCount(len(filas))
+        for fila, (vid, *valores) in enumerate(filas):
+            for columna, texto in enumerate(valores):
+                item = QTableWidgetItem(texto)
+                if columna == 0:
+                    item.setData(Qt.UserRole, vid)
+                self.tabla_vehiculos.setItem(fila, columna, item)
+        reordenar(self.tabla_vehiculos)
+
+    def nuevo_cliente(self) -> None:
+        if FormularioCliente(self).exec():
+            self.recargar()
+
+    def editar_cliente(self) -> None:
+        cliente_id = self.cliente_seleccionado()
+        if cliente_id is None:
+            QMessageBox.information(self, "Sin selección", "Elige un cliente de la lista.")
+            return
+        if FormularioCliente(self, cliente_id).exec():
+            self.recargar()
+
+    def nuevo_vehiculo(self) -> None:
+        cliente_id = self.cliente_seleccionado()
+        if cliente_id is None:
+            return
+        if FormularioVehiculo(self, cliente_id=cliente_id).exec():
+            self.recargar()
+
+    def editar_vehiculo(self) -> None:
+        vehiculo_id = self.vehiculo_seleccionado()
+        if vehiculo_id is None:
+            QMessageBox.information(self, "Sin selección", "Elige un vehículo de la lista.")
+            return
+        if FormularioVehiculo(self, vehiculo_id=vehiculo_id).exec():
+            self.recargar()
+
+

@@ -4,10 +4,14 @@ Cada mantenedor vive en su módulo; acá solo se arma la ventana con pestañas.
 """
 from PySide6.QtWidgets import QMainWindow, QTabWidget
 
+from .clientes import ClientesWidget, FormularioCliente, FormularioVehiculo
 from .comunes import ItemNumerico, clp
 from .inventario import FormularioProducto, InventarioWidget
 
-__all__ = ["FormularioProducto", "InventarioWidget", "ItemNumerico", "VentanaPrincipal", "clp"]
+__all__ = [
+    "ClientesWidget", "FormularioCliente", "FormularioProducto", "FormularioVehiculo",
+    "InventarioWidget", "ItemNumerico", "VentanaPrincipal", "clp",
+]
 
 
 class VentanaPrincipal(QMainWindow):
@@ -18,4 +22,5 @@ class VentanaPrincipal(QMainWindow):
 
         self.pestanias = QTabWidget()
         self.pestanias.addTab(InventarioWidget(self), "Inventario")
+        self.pestanias.addTab(ClientesWidget(self), "Clientes")
         self.setCentralWidget(self.pestanias)
