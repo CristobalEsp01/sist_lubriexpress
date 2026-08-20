@@ -15,3 +15,6 @@ database/*.sqlite3
 
 
 test_db.py
+
+.venv/
+.pytest_cache/
