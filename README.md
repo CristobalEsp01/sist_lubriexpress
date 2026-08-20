@@ -1,104 +1,131 @@
+# Sistema de Gestión — Lubri-Express
 
-# Sistema de Gestión - Lubri-Express
+Aplicación de escritorio para la gestión de taller, inventario (Kardex) y ventas de
+Lubri-Express (Inversiones Tres Puntos SpA). Corre localmente sobre PostgreSQL.
 
-Sistema de escritorio local para la gestión integral de órdenes de trabajo, inventario (Kardex) y ventas de mostrador del taller mecánico Lubri-Express.
+## Estado actual
 
-## Requisitos Previos
+| Módulo | Estado |
+|---|---|
+| Esquema de base de datos y triggers de Kardex | Funcionando |
+| Mantenedor de Inventario | Funcionando |
+| Mantenedor de Clientes y Vehículos | Funcionando |
+| Login y control de acceso por rol | Pendiente |
+| Ventas de mostrador | Pendiente |
+| Órdenes de trabajo | Pendiente |
+| Carga masiva desde Excel | Pendiente |
+| Exportación a PDF y reportería | Pendiente |
 
-* Python 3.8 o superior
-* Git
-* Postgresql (Instalado y corriendo localmente)
+Las entradas de mercadería y los ajustes de inventario ya funcionan a nivel de base de
+datos, pero todavía no tienen pantalla: requieren un usuario autenticado, porque cada
+movimiento del Kardex queda firmado por quien lo hizo.
 
-## Configuración del Entorno de Desarrollo
+## Requisitos
 
-Sigue estos pasos para inicializar y levantar el entorno de trabajo en tu máquina local:
+- Python 3.10 o superior
+- Docker (para la base de datos)
+- Git
 
-### 1. Clonar el repositorio
+## Instalación
+
+### 1. Clonar y crear el entorno virtual
+
 ```bash
-git clone <https://github.com/CristobalEsp01/sist_lubriexpress.git>
+git clone https://github.com/CristobalEsp01/sist_lubriexpress.git
 cd sist_lubriexpress
+python3 -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -r requirements-dev.txt
 ```
 
-### 2. Crear el entorno virtual
-Es indispensable utilizar un entorno virtual aislado para no generar conflictos con las librerías globales del sistema.
+`requirements.txt` trae solo lo que necesita la aplicación para correr.
+`requirements-dev.txt` agrega las herramientas de pruebas.
+
+### 2. Levantar PostgreSQL
 
 ```bash
-python3 -m venv venv
-````
+docker run -d --name lubriexpress-db \
+  -e POSTGRES_PASSWORD=lubriexpress \
+  -e POSTGRES_DB=lubriexpress \
+  -p 127.0.0.1:55432:5432 \
+  -v lubriexpress-pgdata:/var/lib/postgresql/data \
+  postgres:16
+```
 
-### 3. Activar el entorno virtual
-Dependiendo de tu sistema operativo, ejecuta el comando correspondiente:
+Puerto **55432** para no chocar con un PostgreSQL instalado en la máquina, y atado a
+`127.0.0.1` para que la base no quede expuesta en la red local.
 
-En Ubuntu/Linux o macOS:
+En los arranques siguientes basta con `docker start lubriexpress-db`.
+
+### 3. Cargar el esquema
 
 ```bash
-source venv/bin/activate
-```
-En Windows (Command Prompt):
-
-```DOS
-venv\Scripts\activate.bat
+docker exec -i lubriexpress-db psql -U postgres -d lubriexpress -v ON_ERROR_STOP=1 \
+  < database/schema_lubriexpress.sql
 ```
 
-En Windows (PowerShell):
+El `-i` no es opcional: sin él, `docker exec` no pasa la entrada estándar, psql no
+recibe nada y **termina con éxito sin haber ejecutado una sola línea**.
 
-```PowerShell
-venv\Scripts\Activate.ps1
-````
-(Sabrás que el entorno está activo porque aparecerá (venv) al inicio de la línea en tu terminal).
-
-### 4. Instalar dependencias
-Con el entorno virtual activado, instala los paquetes necesarios para el proyecto:
+### 4. Configurar las credenciales
 
 ```bash
-pip install -r requirements.txt
+cp .env.example .env
 ```
 
-### 5. Configuracion de la Base de Datos (Postgresql)
-El sistema utiliza PostgreSQL para asegurar la integridad transaccional del Kardex. Para levantar la base de datos:
-1. Abre tu gestos de base de datos nativo (pgAdmin4 o DBeaver)
-2. Crea una nueva base de datos llamada exactamente "lubriexpress"
-3. Abre una hoja de consulta (SQL Editor o Query Tool) apuntando especificamente a esa nueva base de datos.
-4. Abre el archivo ```database/schema_lubriexpress.sql```, copia todo su contenido y ejecutalo. Esto generara la estructura completa de tablas, restricciones (contraints) y los triggers automaticos de inventario.
+Y dejar en `.env`:
 
-### 6. Variables de entorno (.env)
-Las credenciales de conexion no estan escritas en el codigo por seguridad.
+```
+DATABASE_URL=postgresql+psycopg2://postgres:lubriexpress@localhost:55432/lubriexpress
+```
 
-1. En la raiz del proyecto, ubicar el archivo de plantilla ```.env.example```
-2. Duplicar el archivo y renombrar la copia exactamente como ```.env``` (este archivo esta incluido en el ```.gitignore```)
-3. Abrir el archivo ```.env``` y reemplazar la contrasenia de prueba por la clave real de tu instalacion local de PSQL.
+`.env` está en `.gitignore` y no se sube nunca.
+
+## Uso
+
 ```bash
-DATABASE_URL=postgresql+psycopg2://postgres:TU_CONTRASEÑA@localhost:5432/lubriexpress
+.venv/bin/python main.py
 ```
 
-### Estructura del Proyecto
+## Pruebas
+
+```bash
+.venv/bin/python -m pytest              # toda la batería
+.venv/bin/python -m pytest -v tests/test_rut.py
+```
+
+No hace falta configurar nada más: `pytest.ini` resuelve las rutas y las pruebas de
+interfaz corren sin abrir ventanas. Si PostgreSQL no está levantado, las pruebas que
+lo necesitan se saltan solas en vez de fallar.
+
+## Estructura
+
 ```text
 sist_lubriexpress/
+├── main.py                          # Punto de entrada
 ├── src/
-│   ├── database.py              # Motor de conexión y fábrica de sesiones
-│   ├── models.py                # Modelos ORM (SQLAlchemy) mapeados a la BD
+│   ├── database.py                  # Motor de conexión y fábrica de sesiones
+│   ├── models.py                    # Modelos ORM (SQLAlchemy)
+│   ├── rut.py                       # RUT chileno: validación módulo 11 y formato
+│   └── ui/
+│       ├── __init__.py              # Ventana principal con pestañas
+│       ├── comunes.py               # Formato de moneda y tablas compartidas
+│       ├── inventario.py            # Mantenedor de Inventario
+│       └── clientes.py              # Mantenedor de Clientes y Vehículos
 ├── database/
-│   └── schema_lubriexpress.sql  # Script oficial de creación de tablas y triggers
+│   └── schema_lubriexpress.sql      # Tablas, restricciones, triggers y vistas
+├── tests/
 ├── docs/
-│   ├── requirements/            # Levantamiento de requerimientos
-│   └── manuals/                 # Manuales y documentación técnica[cite: 2]
-├── .env.example                 # Plantilla de variables de entorno (Sí se sube a Git)
-├── .env                         # Credenciales locales (NO se sube a Git)
-├── main.py                       # Código principal de la aplicación
-├── README.md                    # Documentación del proyecto[cite: 2]
-├── requirements.txt             # Dependencias del proyecto[cite: 2]
-├── .gitignore                   # Archivos ignorados por Git[cite: 2]
-└── venv/                        # Entorno virtual local (no se sube)[cite: 2]
+│   ├── base-de-datos.md             # Contrato del esquema: léelo antes de tocar stock
+│   └── desarrollo.md                # Convenciones de código y de pruebas
+├── requirements.txt                 # Dependencias de la aplicación
+├── requirements-dev.txt             # + herramientas de pruebas
+└── .env                             # Credenciales locales (no se sube)
 ```
 
-### Ejecución
-Para iniciar la aplicación en modo desarrollo, asegúrate de tener el entorno virtual activado y ejecuta:
+## Antes de modificar el inventario
 
-```bash
-python main.py
-```
-
-### Consideraciones para el Control de Versiones
-No realizar commits de la base de datos: El archivo local de la base de datos (ej. .db o .sqlite3) está ignorado por defecto para evitar colisiones.
-
-No subir el entorno: La carpeta venv/ y los archivos de caché de Python __pycache__/ no deben subirse jamás al repositorio.
+El stock **nunca** se actualiza con un `UPDATE` sobre `productos`. Se inserta el
+movimiento en `kardex_movimientos` y los triggers mueven el stock. Es lo que garantiza
+que todo cambio de inventario quede auditable. Está explicado en
+[docs/base-de-datos.md](docs/base-de-datos.md).
