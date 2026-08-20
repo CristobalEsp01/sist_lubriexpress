@@ -142,7 +142,7 @@ CREATE TABLE "kardex_movimientos" (
   "usuario_id" INT NOT NULL REFERENCES "usuarios"("id"),
   "tipo_movimiento" VARCHAR(20) NOT NULL
       CHECK ("tipo_movimiento" IN ('ENTRADA', 'SALIDA_VENTA', 'SALIDA_ORDEN', 'AJUSTE_MANUAL')),
-  "cantidad_movida" INT NOT NULL,
+  "cantidad_movida" INT NOT NULL CHECK ("cantidad_movida" <> 0),
   "stock_resultante" INT NOT NULL CHECK ("stock_resultante" >= 0),
   "orden_id" INT REFERENCES "ordenes"("id"),
   "venta_id" INT REFERENCES "ventas"("id"),
@@ -263,6 +263,31 @@ CREATE TRIGGER trg_detalle_ventas_descuento
 -- transacción automáticamente (INSERT en detalle + UPDATE de stock +
 -- INSERT en kardex quedan sin aplicar).
 
+-- --- Entradas de mercadería y ajustes manuales ---
+-- La aplicación NUNCA debe hacer UPDATE de "stock_actual" directamente: inserta
+-- el movimiento en el kardex y este trigger mueve el stock y calcula el saldo.
+-- Así no existe forma de alterar el inventario sin dejar rastro auditable.
+-- Convención de signo: "cantidad_movida" positiva suma, negativa resta.
+CREATE OR REPLACE FUNCTION fn_aplicar_movimiento_manual() RETURNS TRIGGER AS $$
+DECLARE
+  v_stock_nuevo INT;
+BEGIN
+  UPDATE "productos"
+     SET "stock_actual" = "stock_actual" + NEW."cantidad_movida"
+   WHERE "id" = NEW."producto_id"
+   RETURNING "stock_actual" INTO v_stock_nuevo;
+
+  NEW."stock_resultante" = v_stock_nuevo;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_kardex_movimiento_manual
+  BEFORE INSERT ON "kardex_movimientos"
+  FOR EACH ROW
+  WHEN (NEW."tipo_movimiento" IN ('ENTRADA', 'AJUSTE_MANUAL'))
+  EXECUTE FUNCTION fn_aplicar_movimiento_manual();
+
 -- =====================================================================
 -- Vista de alerta de stock crítico (para el módulo de reportería)
 -- =====================================================================
@@ -279,3 +304,8 @@ SELECT "id", "nombre", "marca", "categoria", "stock_actual", "stock_minimo"
 -- y DELETE al rol de aplicación, una vez creado dicho rol:
 --
 -- REVOKE UPDATE, DELETE ON "kardex_movimientos" FROM rol_aplicacion;
+--
+-- Y por el mismo motivo, impedir que la aplicación mueva el stock por fuera
+-- del kardex:
+--
+-- REVOKE UPDATE ("stock_actual") ON "productos" FROM rol_aplicacion;
