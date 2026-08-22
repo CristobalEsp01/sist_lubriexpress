@@ -10,15 +10,17 @@ Lubri-Express (Inversiones Tres Puntos SpA). Corre localmente sobre PostgreSQL.
 | Esquema de base de datos y triggers de Kardex | Funcionando |
 | Mantenedor de Inventario | Funcionando |
 | Mantenedor de Clientes y Vehículos | Funcionando |
+| Historial de Kardex por producto | Funcionando (solo lectura) |
 | Login y control de acceso por rol | Pendiente |
 | Ventas de mostrador | Pendiente |
 | Órdenes de trabajo | Pendiente |
 | Carga masiva desde Excel | Pendiente |
 | Exportación a PDF y reportería | Pendiente |
 
-Las entradas de mercadería y los ajustes de inventario ya funcionan a nivel de base de
-datos, pero todavía no tienen pantalla: requieren un usuario autenticado, porque cada
-movimiento del Kardex queda firmado por quien lo hizo.
+El historial de movimientos de cada producto ya se puede consultar desde el mantenedor
+de Inventario. **Registrar** entradas de mercadería y ajustes todavía no tiene pantalla:
+requiere un usuario autenticado, porque cada movimiento del Kardex queda firmado por
+quien lo hizo.
 
 ## Requisitos
 
