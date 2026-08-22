@@ -327,7 +327,7 @@ class ClientesWidget(QWidget):
             # tipea así al buscar: el patrón de identificadores va normalizado, y
             # el crudo se reserva para el nombre, donde borrar espacios rompería
             # la búsqueda. Del lado del RUT hay que aplanar también la columna.
-            # ponytail: el replace() sobre la columna anula el índice del UNIQUE;
+            # El replace() sobre la columna anula el índice del UNIQUE;
             # con miles de clientes, pasar a una columna rut_plano indexada.
             patron_id = f"%{re.sub(r'[.\-\s]', '', texto).upper()}%"
             rut_plano = func.replace(func.replace(Cliente.rut, ".", ""), "-", "")

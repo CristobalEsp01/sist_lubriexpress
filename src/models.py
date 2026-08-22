@@ -6,7 +6,7 @@ from .database import Base
 
 # Nota general: created_at / updated_at no se mapean porque los triggers de la
 # base de datos ya se encargan de mantenerlos.
-# ponytail: los triggers de stock modifican "productos" por fuera de la sesión.
+# Los triggers de stock modifican "productos" por fuera de la sesión.
 # Después de confirmar una venta u orden hay que hacer session.refresh(producto)
 # (o session.expire_all()) para no leer un stock_actual obsoleto de la caché.
 

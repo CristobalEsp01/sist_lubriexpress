@@ -102,24 +102,6 @@ ALTER TABLE "clientes" ADD CONSTRAINT "empresa_con_rut"
 aplicación la consulta en vez de repetir el criterio: si mañana el umbral cambia, se
 cambia en un solo lugar.
 
-## Lo que no se debe hacer
-
-- `UPDATE productos SET stock_actual = ...` — rompe la trazabilidad. Usa un movimiento de Kardex.
-- `UPDATE` o `DELETE` sobre `kardex_movimientos` — el historial es solo de agregado.
-- Guardar un RUT sin pasarlo por `src.rut.formatear()`, o guardar `''` en vez de `NULL` cuando no hay RUT.
-- Borrar un cliente con vehículos: la FK lo impide, y está bien que lo impida.
-
-## Pendiente de endurecer
-
-Las reglas de arriba hoy se sostienen por convención y por los triggers. Faltan los
-permisos que las harían imposibles de saltar, una vez que exista un rol de aplicación
-separado de `postgres`:
-
-```sql
-REVOKE UPDATE, DELETE ON kardex_movimientos FROM rol_aplicacion;
-REVOKE UPDATE ("stock_actual") ON productos FROM rol_aplicacion;
-```
-
 ## Cambios de esquema
 
 No hay migraciones todavía. Un cambio hoy significa editar el `.sql` y recrear la base:

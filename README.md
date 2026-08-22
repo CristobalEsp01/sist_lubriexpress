@@ -119,8 +119,7 @@ sist_lubriexpress/
 │   └── schema_lubriexpress.sql      # Tablas, restricciones, triggers y vistas
 ├── tests/
 ├── docs/
-│   ├── base-de-datos.md             # Contrato del esquema: léelo antes de tocar stock
-│   └── desarrollo.md                # Convenciones de código y de pruebas
+│   └── base-de-datos.md             # Contrato del esquema: tablas, triggers e invariantes
 ├── requirements.txt                 # Dependencias de la aplicación
 ├── requirements-dev.txt             # + herramientas de pruebas
 └── .env                             # Credenciales locales (no se sube)
