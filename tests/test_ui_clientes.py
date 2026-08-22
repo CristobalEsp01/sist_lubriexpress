@@ -150,3 +150,33 @@ def test_una_empresa_sin_rut_no_se_guarda(app, limpiar_cliente, monkeypatch):
     assert form.cliente_id is None
     assert form.etiqueta_rut.text() == "RUT *"  # el asterisco aparece con el tipo
 
+
+def test_se_busca_por_patente_y_por_rut_sin_puntos(app, limpiar_cliente):
+    """En el mesón nadie tipea el RUT con puntos ni la patente con guión, y el
+    cliente que vuelve muchas veces solo se acuerda de la patente."""
+    from src.ui import ClientesWidget, FormularioCliente, FormularioVehiculo
+
+    cliente = FormularioCliente()
+    cliente.rut.setText(RUT_QA)
+    cliente.nombre.setText("Cliente QA")
+    cliente.accept()
+
+    for patente in (PATENTE_QA, PATENTE_QA2):
+        vehiculo = FormularioVehiculo(cliente_id=cliente.cliente_id)
+        vehiculo.patente.setText(patente)
+        vehiculo.accept()
+
+    widget = ClientesWidget()
+    for texto in (
+        PATENTE_QA,                                    # patente tal cual
+        PATENTE_QA.lower(),                            # en minúscula
+        f"{PATENTE_QA[:2]}-{PATENTE_QA[2:]}",          # con guión
+        RUT_QA,                                        # RUT formateado
+        RUT_QA.replace(".", "").replace("-", ""),      # RUT pelado
+        "Cliente QA",                                  # y el nombre sigue sirviendo
+    ):
+        widget.busqueda.setText(texto)
+        assert widget.tabla.rowCount() == 1, f"no encontró nada buscando {texto!r}"
+        # Buscar por UNA patente no puede esconder los otros autos del cliente:
+        # eso es lo que pasaría si el filtro fuera por el join en vez de un EXISTS.
+        assert widget.tabla.item(0, 4).text() == "2", f"conteo descuadrado con {texto!r}"

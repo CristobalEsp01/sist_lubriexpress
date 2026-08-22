@@ -248,7 +248,7 @@ class ClientesWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        self.busqueda = QLineEdit(placeholderText="Buscar por RUT o nombre…")
+        self.busqueda = QLineEdit(placeholderText="Buscar por patente, nombre o RUT…")
         self.busqueda.setClearButtonEnabled(True)
         self.busqueda.textChanged.connect(self.recargar)
 
@@ -323,8 +323,22 @@ class ClientesWidget(QWidget):
         )
         if texto:
             patron = f"%{texto}%"
+            # El RUT se guarda con puntos y la patente sin guión, pero nadie los
+            # tipea así al buscar: el patrón de identificadores va normalizado, y
+            # el crudo se reserva para el nombre, donde borrar espacios rompería
+            # la búsqueda. Del lado del RUT hay que aplanar también la columna.
+            # ponytail: el replace() sobre la columna anula el índice del UNIQUE;
+            # con miles de clientes, pasar a una columna rut_plano indexada.
+            patron_id = f"%{re.sub(r'[.\-\s]', '', texto).upper()}%"
+            rut_plano = func.replace(func.replace(Cliente.rut, ".", ""), "-", "")
             consulta = consulta.where(
-                or_(Cliente.rut.ilike(patron), Cliente.nombre_completo.ilike(patron))
+                or_(
+                    rut_plano.ilike(patron_id),
+                    Cliente.nombre_completo.ilike(patron),
+                    # any() genera un EXISTS: filtrar por el join descuadraría el
+                    # count(Vehiculo.id) y un cliente con 3 autos aparecería con 1.
+                    Cliente.vehiculos.any(Vehiculo.patente.ilike(patron_id)),
+                )
             )
 
         with SessionLocal() as db:
