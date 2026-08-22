@@ -31,3 +31,9 @@ def test_dv_k_y_cero():
     # Los dos casos que rompen las implementaciones ingenuas del módulo 11.
     assert digito_verificador("11111111") == "1"
     assert es_valido(f"12345670-{digito_verificador('12345670')}")
+
+
+def test_formatear_deja_pasar_el_vacio():
+    """El RUT es opcional: el formulario llama a formatear() con el campo en blanco."""
+    assert formatear("") == ""
+    assert formatear("   ") == ""

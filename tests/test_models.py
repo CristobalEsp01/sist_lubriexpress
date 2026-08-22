@@ -18,6 +18,18 @@ def columnas_del_esquema():
     }
 
 
+def obligatorias_del_esquema():
+    """Columnas que el `.sql` declara NOT NULL. La PK lo es sin decirlo."""
+    return {
+        tabla: {
+            nombre
+            for nombre, resto in re.findall(r'^\s+"(\w+)"(.*)$', cuerpo, re.M)
+            if "NOT NULL" in resto or "PRIMARY KEY" in resto
+        }
+        for tabla, cuerpo in re.findall(r'CREATE TABLE "(\w+)" \((.*?)\n\);', SQL, re.S)
+    }
+
+
 def test_los_mappers_configuran():
     configure_mappers()
 
@@ -31,3 +43,17 @@ def test_las_columnas_existen_en_el_esquema():
     for tabla, obj in Base.metadata.tables.items():
         faltantes = {c.name for c in obj.columns} - esquema[tabla]
         assert not faltantes, f"{tabla}: columnas que no existen en el esquema -> {faltantes}"
+
+
+def test_lo_obligatorio_calza_con_el_esquema():
+    """Comparar solo los nombres deja pasar el peor tipo de desfase: el modelo
+    diciendo que una columna es obligatoria cuando la base ya no lo exige."""
+    esquema = obligatorias_del_esquema()
+    for tabla, obj in Base.metadata.tables.items():
+        for columna in obj.columns:
+            obligatoria = columna.name in esquema[tabla]
+            assert columna.nullable != obligatoria, (
+                f"{tabla}.{columna.name}: el esquema dice "
+                f"{'NOT NULL' if obligatoria else 'nullable'} y el modelo dice "
+                f"{'nullable' if columna.nullable else 'NOT NULL'}"
+            )

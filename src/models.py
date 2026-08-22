@@ -26,7 +26,7 @@ class Cliente(Base):
     __tablename__ = "clientes"
 
     id = Column(Integer, primary_key=True, index=True)
-    rut = Column(String(12), unique=True, nullable=False)
+    rut = Column(String(12), unique=True)  # opcional: solo las empresas lo exigen
     nombre_completo = Column(String(150), nullable=False)
     tipo_cliente = Column(String(20), default="PERSONA", nullable=False)
     telefono = Column(String(15))
@@ -93,7 +93,7 @@ class Orden(Base):
     vehiculo_id = Column(Integer, ForeignKey("vehiculos.id"), nullable=False)
     usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
     folio_mercado_publico = Column(String(50))
-    fecha_creacion = Column(DateTime, server_default=func.now())
+    fecha_creacion = Column(DateTime, server_default=func.now(), nullable=False)
     kilometraje_ingreso = Column(Integer, nullable=False)
     # La BD prohíbe usar porcentaje y monto a la vez (CHECK descuento_exclusivo_orden).
     descuento_porcentaje = Column(Numeric(5, 2), default=0, nullable=False)
@@ -128,7 +128,7 @@ class Venta(Base):
     id = Column(Integer, primary_key=True, index=True)
     usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
     cliente_id = Column(Integer, ForeignKey("clientes.id"))
-    fecha_venta = Column(DateTime, server_default=func.now())
+    fecha_venta = Column(DateTime, server_default=func.now(), nullable=False)
     numero_boleta = Column(String(50), unique=True)
     total_final = Column(Numeric(10, 2), nullable=False)
 
@@ -163,7 +163,7 @@ class KardexMovimiento(Base):
     stock_resultante = Column(Integer, nullable=False)
     orden_id = Column(Integer, ForeignKey("ordenes.id"))
     venta_id = Column(Integer, ForeignKey("ventas.id"))
-    fecha_movimiento = Column(DateTime, server_default=func.now())
+    fecha_movimiento = Column(DateTime, server_default=func.now(), nullable=False)
 
     producto = relationship("Producto")
     usuario = relationship("Usuario")

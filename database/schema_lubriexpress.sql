@@ -23,13 +23,20 @@ CREATE TABLE "usuarios" (
 -- ---------------------------------------------------------------------
 CREATE TABLE "clientes" (
   "id" SERIAL PRIMARY KEY,
-  "rut" VARCHAR(12) UNIQUE NOT NULL,
+  -- A las personas no se les pide el RUT: en el mesón no lo dan y frenaba la
+  -- atención. Las empresas y los servicios públicos sí lo necesitan, porque sin
+  -- RUT no se les puede facturar.
+  "rut" VARCHAR(12) UNIQUE,
   "nombre_completo" VARCHAR(150) NOT NULL,
   "tipo_cliente" VARCHAR(20) NOT NULL DEFAULT 'PERSONA'
       CHECK ("tipo_cliente" IN ('PERSONA', 'EMPRESA')),
   "telefono" VARCHAR(15),
   "created_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  "updated_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+  "updated_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  -- Sin RUT se guarda NULL, nunca ''. NULL no choca contra el UNIQUE, dos
+  -- cadenas vacías sí, y el segundo cliente sin RUT sería imposible de crear.
+  CONSTRAINT "rut_no_vacio" CHECK ("rut" <> ''),
+  CONSTRAINT "empresa_con_rut" CHECK ("tipo_cliente" <> 'EMPRESA' OR "rut" IS NOT NULL)
 );
 
 -- ---------------------------------------------------------------------

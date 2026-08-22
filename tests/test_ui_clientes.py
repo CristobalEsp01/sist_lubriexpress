@@ -1,6 +1,6 @@
 """Interfaz del mantenedor de Clientes y vehículos, sin pantalla."""
 import pytest
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from conftest import patente_de_prueba, rut_de_prueba
 from src.database import SessionLocal
@@ -8,16 +8,22 @@ from src.models import Cliente, Vehiculo
 
 RUT_QA = rut_de_prueba()
 PATENTE_QA = patente_de_prueba()
+PATENTE_QA2 = patente_de_prueba()
+SIN_RUT_QA = f"Cliente sin RUT {PATENTE_QA}"  # los clientes sin RUT se limpian por nombre
 
 
 @pytest.fixture
 def limpiar_cliente():
     yield
     with SessionLocal() as db:
-        for v in db.scalars(select(Vehiculo).where(Vehiculo.patente == PATENTE_QA)):
+        vehiculos = select(Vehiculo).where(Vehiculo.patente.in_([PATENTE_QA, PATENTE_QA2]))
+        for v in db.scalars(vehiculos):
             db.delete(v)
         db.commit()
-        for c in db.scalars(select(Cliente).where(Cliente.rut == RUT_QA)):
+        consulta = select(Cliente).where(
+            or_(Cliente.rut == RUT_QA, Cliente.nombre_completo == SIN_RUT_QA)
+        )
+        for c in db.scalars(consulta):
             db.delete(c)
         db.commit()
 
@@ -107,3 +113,40 @@ def test_no_se_puede_repetir_el_rut(app, limpiar_cliente, monkeypatch):
 
     assert avisos == ["RUT repetido"]
     assert repetido.cliente_id is None
+
+
+def test_una_persona_se_guarda_sin_rut(app, limpiar_cliente, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    from src.ui import FormularioCliente
+
+    # Sin esto, un guardado fallido abre un modal de verdad: bajo QT_QPA_PLATFORM
+    # =offscreen sigue bloqueando, y la suite queda colgada en vez de fallar.
+    avisos = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: avisos.append(a[1]))
+
+    form = FormularioCliente()
+    form.nombre.setText(SIN_RUT_QA)
+    form.accept()
+
+    assert avisos == []
+    with SessionLocal() as db:
+        cliente = db.get(Cliente, form.cliente_id)
+        assert cliente.rut is None  # NULL, no cadena vacía: si no, chocan entre sí
+
+
+def test_una_empresa_sin_rut_no_se_guarda(app, limpiar_cliente, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    from src.ui import FormularioCliente
+
+    avisos = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: avisos.append(a[1]))
+
+    form = FormularioCliente()
+    form.nombre.setText(SIN_RUT_QA)
+    form.tipo.setCurrentText("EMPRESA")
+    form.accept()
+
+    assert avisos == ["Falta el RUT"]
+    assert form.cliente_id is None
+    assert form.etiqueta_rut.text() == "RUT *"  # el asterisco aparece con el tipo
+

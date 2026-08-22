@@ -30,5 +30,9 @@ def es_valido(rut: str) -> bool:
 def formatear(rut: str) -> str:
     """'123456785' -> '12.345.678-5'. Guardar siempre así mantiene útil el UNIQUE del RUT."""
     limpio = normalizar(rut)
+    if len(limpio) < 2:
+        # El campo es opcional, así que llega vacío; y con un solo carácter no
+        # hay cuerpo que formatear (int("") revienta). Validar es de es_valido().
+        return ""
     cuerpo, dv = limpio[:-1], limpio[-1]
     return f"{int(cuerpo):,}".replace(",", ".") + f"-{dv}"

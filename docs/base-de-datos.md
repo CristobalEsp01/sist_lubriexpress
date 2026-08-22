@@ -23,7 +23,7 @@ consola de psql abierta.
 | Tabla | Rol |
 |---|---|
 | `usuarios` | Operadores del sistema. Roles: `ADMINISTRADOR`, `SUPERVISOR`, `USUARIO_NORMAL` |
-| `clientes` | Personas y empresas. RUT único |
+| `clientes` | Personas y empresas. RUT único, y opcional salvo para empresas |
 | `vehiculos` | Cuelgan de un cliente. Patente única |
 | `ubicaciones` | Dónde está guardado físicamente un producto |
 | `productos` | Inventario. `stock_actual` lo manejan los triggers |
@@ -69,6 +69,8 @@ No se pasa `stock_resultante` ni se toca `productos`: el trigger completa ambas 
 | `origen_movimiento_valido` | Un movimiento de Kardex que no calce con su origen (una `SALIDA_VENTA` sin venta, o con orden) |
 | `cantidad_movida <> 0` | Movimientos vacíos |
 | `UNIQUE` en `clientes.rut`, `vehiculos.patente`, `numero_boleta` | Duplicados |
+| `empresa_con_rut` | Una empresa o servicio público sin RUT, a quien después no se le puede facturar |
+| `rut_no_vacio` | Guardar `''` en vez de `NULL`, que rompería el `UNIQUE` al segundo cliente sin RUT |
 
 El CHECK de stock no negativo es el que hace el trabajo pesado: al ser el trigger
 parte de la misma transacción que el `INSERT` del detalle, un intento de sobreventa
@@ -78,6 +80,21 @@ media venta registrada.
 Los RUT se guardan siempre formateados (`12.345.678-5`) por [`src/rut.py`](../src/rut.py).
 Sin normalizar, `123456785` y `12.345.678-5` entrarían como dos clientes distintos y el
 `UNIQUE` no serviría de nada.
+
+### El RUT es opcional
+
+A las personas no se les pide RUT: en el mesón no lo dan y frenaba la atención. Solo
+las empresas y los servicios públicos lo necesitan, y ahí lo exige `empresa_con_rut`.
+Un cliente sin RUT guarda `NULL`, **nunca** cadena vacía: `NULL` no choca contra el
+`UNIQUE`, pero dos cadenas vacías sí. Bases creadas antes de este cambio se ponen al
+día con:
+
+```sql
+ALTER TABLE "clientes" ALTER COLUMN "rut" DROP NOT NULL;
+ALTER TABLE "clientes" ADD CONSTRAINT "rut_no_vacio" CHECK ("rut" <> '');
+ALTER TABLE "clientes" ADD CONSTRAINT "empresa_con_rut"
+  CHECK ("tipo_cliente" <> 'EMPRESA' OR "rut" IS NOT NULL);
+```
 
 ## Vistas
 
@@ -89,7 +106,7 @@ cambia en un solo lugar.
 
 - `UPDATE productos SET stock_actual = ...` — rompe la trazabilidad. Usa un movimiento de Kardex.
 - `UPDATE` o `DELETE` sobre `kardex_movimientos` — el historial es solo de agregado.
-- Guardar un RUT sin pasarlo por `src.rut.formatear()`.
+- Guardar un RUT sin pasarlo por `src.rut.formatear()`, o guardar `''` en vez de `NULL` cuando no hay RUT.
 - Borrar un cliente con vehículos: la FK lo impide, y está bien que lo impida.
 
 ## Pendiente de endurecer
