@@ -5,26 +5,14 @@ y vive en la base de datos, no en Python. Cada prueba corre dentro de una
 transacción que se revierte al terminar, así que no deja residuos.
 """
 import pytest
-from conftest import exigir_base_de_datos, patente_de_prueba, rut_de_prueba
+from conftest import patente_de_prueba, rut_de_prueba
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
-from src.database import SessionLocal
 from src.models import (
     Cliente, DetalleOrden, DetalleVenta, KardexMovimiento, Orden, Producto,
     Ubicacion, Usuario, Vehiculo, Venta,
 )
-
-
-@pytest.fixture
-def db():
-    exigir_base_de_datos()
-    sesion = SessionLocal()
-    try:
-        yield sesion
-    finally:
-        sesion.rollback()
-        sesion.close()
 
 
 @pytest.fixture

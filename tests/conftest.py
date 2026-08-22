@@ -51,6 +51,20 @@ def exigir_base_de_datos():
         pytest.skip(f"PostgreSQL no disponible: {e}")
 
 
+@pytest.fixture
+def db():
+    """Sesión que revierte todo al terminar: las pruebas no dejan residuos."""
+    exigir_base_de_datos()
+    from src.database import SessionLocal
+
+    sesion = SessionLocal()
+    try:
+        yield sesion
+    finally:
+        sesion.rollback()
+        sesion.close()
+
+
 @pytest.fixture(scope="session")
 def app():
     """QApplication única para todas las pruebas de interfaz."""
