@@ -19,6 +19,7 @@ class VentanaPrincipal(QMainWindow):
         super().__init__()
         self.setWindowTitle("Lubri-Express — Gestión de Taller")
         self.resize(1050, 640)
+        self.setMinimumSize(960, 580)
 
         self.pestanias = QTabWidget()
         self.pestanias.addTab(InventarioWidget(self), "Inventario")

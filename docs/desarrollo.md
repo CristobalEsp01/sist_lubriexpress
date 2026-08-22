@@ -4,7 +4,7 @@
 
 - `src/models.py` — modelos ORM. Deben calzar exactamente con el `.sql`; hay una prueba que lo verifica.
 - `src/rut.py` — RUT chileno. Sin dependencias de UI ni de base de datos, para que lo pueda usar también la carga masiva desde Excel.
-- `src/ui/` — un módulo por mantenedor. `comunes.py` tiene lo que comparten (formato de moneda, construcción de tablas).
+- `src/ui/` — un módulo por mantenedor. `comunes.py` tiene lo que comparten (formato de moneda, construcción de tablas) y `tema.py` la identidad visual.
 - `main.py` — solo arranca la aplicación y avisa si la base no responde.
 
 Un mantenedor nuevo son dos clases en su propio módulo bajo `src/ui/`: un
@@ -12,6 +12,25 @@ Un mantenedor nuevo son dos clases en su propio módulo bajo `src/ui/`: un
 `src/ui/__init__.py` para agregar la pestaña.
 
 `created_at` y `updated_at` no se mapean en el ORM: los mantienen los triggers.
+
+## Identidad visual
+
+Todos los colores y medidas están en `src/ui/tema.py`. Ningún widget escribe un
+hex a mano: si un color hace falta en dos lugares, se agrega ahí como constante.
+
+El acento ámbar se reserva para donde el sistema está diciendo algo —pestaña
+activa, campo con foco, fila seleccionada, botón de acción principal— y el rojo
+óxido solo para stock bajo mínimo y cantidades negativas. Un color que aparece en
+todas partes deja de señalar nada.
+
+Las columnas numéricas van en monoespaciada (`fuente_tabular()`), incluidos RUT y
+patentes: son identificadores de dígitos y alineados se escanean de un vistazo.
+
+Tres cosas que cuestan tiempo si no se saben:
+
+- **`app.setStyle("Fusion")` es obligatorio.** Sin fijarlo, Qt usa el estilo nativo de cada sistema y la aplicación se ve distinta en Linux que en el Windows del taller.
+- **Apenas se aplica QSS a un `QComboBox` o `QSpinBox`, Qt deja de dibujar sus flechas.** Hay que dárselas explícitamente; se usan los recursos internos de Qt (`ICONOS_QT` en `tema.py`) para no sumar imágenes al proyecto.
+- **El locale se fija a es-CL** en `aplicar()`. Sin eso los `QSpinBox` muestran `$ 20,000` con coma. En la misma función se instala `qtbase_es.qm`, que traduce los botones estándar de los diálogos; al empaquetar con PyInstaller hay que incluir ese archivo.
 
 ## Sesiones de base de datos
 

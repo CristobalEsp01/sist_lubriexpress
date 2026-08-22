@@ -10,6 +10,11 @@ def main() -> int:
     from PySide6.QtWidgets import QApplication, QMessageBox
 
     app = QApplication(sys.argv)
+
+    from src.ui.tema import aplicar
+
+    aplicar(app)
+
     try:
         engine.connect().close()
     except OperationalError as e:

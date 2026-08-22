@@ -109,6 +109,7 @@ sist_lubriexpress/
 │   ├── rut.py                       # RUT chileno: validación módulo 11 y formato
 │   └── ui/
 │       ├── __init__.py              # Ventana principal con pestañas
+│       ├── tema.py                  # Colores, tipografía y hoja de estilos
 │       ├── comunes.py               # Formato de moneda y tablas compartidas
 │       ├── inventario.py            # Mantenedor de Inventario
 │       └── clientes.py              # Mantenedor de Clientes y Vehículos
