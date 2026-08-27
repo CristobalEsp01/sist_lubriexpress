@@ -24,7 +24,10 @@ def main() -> int:
         )
         return 1
 
-    from src.ui import VentanaPrincipal
+    from src.ui import LoginDialog, VentanaPrincipal
+
+    if not LoginDialog().exec():
+        return 0  # se cerró el login sin ingresar
 
     ventana = VentanaPrincipal()
     ventana.show()
