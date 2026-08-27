@@ -11,8 +11,8 @@ Lubri-Express (Inversiones Tres Puntos SpA). Corre localmente sobre PostgreSQL.
 | Mantenedor de Inventario | Funcionando |
 | Mantenedor de Clientes y Vehículos | Funcionando |
 | Historial de Kardex por producto | Funcionando (solo lectura) |
-| Login y control de acceso por rol | Pendiente |
-| Ventas de mostrador | Pendiente |
+| Login y control de acceso por rol | Funcionando (correr script de creacion de usuario) |
+| Ventas de mostrador | Funcionando |
 | Órdenes de trabajo | Pendiente |
 | Carga masiva desde Excel | Pendiente |
 | Exportación a PDF y reportería | Pendiente |
@@ -40,7 +40,7 @@ source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements-dev.txt
 ```
 
-`requirements.txt` trae solo lo que necesita la aplicación para correr.
+`requirements.txt` trae solo lo que necesita la aplicación para correr. **(EJECUTAR NUEVAMENTE YA QUE SE AGREGÓ UNA LIBRERIA)**
 `requirements-dev.txt` agrega las herramientas de pruebas.
 
 ### 2. Levantar PostgreSQL
@@ -84,6 +84,13 @@ DATABASE_URL=postgresql+psycopg2://postgres:lubriexpress@localhost:55432/lubriex
 `.env` está en `.gitignore` y no se sube nunca.
 
 ## Uso
+### 1. Ejecutar script de creación de usuarios
+`(Funcionalidad temporal mientras se implementa la ventana de administración)`
+```bash
+python scripts/crear_usuario.py
+```
+El script valida que la contraseña tenga a lo más 6 carácteres.
+### 2. Ejecutar el programa
 
 ```bash
 .venv/bin/python main.py
@@ -106,6 +113,7 @@ lo necesitan se saltan solas en vez de fallar.
 sist_lubriexpress/
 ├── main.py                          # Punto de entrada
 ├── src/
+│   ├── auth.py                      # Logica de autenticacion.
 │   ├── database.py                  # Motor de conexión y fábrica de sesiones
 │   ├── models.py                    # Modelos ORM (SQLAlchemy)
 │   ├── rut.py                       # RUT chileno: validación módulo 11 y formato
@@ -114,12 +122,16 @@ sist_lubriexpress/
 │       ├── tema.py                  # Colores, tipografía y hoja de estilos
 │       ├── comunes.py               # Formato de moneda y tablas compartidas
 │       ├── inventario.py            # Mantenedor de Inventario
-│       └── clientes.py              # Mantenedor de Clientes y Vehículos
+│       ├── clientes.py              # Mantenedor de Clientes y Vehículos
+│       ├── ventas.py                # Modulo del punto de venta, carrito e historial.
+│       └── login.py                 # Ventana modal para el inicio de sesión.
 ├── database/
 │   └── schema_lubriexpress.sql      # Tablas, restricciones, triggers y vistas
 ├── tests/
 ├── docs/
 │   └── base-de-datos.md             # Contrato del esquema: tablas, triggers e invariantes
+├── scripts/
+│    └── crear_usuario.py             # Script interactivo de consola para registrar usuarios con contraseñas seguras.
 ├── requirements.txt                 # Dependencias de la aplicación
 ├── requirements-dev.txt             # + herramientas de pruebas
 └── .env                             # Credenciales locales (no se sube)
