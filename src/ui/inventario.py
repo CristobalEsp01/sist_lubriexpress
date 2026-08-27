@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
 )
 from sqlalchemy import or_, select
 
+from ..auth import Sesion
 from ..database import SessionLocal
 from ..models import KardexMovimiento, Producto, Ubicacion, Usuario, Venta
 from .comunes import (
@@ -196,6 +197,116 @@ class FormularioProducto(QDialog):
 
 
 
+class IngresoMercaderiaDialog(QDialog):
+    """Ventana para registrar la llegada de nueva mercadería masiva."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Ingreso de Mercadería")
+        self.resize(600, 400)
+        self.setModal(True)
+
+        self.lista_ingreso = []
+
+        self.combo_productos = QComboBox()
+        self.spin_cantidad = QSpinBox()
+        self.spin_cantidad.setRange(1, 10000)
+        
+        self.boton_agregar = QPushButton("Añadir a la lista")
+        self.boton_agregar.clicked.connect(self.agregar_a_lista)
+
+        barra_superior = QHBoxLayout()
+        barra_superior.addWidget(QLabel("Producto:"))
+        barra_superior.addWidget(self.combo_productos, 1)
+        barra_superior.addWidget(QLabel("Cantidad:"))
+        barra_superior.addWidget(self.spin_cantidad)
+        barra_superior.addWidget(self.boton_agregar)
+
+        self.tabla = crear_tabla(["Producto", "Stock Actual", "Ingreso", "Nuevo Stock"], ancha=0, orden=0, numericas=(1, 2, 3))
+        
+        self.boton_quitar = QPushButton("Quitar seleccionado")
+        self.boton_quitar.clicked.connect(self.quitar_seleccionado)
+        
+        self.boton_confirmar = QPushButton("Confirmar Ingreso")
+        self.boton_confirmar.setProperty("clase", "primario")
+        self.boton_confirmar.clicked.connect(self.confirmar_ingreso)
+
+        barra_inferior = QHBoxLayout()
+        barra_inferior.addWidget(self.boton_quitar)
+        barra_inferior.addStretch()
+        barra_inferior.addWidget(self.boton_confirmar)
+
+        layout = QVBoxLayout(self)
+        layout.addLayout(barra_superior)
+        layout.addWidget(self.tabla)
+        layout.addLayout(barra_inferior)
+
+        self._cargar_productos()
+
+    def _cargar_productos(self) -> None:
+        self.combo_productos.clear()
+        with SessionLocal() as db:
+            productos = db.scalars(select(Producto).where(Producto.activo.is_(True)).order_by(Producto.nombre)).all()
+            for p in productos:
+                self.combo_productos.addItem(p.nombre, {"id": p.id, "stock": p.stock_actual})
+
+    def agregar_a_lista(self) -> None:
+        datos = self.combo_productos.currentData()
+        if not datos: return
+            
+        existente = next((item for item in self.lista_ingreso if item["producto_id"] == datos["id"]), None)
+        if existente:
+            existente["cantidad"] += self.spin_cantidad.value()
+        else:
+            self.lista_ingreso.append({
+                "producto_id": datos["id"],
+                "nombre": self.combo_productos.currentText(),
+                "stock_actual": datos["stock"],
+                "cantidad": self.spin_cantidad.value()
+            })
+        
+        self.spin_cantidad.setValue(1)
+        self._redibujar_tabla()
+
+    def quitar_seleccionado(self) -> None:
+        fila = self.tabla.currentRow()
+        if fila >= 0:
+            del self.lista_ingreso[fila]
+            self._redibujar_tabla()
+
+    def _redibujar_tabla(self) -> None:
+        self.tabla.setSortingEnabled(False)
+        self.tabla.setRowCount(len(self.lista_ingreso))
+        for fila, item in enumerate(self.lista_ingreso):
+            nuevo = item["stock_actual"] + item["cantidad"]
+            self.tabla.setItem(fila, 0, QTableWidgetItem(item["nombre"]))
+            self.tabla.setItem(fila, 1, ItemNumerico(str(item["stock_actual"]), item["stock_actual"]))
+            self.tabla.setItem(fila, 2, ItemNumerico(f"+{item['cantidad']}", item["cantidad"]))
+            self.tabla.setItem(fila, 3, ItemNumerico(str(nuevo), nuevo))
+        self.tabla.setSortingEnabled(True)
+        self.boton_confirmar.setEnabled(bool(self.lista_ingreso))
+
+    def confirmar_ingreso(self) -> None:
+        if not Sesion.activa():
+            QMessageBox.critical(self, "Error", "No hay sesión activa.")
+            return
+
+        with SessionLocal() as db:
+            for item in self.lista_ingreso:
+                producto = db.get(Producto, item["producto_id"])
+                if producto:
+                    producto.stock_actual += item["cantidad"]
+                    db.add(KardexMovimiento(
+                        producto_id=producto.id,
+                        usuario_id=Sesion.usuario_id,
+                        tipo_movimiento="ENTRADA",
+                        cantidad_movida=item["cantidad"],
+                        stock_resultante=producto.stock_actual
+                    ))
+            db.commit()
+            
+        QMessageBox.information(self, "Éxito", "Mercadería ingresada correctamente al inventario.")
+        self.accept()
+
 class InventarioWidget(QWidget):
     """Listado de productos con búsqueda, alta y edición."""
 
@@ -221,6 +332,9 @@ class InventarioWidget(QWidget):
         boton_editar = QPushButton("Editar")
         boton_editar.clicked.connect(self.editar)
 
+        self.boton_ingreso = QPushButton("Ingresar Mercadería")
+        self.boton_ingreso.clicked.connect(self.abrir_ingreso_mercaderia)
+
         self.tabla = crear_tabla(COLUMNAS_PRODUCTO, ancha=0, orden=0, numericas=(4, 5, 6, 7))  # ordena por Nombre
         self.tabla.doubleClicked.connect(self.editar)
         self.tabla.itemSelectionChanged.connect(self.recargar_kardex)
@@ -239,6 +353,7 @@ class InventarioWidget(QWidget):
         barra.addWidget(self.busqueda, 1)
         barra.addWidget(self.solo_criticos)
         barra.addWidget(self.boton_vender)
+        barra.addWidget(self.boton_ingreso)
         barra.addWidget(boton_nuevo)
         barra.addWidget(boton_editar)
 
@@ -398,5 +513,9 @@ class InventarioWidget(QWidget):
                 "El módulo de ventas de mostrador se conectará a esta acción directa.",
             )
 
-
+    def abrir_ingreso_mercaderia(self) -> None:
+        dialogo = IngresoMercaderiaDialog(self)
+        if dialogo.exec():
+            # Si el usuario confirma, recargamos la tabla principal para ver los nuevos números
+            self.recargar()
 
