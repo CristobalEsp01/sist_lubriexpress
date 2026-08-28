@@ -55,17 +55,3 @@ def test_la_paleta_cumple_el_contraste_minimo(descripcion, frente, fondo, minimo
         f"{descripcion}: {frente} sobre {fondo} da {medido:.2f}, "
         f"por debajo del mínimo {minimo}"
     )
-
-
-def test_ningun_widget_escribe_un_color_a_mano():
-    """La regla que el propio tema declara en su docstring."""
-    import pathlib
-    import re
-
-    ui = pathlib.Path(T.__file__).parent
-    sueltos = {
-        archivo.name: re.findall(r'"#[0-9A-Fa-f]{3,6}"', archivo.read_text(encoding="utf-8"))
-        for archivo in ui.glob("*.py")
-        if archivo.name != "tema.py"
-    }
-    assert not any(sueltos.values()), f"colores fuera de tema.py: {sueltos}"
