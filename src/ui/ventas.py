@@ -6,23 +6,50 @@ escribe en la base de datos, en una sola transacción, y son los triggers de
 Postgres los que descuentan el stock y dejan el rastro en el Kardex — este
 módulo nunca toca "stock_actual" directamente (ver database/schema_lubriexpress.sql).
 """
+import re
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QComboBox, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMessageBox,
-    QPushButton, QSplitter, QTableWidgetItem, QVBoxLayout, QWidget, QTabWidget, QDialog
+    QComboBox, QDialog, QDialogButtonBox, QHBoxLayout, QInputDialog, QLabel,
+    QLineEdit, QMessageBox, QPushButton, QSplitter, QTabWidget, QTableWidgetItem,
+    QVBoxLayout, QWidget,
 )
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import joinedload
 
 from ..auth import Sesion
 from ..database import SessionLocal
-from ..models import Cliente, DetalleVenta, Producto, Venta, Usuario
-from .comunes import ItemNumerico, clp, crear_tabla, reordenar
-from .tema import ALERTA
+from ..models import Cliente, DetalleVenta, Producto, Venta
+from ..texto import filtro_busqueda
+from .comunes import (
+    ItemNumerico, barra, bloque_total, clp, con_aviso_vacio, crear_tabla,
+    hacer_buscable, layout_de_dialogo, layout_de_pantalla, reordenar,
+)
+from .tema import ALERTA, CANAL_PANEL, ESPACIO_PANTALLA
 
 COLUMNAS_CATALOGO = ["Nombre", "Marca", "Categoría", "Stock", "Precio"]
 COLUMNAS_CARRITO = ["Producto", "Cantidad", "Precio Unit.", "Subtotal"]
+COLUMNAS_DETALLE = ["Producto", "Cantidad", "Precio Unit.", "Subtotal"]
+COLUMNAS_HISTORIAL = ["Fecha", "Nº Boleta", "Cliente", "Vendedor", "Total"]
+
+CORRELATIVO = re.compile(r"^(.*?)(\d+)$")
+
+
+def siguiente_boleta(ultima: str | None) -> str:
+    """'B-1042' -> 'B-1043'. '000123' -> '000124'. Sin dígitos al final, ''.
+
+    Es una sugerencia, no una asignación: el número de verdad lo manda el
+    talonario o el folio del SII. Si el sistema fuera dueño del correlativo,
+    bastaría una boleta anulada para que el papel y la base se separaran en
+    silencio hasta el cuadre. Por eso se propone y se deja editable.
+    """
+    calce = CORRELATIVO.match((ultima or "").strip())
+    if not calce:
+        return ""
+    prefijo, digitos = calce.groups()
+    return f"{prefijo}{int(digitos) + 1:0{len(digitos)}d}"
 
 
 class PuntoVentaWidget(QWidget):
@@ -36,8 +63,12 @@ class PuntoVentaWidget(QWidget):
         self.busqueda = QLineEdit(placeholderText="Buscar por nombre, marca o categoría…")
         self.busqueda.setClearButtonEnabled(True)
         self.busqueda.textChanged.connect(self.recargar_catalogo)
+        self.busqueda.returnPressed.connect(self.agregar_desde_busqueda)
 
-        self.tabla_catalogo = crear_tabla(COLUMNAS_CATALOGO, ancha=0, orden=0, numericas=(3, 4))
+        self.tabla_catalogo = con_aviso_vacio(
+            crear_tabla(COLUMNAS_CATALOGO, ancha=0, orden=0, numericas=(3, 4)),
+            "No hay productos activos en el catálogo.",
+        )
         self.tabla_catalogo.itemSelectionChanged.connect(self._actualizar_boton_agregar)
         self.tabla_catalogo.doubleClicked.connect(self.agregar_seleccionado)
 
@@ -45,20 +76,22 @@ class PuntoVentaWidget(QWidget):
         self.boton_agregar.setEnabled(False)
         self.boton_agregar.clicked.connect(self.agregar_seleccionado)
 
-        barra_catalogo = QHBoxLayout()
-        barra_catalogo.setSpacing(10)
-        barra_catalogo.addWidget(self.busqueda, 1)
-        barra_catalogo.addWidget(self.boton_agregar)
+        self.resumen = QLabel()
+        self.resumen.setProperty("clase", "resumen")
 
         panel_catalogo = QWidget()
         layout_catalogo = QVBoxLayout(panel_catalogo)
-        layout_catalogo.setContentsMargins(0, 0, 10, 0)
-        layout_catalogo.setSpacing(8)
-        layout_catalogo.addLayout(barra_catalogo)
+        layout_catalogo.setContentsMargins(0, 0, CANAL_PANEL, 0)
+        layout_catalogo.setSpacing(ESPACIO_PANTALLA)
+        layout_catalogo.addLayout(barra(self.busqueda, self.boton_agregar))
         layout_catalogo.addWidget(self.tabla_catalogo)
+        layout_catalogo.addWidget(self.resumen)
 
         # ---------------- Carrito y cobro (derecha) ----------------
-        self.tabla_carrito = crear_tabla(COLUMNAS_CARRITO, ancha=0, orden=0, numericas=(1, 2, 3))
+        self.tabla_carrito = con_aviso_vacio(
+            crear_tabla(COLUMNAS_CARRITO, ancha=0, orden=0, numericas=(1, 2, 3)),
+            "El carrito está vacío.\nBusca un producto y agrégalo.",
+        )
         self.tabla_carrito.setSortingEnabled(False)  # el orden del carrito es el de agregado
         self.tabla_carrito.doubleClicked.connect(self.cambiar_cantidad)
         self.tabla_carrito.itemSelectionChanged.connect(
@@ -75,17 +108,14 @@ class PuntoVentaWidget(QWidget):
         barra_carrito.addWidget(titulo_carrito, 1)
         barra_carrito.addWidget(self.boton_quitar)
 
-        self.cliente = QComboBox()
+        self.cliente = hacer_buscable(QComboBox())
+        self.cliente.lineEdit().setPlaceholderText("Sin cliente — busca por RUT o nombre")
         self._cargar_clientes()
 
-        self.boleta = QLineEdit(placeholderText="N.º de boleta *")
+        self.boleta = QLineEdit(placeholderText="Ej: B-1043")
+        self.boleta.returnPressed.connect(self.generar_venta)
 
-        self.total = QLabel("$0")
-        self.total.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        fuente_total = self.total.font()
-        fuente_total.setPointSize(fuente_total.pointSize() + 6)
-        fuente_total.setBold(True)
-        self.total.setFont(fuente_total)
+        marco_total, self.total = bloque_total()
 
         self.boton_vaciar = QPushButton("Vaciar carrito")
         self.boton_vaciar.clicked.connect(self.vaciar_carrito)
@@ -93,32 +123,30 @@ class PuntoVentaWidget(QWidget):
         self.boton_cobrar.setProperty("clase", "primario")
         self.boton_cobrar.setEnabled(False)
         self.boton_cobrar.clicked.connect(self.generar_venta)
-
-        barra_cobro = QHBoxLayout()
-        barra_cobro.setSpacing(10)
-        barra_cobro.addWidget(self.boton_vaciar)
-        barra_cobro.addWidget(self.boton_cobrar, 1)
+        # Cobrar necesita carrito Y boleta: el botón lo dice apagándose, en vez
+        # de dejarse apretar para responder con un aviso.
+        self.boleta.textChanged.connect(self._actualizar_boton_cobrar)
 
         panel_carrito = QWidget()
         layout_carrito = QVBoxLayout(panel_carrito)
-        layout_carrito.setContentsMargins(10, 0, 0, 0)
-        layout_carrito.setSpacing(8)
+        layout_carrito.setContentsMargins(CANAL_PANEL, 0, 0, 0)
+        layout_carrito.setSpacing(ESPACIO_PANTALLA)
         layout_carrito.addLayout(barra_carrito)
         layout_carrito.addWidget(self.tabla_carrito, 1)
         layout_carrito.addWidget(QLabel("Cliente (opcional)"))
         layout_carrito.addWidget(self.cliente)
+        layout_carrito.addWidget(QLabel("N.º de boleta *"))
         layout_carrito.addWidget(self.boleta)
-        layout_carrito.addWidget(self.total)
-        layout_carrito.addLayout(barra_cobro)
+        layout_carrito.addWidget(marco_total)
+        layout_carrito.addLayout(barra(self.boton_vaciar, self.boton_cobrar, estira=1))
 
         division = QSplitter(Qt.Horizontal)
         division.setHandleWidth(1)
         division.addWidget(panel_catalogo)
         division.addWidget(panel_carrito)
-        division.setSizes([560, 380])
+        division.setSizes([540, 430])
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 12, 14, 10)
+        layout = layout_de_pantalla(self)
         layout.addWidget(division)
 
         self.recargar_catalogo()
@@ -127,15 +155,11 @@ class PuntoVentaWidget(QWidget):
     # Catálogo
     # ------------------------------------------------------------------
     def recargar_catalogo(self) -> None:
-        texto = self.busqueda.text().strip()
-        consulta = select(Producto).where(Producto.activo.is_(True)).order_by(Producto.nombre)
-        if texto:
-            patron = f"%{texto}%"
-            consulta = consulta.where(or_(
-                Producto.nombre.ilike(patron),
-                Producto.marca.ilike(patron),
-                Producto.categoria.ilike(patron),
-            ))
+        consulta = filtro_busqueda(
+            select(Producto).where(Producto.activo.is_(True)).order_by(Producto.nombre),
+            self.busqueda.text(),
+            Producto.nombre, Producto.marca, Producto.categoria,
+        )
 
         with SessionLocal() as db:
             productos = db.scalars(consulta).all()
@@ -158,6 +182,11 @@ class PuntoVentaWidget(QWidget):
             self.tabla_catalogo.setItem(fila, 3, celda_stock)
             self.tabla_catalogo.setItem(fila, 4, ItemNumerico(clp(precio), precio))
         reordenar(self.tabla_catalogo)
+        self.resumen.setText(f"{len(filas)} producto(s) a la venta")
+        if self.busqueda.text().strip():
+            self.tabla_catalogo.aviso.setText("Ningún producto coincide con la búsqueda.")
+        else:
+            self.tabla_catalogo.aviso.setText("No hay productos activos en el catálogo.")
         self._actualizar_boton_agregar()
 
     def _actualizar_boton_agregar(self) -> None:
@@ -173,6 +202,14 @@ class PuntoVentaWidget(QWidget):
         producto_id = self._producto_seleccionado()
         if producto_id is not None:
             self.agregar_producto(producto_id)
+
+    def agregar_desde_busqueda(self) -> None:
+        """Enter en la búsqueda: agrega lo seleccionado o, si la búsqueda dejó
+        un solo producto, ese. Escribir hasta que quede uno y apretar Enter es
+        el camino más corto para quien cobra sin soltar el teclado."""
+        if self._producto_seleccionado() is None and self.tabla_catalogo.rowCount() == 1:
+            self.tabla_catalogo.selectRow(0)
+        self.agregar_seleccionado()
 
     # ------------------------------------------------------------------
     # Carrito
@@ -228,10 +265,25 @@ class PuntoVentaWidget(QWidget):
         if fila < 0:
             return
         entrada = self.carrito[fila]
+
+        # El stock del carrito se guardó al agregar el producto. Si mientras
+        # tanto llegó mercadería, el tope viejo impediría vender lo que ya está
+        # en bodega; si se vendió en otra caja, ofrecería de más.
+        with SessionLocal() as db:
+            stock = db.scalar(
+                select(Producto.stock_actual).where(Producto.id == entrada["producto_id"])
+            ) or 0
+        if stock <= 0:
+            QMessageBox.warning(
+                self, "Sin stock", f"'{entrada['nombre']}' se quedó sin stock disponible.",
+            )
+            return
+        entrada["stock_disponible"] = stock
+
         nueva, ok = QInputDialog.getInt(
             self, "Cambiar cantidad",
-            f"Cantidad de '{entrada['nombre']}' (stock disponible: {entrada['stock_disponible']}):",
-            entrada["cantidad"], 1, max(entrada["stock_disponible"], 1), 1,
+            f"Cantidad de '{entrada['nombre']}' (stock disponible: {stock}):",
+            min(entrada["cantidad"], stock), 1, stock, 1,
         )
         if ok:
             entrada["cantidad"] = nueva
@@ -268,21 +320,47 @@ class PuntoVentaWidget(QWidget):
                 fila, 2, ItemNumerico(clp(entrada["precio_unitario"]), entrada["precio_unitario"])
             )
             self.tabla_carrito.setItem(fila, 3, ItemNumerico(clp(subtotal), subtotal))
+        self.tabla_carrito.resizeColumnsToContents()
         self.total.setText(clp(total))
-        self.boton_cobrar.setEnabled(bool(self.carrito))
         self.boton_quitar.setEnabled(False)
+        self._actualizar_boton_cobrar()
+
+    def _actualizar_boton_cobrar(self) -> None:
+        self.boton_cobrar.setEnabled(bool(self.carrito) and bool(self.boleta.text().strip()))
 
     # ------------------------------------------------------------------
     # Cliente
     # ------------------------------------------------------------------
+    def showEvent(self, evento) -> None:
+        """Al volver a la pestaña se pone todo al día: un cliente recién creado
+        aparece, el stock del catálogo refleja lo que pasó en otras pantallas y
+        el cursor queda donde empieza toda venta."""
+        super().showEvent(evento)
+        self._cargar_clientes()
+        self.recargar_catalogo()
+        if not self.boleta.text().strip():
+            self._sugerir_boleta()
+        self.busqueda.setFocus()
+
+    def _sugerir_boleta(self) -> None:
+        """Propone el correlativo siguiente al de la última venta registrada."""
+        with SessionLocal() as db:
+            ultima = db.scalar(select(Venta.numero_boleta).order_by(Venta.id.desc()).limit(1))
+        self.boleta.setText(siguiente_boleta(ultima))
+
     def _cargar_clientes(self) -> None:
+        seleccionado = self.cliente.currentData()
         self.cliente.clear()
-        self.cliente.addItem("Venta sin cliente registrado", None)
         with SessionLocal() as db:
             clientes = db.scalars(select(Cliente).order_by(Cliente.nombre_completo)).all()
             for c in clientes:
                 etiqueta = f"{c.rut} — {c.nombre_completo}" if c.rut else c.nombre_completo
                 self.cliente.addItem(etiqueta, c.id)
+        # Sin cliente el campo queda vacío, con su texto de fondo: la venta de
+        # mostrador sin cliente es el caso normal y no necesita una opción que
+        # ocupe el campo como si fuera alguien. Recargar tampoco puede perder al
+        # cliente ya elegido para la venta en curso.
+        self.cliente.setCurrentIndex(self.cliente.findData(seleccionado))
 
     # ------------------------------------------------------------------
     # Cobro
@@ -371,120 +449,125 @@ class PuntoVentaWidget(QWidget):
             f"Venta registrada por {clp(total)} (boleta {numero_boleta}).",
         )
         self.carrito.clear()
-        self.boleta.clear()
-        self.cliente.setCurrentIndex(0)
+        self.cliente.setCurrentIndex(-1)  # la venta siguiente parte sin cliente
+        self._sugerir_boleta()  # deja lista la siguiente
         self._redibujar_carrito()
         self.recargar_catalogo()
 
+
 class DetalleVentaDialog(QDialog):
     """Ventana emergente que muestra los productos de una venta específica."""
+
     def __init__(self, venta_id: int, numero_boleta: str, parent=None):
         super().__init__(parent)
-        self.setWindowTitle(f"Detalle de Venta - Boleta {numero_boleta}")
+        self.setWindowTitle(f"Detalle de Venta — Boleta {numero_boleta}")
         self.resize(550, 300)
         self.setModal(True)
 
-        self.tabla = crear_tabla(["Producto", "Cantidad", "Precio Unit.", "Subtotal"], ancha=0, orden=0, numericas=(1, 2, 3))
+        self.tabla = crear_tabla(COLUMNAS_DETALLE, ancha=0, orden=0, numericas=(1, 2, 3))
+        marco_total, self.label_total = bloque_total("Total cobrado", menor=True)
 
-        # NUEVO: Etiqueta gigante para el total en la parte inferior
-        self.label_total = QLabel("Total: $0")
-        fuente = self.label_total.font()
-        fuente.setPointSize(fuente.pointSize() + 4)
-        fuente.setBold(True)
-        self.label_total.setFont(fuente)
-        self.label_total.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        # Sin esto la única salida es la X de la ventana.
+        cerrar = QDialogButtonBox(QDialogButtonBox.Close)
+        cerrar.rejected.connect(self.reject)
 
-        layout = QVBoxLayout(self)
+        layout = layout_de_dialogo(self)
         layout.addWidget(self.tabla)
-        layout.addWidget(self.label_total)
+        layout.addWidget(marco_total)
+        layout.addWidget(cerrar)
 
         self._cargar_detalle(venta_id)
 
     def _cargar_detalle(self, venta_id: int) -> None:
         with SessionLocal() as db:
-            detalles = db.scalars(select(DetalleVenta).where(DetalleVenta.venta_id == venta_id)).all()
-            
-            # 1. Apagar el ordenamiento (El antídoto contra el fantasma)
+            detalles = db.scalars(
+                select(DetalleVenta)
+                .options(joinedload(DetalleVenta.producto))  # sin esto, un SELECT por fila
+                .where(DetalleVenta.venta_id == venta_id)
+            ).all()
             self.tabla.setSortingEnabled(False)
             self.tabla.setRowCount(len(detalles))
-            
             suma_total = 0
 
             for fila, det in enumerate(detalles):
-                producto = db.get(Producto, det.producto_id)
-                nombre = producto.nombre if producto else "Producto eliminado"
+                nombre = det.producto.nombre if det.producto else "Producto eliminado"
                 subtotal = det.cantidad * det.precio_unitario_cobrado
-                
                 suma_total += subtotal
 
                 self.tabla.setItem(fila, 0, QTableWidgetItem(nombre))
                 self.tabla.setItem(fila, 1, ItemNumerico(str(det.cantidad), det.cantidad))
-                self.tabla.setItem(fila, 2, ItemNumerico(clp(det.precio_unitario_cobrado), det.precio_unitario_cobrado))
+                self.tabla.setItem(
+                    fila, 2,
+                    ItemNumerico(clp(det.precio_unitario_cobrado), det.precio_unitario_cobrado),
+                )
                 self.tabla.setItem(fila, 3, ItemNumerico(clp(subtotal), subtotal))
 
-            # 2. Encender el ordenamiento de nuevo
-            self.tabla.setSortingEnabled(True)
-            
-            # 3. Mostrar la suma total formateada
-            self.label_total.setText(f"Total: {clp(suma_total)}")
+        reordenar(self.tabla)
+        self.label_total.setText(clp(suma_total))
 
 
 class HistorialVentasWidget(QWidget):
     """Pestaña para visualizar las ventas ya generadas."""
+
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        self.tabla = crear_tabla(["Fecha", "Nº Boleta", "Cliente", "Vendedor", "Total"], ancha=0, orden=0, numericas=(4,))
+        self.tabla = con_aviso_vacio(
+            crear_tabla(COLUMNAS_HISTORIAL, ancha=2, orden=0, descendente=True, numericas=(4,)),
+            "Todavía no hay ventas registradas.\nLas que generes aparecerán acá.",
+        )
         self.tabla.doubleClicked.connect(self.abrir_detalle)
 
-        self.boton_actualizar = QPushButton("Actualizar Historial")
-        self.boton_actualizar.clicked.connect(self.cargar_ventas)
+        self.resumen = QLabel()
+        self.resumen.setProperty("clase", "resumen")
 
-        barra = QHBoxLayout()
-        barra.addStretch()
-        barra.addWidget(self.boton_actualizar)
-
-        layout = QVBoxLayout(self)
-        layout.addLayout(barra)
+        layout = layout_de_pantalla(self)
         layout.addWidget(self.tabla)
+        layout.addWidget(self.resumen)
 
+    def showEvent(self, evento) -> None:
+        """Única puerta de entrada al historial: se recarga al mostrarse, así
+        que una venta recién generada ya aparece al cambiar de pestaña."""
+        super().showEvent(evento)
         self.cargar_ventas()
 
     def cargar_ventas(self) -> None:
         with SessionLocal() as db:
-            ventas = db.scalars(select(Venta).order_by(Venta.id.desc())).all()
-            
-            # 1. Apagamos el ordenamiento automático ANTES de llenar la tabla
+            ventas = db.scalars(
+                select(Venta)
+                # Sin los joinedload son dos SELECT por venta listada, y esta
+                # consulta corre cada vez que se entra a la pestaña.
+                .options(joinedload(Venta.cliente), joinedload(Venta.usuario))
+                .order_by(Venta.id.desc())
+            ).all()
             self.tabla.setSortingEnabled(False)
-            
             self.tabla.setRowCount(len(ventas))
 
             for fila, venta in enumerate(ventas):
-                cliente_nombre = "Venta sin cliente"
-                if venta.cliente_id:
-                    cliente = db.get(Cliente, venta.cliente_id)
-                    if cliente:
-                        cliente_nombre = cliente.nombre_completo
+                cliente_nombre = (
+                    venta.cliente.nombre_completo if venta.cliente else "Venta sin cliente"
+                )
+                vendedor_nombre = venta.usuario.nombre if venta.usuario else "Desconocido"
+                fecha = getattr(venta, "fecha_venta", None)
+                # Ordenable por el instante real: como texto "%d-%m-%Y" ordena
+                # por día del mes. Mismo patrón que el kardex de inventario.
+                celda_fecha = ItemNumerico(
+                    fecha.strftime("%d-%m-%Y %H:%M") if fecha else "--",
+                    fecha.timestamp() if fecha else 0,
+                )
+                celda_fecha.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+                celda_fecha.setData(Qt.UserRole, venta.id)
 
-                vendedor_nombre = "Desconocido"
-                if venta.usuario_id:
-                    usuario = db.get(Usuario, venta.usuario_id)
-                    if usuario:
-                        vendedor_nombre = usuario.nombre
-
-                fecha_str = venta.fecha_venta.strftime("%d-%m-%Y %H:%M") if getattr(venta, "fecha_venta", None) else "--"
-
-                item_fecha = QTableWidgetItem(fecha_str)
-                item_fecha.setData(Qt.UserRole, venta.id)
-
-                self.tabla.setItem(fila, 0, item_fecha)
+                self.tabla.setItem(fila, 0, celda_fecha)
                 self.tabla.setItem(fila, 1, QTableWidgetItem(venta.numero_boleta))
                 self.tabla.setItem(fila, 2, QTableWidgetItem(cliente_nombre))
                 self.tabla.setItem(fila, 3, QTableWidgetItem(vendedor_nombre))
                 self.tabla.setItem(fila, 4, ItemNumerico(clp(venta.total_final), venta.total_final))
 
-            # 2. Volvemos a encender el ordenamiento DESPUÉS de llenar todo
-            self.tabla.setSortingEnabled(True)
+            total = sum(v.total_final for v in ventas)
+
+        reordenar(self.tabla)
+        self.resumen.setText(f"{len(ventas)} venta(s) — {clp(total)} en total")
 
     def abrir_detalle(self) -> None:
         fila = self.tabla.currentRow()
@@ -499,17 +582,16 @@ class HistorialVentasWidget(QWidget):
 
 
 class VentasWidget(QTabWidget):
-    """Contenedor principal del módulo de ventas con sus sub-pestañas.
-    Reemplaza al VentasWidget original para no romper el main.py ni __init__.py"""
-    
+    """Pestaña Ventas: el punto de venta y el historial, uno al lado del otro."""
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.punto_venta = PuntoVentaWidget(self)
         self.historial = HistorialVentasWidget(self)
-        
+
         self.addTab(self.punto_venta, "Nueva Venta")
         self.addTab(self.historial, "Historial de Ventas")
-        
+
     def agregar_producto(self, producto_id: int, cantidad: int = 1) -> None:
         """Delega el acceso directo (desde Inventario) al punto de venta y cambia a esa pestaña."""
         self.setCurrentWidget(self.punto_venta)

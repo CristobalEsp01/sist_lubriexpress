@@ -30,28 +30,22 @@ def obligatorias_del_esquema():
     }
 
 
-def test_los_mappers_configuran():
-    configure_mappers()
+def test_los_modelos_calzan_con_el_esquema():
+    configure_mappers()  # revienta acá si una relación quedó mal escrita
 
+    columnas = columnas_del_esquema()
+    assert set(Base.metadata.tables) == set(columnas)
 
-def test_toda_tabla_del_esquema_tiene_modelo():
-    assert set(Base.metadata.tables) == set(columnas_del_esquema())
-
-
-def test_las_columnas_existen_en_el_esquema():
-    esquema = columnas_del_esquema()
+    obligatorias = obligatorias_del_esquema()
     for tabla, obj in Base.metadata.tables.items():
-        faltantes = {c.name for c in obj.columns} - esquema[tabla]
+        faltantes = {c.name for c in obj.columns} - columnas[tabla]
         assert not faltantes, f"{tabla}: columnas que no existen en el esquema -> {faltantes}"
 
-
-def test_lo_obligatorio_calza_con_el_esquema():
-    """Comparar solo los nombres deja pasar el peor tipo de desfase: el modelo
-    diciendo que una columna es obligatoria cuando la base ya no lo exige."""
-    esquema = obligatorias_del_esquema()
-    for tabla, obj in Base.metadata.tables.items():
+        # Comparar solo los nombres deja pasar el peor tipo de desfase: el
+        # modelo diciendo que una columna es obligatoria cuando la base ya no
+        # lo exige.
         for columna in obj.columns:
-            obligatoria = columna.name in esquema[tabla]
+            obligatoria = columna.name in obligatorias[tabla]
             assert columna.nullable != obligatoria, (
                 f"{tabla}.{columna.name}: el esquema dice "
                 f"{'NOT NULL' if obligatoria else 'nullable'} y el modelo dice "

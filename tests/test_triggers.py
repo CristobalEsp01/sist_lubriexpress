@@ -32,39 +32,55 @@ def datos(db):
     return usuario, producto, cliente, vehiculo
 
 
-def test_venta_descuenta_stock_y_registra_kardex(db, datos):
-    usuario, producto, cliente, _ = datos
+def test_vender_y_atender_una_orden_descuentan_stock_con_su_rastro(db, datos):
+    """Los dos caminos de salida dejan el mismo tipo de huella, cada uno
+    apuntando a su documento de origen."""
+    usuario, producto, cliente, vehiculo = datos
 
     venta = Venta(usuario=usuario, cliente=cliente, numero_boleta="QA-001", total_final=105000)
     db.add(venta)
     db.flush()
     db.add(DetalleVenta(venta=venta, producto=producto, cantidad=3, precio_unitario_cobrado=35000))
     db.flush()
-
     db.refresh(producto)  # el trigger tocó la fila por fuera de la sesión
     assert producto.stock_actual == 7
 
-    mov = db.query(KardexMovimiento).filter_by(producto_id=producto.id).one()
-    assert (mov.tipo_movimiento, mov.cantidad_movida, mov.stock_resultante) == ("SALIDA_VENTA", -3, 7)
-    assert mov.venta_id == venta.id and mov.orden_id is None
-    assert mov.usuario_id == usuario.id
-
-
-def test_orden_descuenta_stock_y_registra_kardex(db, datos):
-    usuario, producto, _, vehiculo = datos
-
-    orden = Orden(vehiculo=vehiculo, usuario=usuario, kilometraje_ingreso=120000, subtotal=70000, total_final=70000)
+    orden = Orden(vehiculo=vehiculo, usuario=usuario, kilometraje_ingreso=120000,
+                  subtotal=70000, total_final=70000)
     db.add(orden)
     db.flush()
     db.add(DetalleOrden(orden=orden, producto=producto, cantidad=2, precio_unitario_cobrado=35000))
     db.flush()
+    db.refresh(producto)
+    assert producto.stock_actual == 5
+
+    por_tipo = {
+        m.tipo_movimiento: m
+        for m in db.query(KardexMovimiento).filter_by(producto_id=producto.id)
+    }
+    salida_venta, salida_orden = por_tipo["SALIDA_VENTA"], por_tipo["SALIDA_ORDEN"]
+    assert (salida_venta.cantidad_movida, salida_venta.stock_resultante) == (-3, 7)
+    assert salida_venta.venta_id == venta.id and salida_venta.orden_id is None
+    assert salida_venta.usuario_id == usuario.id
+    assert (salida_orden.cantidad_movida, salida_orden.stock_resultante) == (-2, 5)
+    assert salida_orden.orden_id == orden.id and salida_orden.venta_id is None
+
+
+@pytest.mark.parametrize("tipo, cantidad, esperado", [
+    ("ENTRADA", 6, 16),          # llegó mercadería
+    ("AJUSTE_MANUAL", -4, 6),    # merma o corrección a la baja
+])
+def test_un_movimiento_manual_mueve_el_stock(db, datos, tipo, cantidad, esperado):
+    usuario, producto, _, _ = datos
+
+    db.add(KardexMovimiento(producto=producto, usuario=usuario,
+                            tipo_movimiento=tipo, cantidad_movida=cantidad))
+    db.flush()
 
     db.refresh(producto)
-    assert producto.stock_actual == 8
-
+    assert producto.stock_actual == esperado
     mov = db.query(KardexMovimiento).filter_by(producto_id=producto.id).one()
-    assert (mov.tipo_movimiento, mov.cantidad_movida, mov.stock_resultante) == ("SALIDA_ORDEN", -2, 8)
-    assert mov.orden_id == orden.id and mov.venta_id is None
+    assert mov.stock_resultante == esperado  # lo calcula el trigger, no la aplicación
 
 
 def test_vender_mas_de_lo_que_hay_no_deja_rastro(db, datos):
@@ -86,13 +102,20 @@ def test_vender_mas_de_lo_que_hay_no_deja_rastro(db, datos):
     assert db.query(DetalleVenta).filter_by(producto_id=producto.id).count() == 0
 
 
-def test_descuento_porcentaje_y_monto_son_excluyentes(db, datos):
-    usuario, _, _, vehiculo = datos
+@pytest.mark.parametrize("caso", ["ajuste bajo cero", "movimiento de cero", "descuento doble"])
+def test_la_base_rechaza_lo_que_no_cuadra(db, datos, caso):
+    usuario, producto, _, vehiculo = datos
 
-    db.add(Orden(
-        vehiculo=vehiculo, usuario=usuario, kilometraje_ingreso=1,
-        descuento_porcentaje=10, descuento_monto=5000,
-    ))
+    if caso == "ajuste bajo cero":
+        db.add(KardexMovimiento(producto=producto, usuario=usuario,
+                                tipo_movimiento="AJUSTE_MANUAL", cantidad_movida=-11))
+    elif caso == "movimiento de cero":
+        db.add(KardexMovimiento(producto=producto, usuario=usuario,
+                                tipo_movimiento="AJUSTE_MANUAL", cantidad_movida=0))
+    else:  # porcentaje y monto son excluyentes
+        db.add(Orden(vehiculo=vehiculo, usuario=usuario, kilometraje_ingreso=1,
+                     descuento_porcentaje=10, descuento_monto=5000))
+
     with pytest.raises(IntegrityError):
         db.flush()
 
@@ -108,52 +131,3 @@ def test_la_vista_de_stock_critico_detecta_el_umbral(db, datos):
     producto.stock_actual = 5
     db.flush()
     assert en_vista()
-
-
-def test_entrada_de_mercaderia_suma_stock(db, datos):
-    usuario, producto, _, _ = datos
-
-    db.add(KardexMovimiento(
-        producto=producto, usuario=usuario, tipo_movimiento="ENTRADA", cantidad_movida=6,
-    ))
-    db.flush()
-
-    db.refresh(producto)
-    assert producto.stock_actual == 16
-
-    mov = db.query(KardexMovimiento).filter_by(producto_id=producto.id).one()
-    assert mov.stock_resultante == 16  # lo calcula el trigger, no la aplicación
-
-
-def test_ajuste_manual_negativo_descuenta_stock(db, datos):
-    usuario, producto, _, _ = datos
-
-    db.add(KardexMovimiento(
-        producto=producto, usuario=usuario, tipo_movimiento="AJUSTE_MANUAL", cantidad_movida=-4,
-    ))
-    db.flush()
-
-    db.refresh(producto)
-    assert producto.stock_actual == 6
-    mov = db.query(KardexMovimiento).filter_by(producto_id=producto.id).one()
-    assert mov.stock_resultante == 6
-
-
-def test_ajuste_manual_no_puede_dejar_stock_negativo(db, datos):
-    usuario, producto, _, _ = datos
-
-    db.add(KardexMovimiento(
-        producto=producto, usuario=usuario, tipo_movimiento="AJUSTE_MANUAL", cantidad_movida=-11,
-    ))
-    with pytest.raises(IntegrityError):
-        db.flush()
-
-
-def test_un_movimiento_de_cero_no_se_acepta(db, datos):
-    usuario, producto, _, _ = datos
-
-    db.add(KardexMovimiento(
-        producto=producto, usuario=usuario, tipo_movimiento="AJUSTE_MANUAL", cantidad_movida=0,
-    ))
-    with pytest.raises(IntegrityError):
-        db.flush()

@@ -1,13 +1,15 @@
 """Pantalla de inicio de sesión. Se muestra una vez, antes de abrir la
 ventana principal (ver main.py)."""
 from PySide6.QtWidgets import (
-    QDialog, QFormLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QVBoxLayout,
+    QDialog, QFormLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
 )
 from sqlalchemy import select
 
 from ..auth import Sesion, verificar_password
 from ..database import SessionLocal
 from ..models import Usuario
+from .comunes import layout_de_dialogo
+from .tema import ESPACIO_FORMULARIO
 
 
 class LoginDialog(QDialog):
@@ -32,7 +34,7 @@ class LoginDialog(QDialog):
         self.password.returnPressed.connect(self._intentar)
 
         form = QFormLayout()
-        form.setSpacing(12)
+        form.setSpacing(ESPACIO_FORMULARIO)
         form.addRow("Usuario", self.username)
         form.addRow("Contraseña", self.password)
 
@@ -40,9 +42,7 @@ class LoginDialog(QDialog):
         boton_entrar.setProperty("clase", "primario")
         boton_entrar.clicked.connect(self._intentar)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 20, 24, 20)
-        layout.setSpacing(16)
+        layout = layout_de_dialogo(self)
         layout.addWidget(titulo)
         layout.addLayout(form)
         layout.addWidget(boton_entrar)

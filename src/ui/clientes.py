@@ -7,17 +7,19 @@ from PySide6.QtWidgets import (
     QLineEdit, QMessageBox, QPushButton, QSpinBox, QSplitter, QTableWidgetItem,
     QVBoxLayout, QWidget,
 )
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
 from ..database import SessionLocal
 from ..models import Cliente, Vehiculo
 from ..rut import es_valido, formatear
+from ..texto import columna_normalizada, filtro_busqueda
 from .comunes import (
     BADGE_ACENTO, BADGE_INFO, BADGE_NEUTRAL, ROL_INSIGNIA,
-    ItemNumerico, botonera, crear_tabla, reordenar,
+    ItemNumerico, barra, botonera, con_aviso_vacio, crear_tabla,
+    layout_de_dialogo, layout_de_pantalla, reordenar,
 )
-from .tema import fuente_tabular
+from .tema import CANAL_PANEL, fuente_tabular
 
 COLUMNAS_CLIENTE = ["RUT", "Nombre", "Tipo", "Teléfono", "Vehículos"]
 COLUMNAS_VEHICULO = ["Patente", "Marca", "Modelo", "Año", "Combustible", "Transmisión"]
@@ -56,9 +58,7 @@ class FormularioCliente(QDialog):
 
         botones = botonera(self)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 18, 20, 18)
-        layout.setSpacing(16)
+        layout = layout_de_dialogo(self)
         layout.addLayout(form)
         layout.addWidget(botones)
 
@@ -165,9 +165,7 @@ class FormularioVehiculo(QDialog):
 
         botones = botonera(self)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 18, 20, 18)
-        layout.setSpacing(16)
+        layout = layout_de_dialogo(self)
         layout.addLayout(form)
         layout.addWidget(botones)
 
@@ -255,47 +253,52 @@ class ClientesWidget(QWidget):
         boton_nuevo = QPushButton("Nuevo cliente")
         boton_nuevo.setProperty("clase", "primario")
         boton_nuevo.clicked.connect(self.nuevo_cliente)
-        boton_editar = QPushButton("Editar cliente")
-        boton_editar.clicked.connect(self.editar_cliente)
+        # Los botones que necesitan una fila elegida nacen apagados y se
+        # encienden con la selección, como en Inventario: avisar con un cartel
+        # después del click es hacer preguntar por algo que se puede mostrar.
+        self.boton_editar = QPushButton("Editar cliente")
+        self.boton_editar.setEnabled(False)
+        self.boton_editar.clicked.connect(self.editar_cliente)
 
-        self.tabla = crear_tabla(COLUMNAS_CLIENTE, ancha=1, orden=1, numericas=(4,))  # ordena por Nombre
+        self.tabla = con_aviso_vacio(
+            crear_tabla(COLUMNAS_CLIENTE, ancha=1, orden=1, numericas=(4,)),
+            "No hay clientes registrados.",
+        )  # ordena por Nombre
         self.tabla.itemSelectionChanged.connect(self.recargar_vehiculos)
         self.tabla.doubleClicked.connect(self.editar_cliente)
 
-        self.tabla_vehiculos = crear_tabla(COLUMNAS_VEHICULO, ancha=2, orden=0, numericas=(3,))  # ordena por Patente
+        self.tabla_vehiculos = con_aviso_vacio(
+            crear_tabla(COLUMNAS_VEHICULO, ancha=2, orden=0, numericas=(3,)),
+            "Elige un cliente para ver sus vehículos.",
+        )  # ordena por Patente
         self.tabla_vehiculos.doubleClicked.connect(self.editar_vehiculo)
+        self.tabla_vehiculos.itemSelectionChanged.connect(self._actualizar_boton_vehiculo)
 
         self.titulo_vehiculos = QLabel("Vehículos")
         self.titulo_vehiculos.setProperty("clase", "seccion")
         self.boton_nuevo_vehiculo = QPushButton("Agregar vehículo")
         self.boton_nuevo_vehiculo.clicked.connect(self.nuevo_vehiculo)
         self.boton_editar_vehiculo = QPushButton("Editar vehículo")
+        self.boton_editar_vehiculo.setEnabled(False)
         self.boton_editar_vehiculo.clicked.connect(self.editar_vehiculo)
 
         self.resumen = QLabel()
         self.resumen.setProperty("clase", "resumen")
 
-        barra = QHBoxLayout()
-        barra.setSpacing(10)
-        barra.addWidget(self.busqueda, 1)
-        barra.addWidget(boton_nuevo)
-        barra.addWidget(boton_editar)
-
-        barra_vehiculos = QHBoxLayout()
-        barra_vehiculos.setSpacing(10)
-        barra_vehiculos.addWidget(self.titulo_vehiculos, 1)
-        barra_vehiculos.addWidget(self.boton_nuevo_vehiculo)
-        barra_vehiculos.addWidget(self.boton_editar_vehiculo)
+        barra_clientes = barra(self.busqueda, boton_nuevo, self.boton_editar)
+        barra_vehiculos = barra(
+            self.titulo_vehiculos, self.boton_nuevo_vehiculo, self.boton_editar_vehiculo,
+        )
 
         arriba = QWidget()
         layout_arriba = QVBoxLayout(arriba)
-        layout_arriba.setContentsMargins(0, 0, 0, 10)
-        layout_arriba.addLayout(barra)
+        layout_arriba.setContentsMargins(0, 0, 0, CANAL_PANEL)
+        layout_arriba.addLayout(barra_clientes)
         layout_arriba.addWidget(self.tabla)
 
         abajo = QWidget()
         layout_abajo = QVBoxLayout(abajo)
-        layout_abajo.setContentsMargins(0, 10, 0, 0)
+        layout_abajo.setContentsMargins(0, CANAL_PANEL, 0, 0)
         layout_abajo.addLayout(barra_vehiculos)
         layout_abajo.addWidget(self.tabla_vehiculos)
 
@@ -305,41 +308,26 @@ class ClientesWidget(QWidget):
         division.addWidget(abajo)
         division.setSizes([380, 220])
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 12, 14, 10)
-        layout.setSpacing(8)
+        layout = layout_de_pantalla(self)
         layout.addWidget(division)
         layout.addWidget(self.resumen)
 
         self.recargar()
 
     def recargar(self) -> None:
-        texto = self.busqueda.text().strip()
-        consulta = (
+        consulta = filtro_busqueda(
             select(Cliente, func.count(Vehiculo.id))
             .outerjoin(Vehiculo)
             .group_by(Cliente.id)
-            .order_by(Cliente.nombre_completo)
+            .order_by(Cliente.nombre_completo),
+            self.busqueda.text(),
+            Cliente.rut, Cliente.nombre_completo,
+            # any() genera un EXISTS: filtrar por el join descuadraría el
+            # count(Vehiculo.id) y un cliente con 3 autos aparecería con 1.
+            tambien=lambda aguja: Cliente.vehiculos.any(
+                columna_normalizada(Vehiculo.patente).like(aguja)
+            ),
         )
-        if texto:
-            patron = f"%{texto}%"
-            # El RUT se guarda con puntos y la patente sin guión, pero nadie los
-            # tipea así al buscar: el patrón de identificadores va normalizado, y
-            # el crudo se reserva para el nombre, donde borrar espacios rompería
-            # la búsqueda. Del lado del RUT hay que aplanar también la columna.
-            # El replace() sobre la columna anula el índice del UNIQUE;
-            # con miles de clientes, pasar a una columna rut_plano indexada.
-            patron_id = f"%{re.sub(r'[.\-\s]', '', texto).upper()}%"
-            rut_plano = func.replace(func.replace(Cliente.rut, ".", ""), "-", "")
-            consulta = consulta.where(
-                or_(
-                    rut_plano.ilike(patron_id),
-                    Cliente.nombre_completo.ilike(patron),
-                    # any() genera un EXISTS: filtrar por el join descuadraría el
-                    # count(Vehiculo.id) y un cliente con 3 autos aparecería con 1.
-                    Cliente.vehiculos.any(Vehiculo.patente.ilike(patron_id)),
-                )
-            )
 
         with SessionLocal() as db:
             filas = [
@@ -366,6 +354,10 @@ class ClientesWidget(QWidget):
             self.tabla.setItem(fila, 4, item_veh)
         reordenar(self.tabla)
 
+        self.tabla.aviso.setText(
+            "Ningún cliente coincide con la búsqueda." if self.busqueda.text().strip()
+            else "No hay clientes registrados."
+        )
         self.resumen.setText(f"{len(filas)} cliente(s)")
         self.recargar_vehiculos()
 
@@ -381,14 +373,19 @@ class ClientesWidget(QWidget):
             return None
         return self.tabla_vehiculos.item(fila, 0).data(Qt.UserRole)
 
+    def _actualizar_boton_vehiculo(self) -> None:
+        self.boton_editar_vehiculo.setEnabled(self.vehiculo_seleccionado() is not None)
+
     def recargar_vehiculos(self) -> None:
         cliente_id = self.cliente_seleccionado()
         hay_cliente = cliente_id is not None
+        self.boton_editar.setEnabled(hay_cliente)
         self.boton_nuevo_vehiculo.setEnabled(hay_cliente)
-        self.boton_editar_vehiculo.setEnabled(hay_cliente)
+        self._actualizar_boton_vehiculo()
 
         if not hay_cliente:
-            self.titulo_vehiculos.setText("Vehículos — selecciona un cliente")
+            self.titulo_vehiculos.setText("Vehículos")
+            self.tabla_vehiculos.aviso.setText("Elige un cliente para ver sus vehículos.")
             self.tabla_vehiculos.setRowCount(0)
             return
 
@@ -404,6 +401,7 @@ class ClientesWidget(QWidget):
             ]
 
         self.titulo_vehiculos.setText(f"Vehículos de {nombre} ({len(filas)})")
+        self.tabla_vehiculos.aviso.setText("Este cliente no tiene vehículos registrados.")
         self.tabla_vehiculos.setSortingEnabled(False)
         self.tabla_vehiculos.setRowCount(len(filas))
         for fila, (vid, patente, marca, modelo, anio, combustible, transmision) in enumerate(filas):
@@ -430,8 +428,7 @@ class ClientesWidget(QWidget):
     def editar_cliente(self) -> None:
         cliente_id = self.cliente_seleccionado()
         if cliente_id is None:
-            QMessageBox.information(self, "Sin selección", "Elige un cliente de la lista.")
-            return
+            return  # el botón está apagado; solo queda el doble click al vacío
         if FormularioCliente(self, cliente_id).exec():
             self.recargar()
 
@@ -445,9 +442,12 @@ class ClientesWidget(QWidget):
     def editar_vehiculo(self) -> None:
         vehiculo_id = self.vehiculo_seleccionado()
         if vehiculo_id is None:
-            QMessageBox.information(self, "Sin selección", "Elige un vehículo de la lista.")
-            return
+            return  # el botón está apagado; solo queda el doble click al vacío
         if FormularioVehiculo(self, vehiculo_id=vehiculo_id).exec():
             self.recargar()
+
+    def showEvent(self, evento) -> None:
+        super().showEvent(evento)
+        self.busqueda.setFocus()
 
 
