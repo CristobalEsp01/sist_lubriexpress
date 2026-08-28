@@ -13,7 +13,7 @@ Lubri-Express (Inversiones Tres Puntos SpA). Corre localmente sobre PostgreSQL.
 | Historial de Kardex por producto | Funcionando (solo lectura) |
 | Login y control de acceso por rol | Funcionando (correr script de creacion de usuario) |
 | Ventas de mostrador | Funcionando |
-| Órdenes de trabajo | Pendiente |
+| Órdenes de trabajo | Funcionando (Falta implementar Whatsapp) |
 | Carga masiva desde Excel | Pendiente |
 | Exportación a PDF y reportería | Pendiente |
 
@@ -123,6 +123,7 @@ sist_lubriexpress/
 │       ├── comunes.py               # Formato de moneda y tablas compartidas
 │       ├── inventario.py            # Mantenedor de Inventario
 │       ├── clientes.py              # Mantenedor de Clientes y Vehículos
+│       ├── ordenes.py               # Modulo de ordenes de trabajo (cambios de aceite).
 │       ├── ventas.py                # Modulo del punto de venta, carrito e historial.
 │       └── login.py                 # Ventana modal para el inicio de sesión.
 ├── database/
@@ -131,7 +132,7 @@ sist_lubriexpress/
 ├── docs/
 │   └── base-de-datos.md             # Contrato del esquema: tablas, triggers e invariantes
 ├── scripts/
-│    └── crear_usuario.py             # Script interactivo de consola para registrar usuarios con contraseñas seguras.
+│    └── crear_usuario.py            # Script interactivo de consola para registrar usuarios con contraseñas seguras.
 ├── requirements.txt                 # Dependencias de la aplicación
 ├── requirements-dev.txt             # + herramientas de pruebas
 └── .env                             # Credenciales locales (no se sube)

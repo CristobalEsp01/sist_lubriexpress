@@ -10,6 +10,7 @@ from .comunes import ItemNumerico, clp
 from .inventario import FormularioProducto, InventarioWidget
 from .login import LoginDialog
 from .ventas import VentasWidget
+from .ordenes import OrdenesWidget
 
 __all__ = [
     "ClientesWidget", "FormularioCliente", "FormularioProducto", "FormularioVehiculo",
@@ -32,6 +33,7 @@ class VentanaPrincipal(QMainWindow):
         self.pestanias.addTab(self.inventario, "Inventario")
         self.pestanias.addTab(self.ventas, "Ventas")
         self.pestanias.addTab(self.clientes, "Clientes")
+        self.pestanias.addTab(OrdenesWidget(), "Órdenes de Trabajo")
         self.setCentralWidget(self.pestanias)
 
         if Sesion.activa():
