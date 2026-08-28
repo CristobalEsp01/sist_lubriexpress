@@ -208,9 +208,17 @@ class OrdenesWidget(QWidget):
         fuente_total.setBold(True)
         self.label_total.setFont(fuente_total)
         
+        # Botones de Cierre
+        self.boton_cancelar = QPushButton("Cancelar")
+        self.boton_cancelar.clicked.connect(self.cancelar_orden)
+
         self.boton_guardar = QPushButton("Guardar Orden")
         self.boton_guardar.setProperty("clase", "primario")
         self.boton_guardar.clicked.connect(self.guardar_orden)
+
+        layout_botones = QHBoxLayout()
+        layout_botones.addWidget(self.boton_cancelar)
+        layout_botones.addWidget(self.boton_guardar)
         
         layout_der = QVBoxLayout()
         layout_der.addWidget(QLabel("2. Kilometraje de Ingreso *"))
@@ -223,7 +231,8 @@ class OrdenesWidget(QWidget):
         layout_der.addWidget(self.texto_observaciones)
         layout_der.addStretch()
         layout_der.addWidget(self.label_total)
-        layout_der.addWidget(self.boton_guardar)
+
+        layout_der.addLayout(layout_botones)
         
         division = QSplitter(Qt.Horizontal)
         widget_izq = QWidget()
@@ -495,6 +504,30 @@ class OrdenesWidget(QWidget):
         
         self.panel_trabajo.setVisible(True)
         self.boton_nueva_orden.setEnabled(False)
+
+    def cancelar_orden(self) -> None:
+        # Solo pedir confirmación si el carrito ya tiene insumos
+        if self.tabla_carrito.rowCount() > 0:
+            confirmacion = QMessageBox.question(
+                self, "Cancelar Orden",
+                "Tienes productos y servicios cargados. ¿Estás seguro de que deseas descartar esta orden?",
+                QMessageBox.Yes | QMessageBox.No
+            )
+            if confirmacion != QMessageBox.Yes:
+                return
+
+        # Restaurar la interfaz al estado de reposo (Gris)
+        self.panel_trabajo.setEnabled(False)
+        self.boton_nueva_orden.setEnabled(True)
+        self.label_contexto.setText("Seleccione 'Nueva Orden' para comenzar.")
+        
+        # Limpiar los campos para que no queden datos fantasma
+        self.tabla_carrito.setRowCount(0)
+        self.spin_kilometraje.setValue(0)
+        self.combo_combustible.setCurrentIndex(0)
+        self.texto_observaciones.clear()
+        self.label_total.setText("Total: $0")
+        self.vehiculo_actual_id = None
 
 class DialogoBuscarProducto(QDialog):
     """Buscador rápido de insumos y repuestos para la OT."""
