@@ -313,7 +313,9 @@ class OrdenesWidget(QWidget):
                 fecha_str = orden.fecha_creacion.strftime("%d-%m-%Y %H:%M")
                 
                 # Columnas: ["ID OT", "Fecha", "Cliente", "Patente", "Vehículo", "Mecánico", "Total"]
-                self.tabla_historial.setItem(fila, 0, ItemNumerico(str(orden.id), orden.id))
+                celda_id = ItemNumerico(str(orden.id), orden.id)
+                celda_id.setData(Qt.UserRole, orden.id)
+                self.tabla_historial.setItem(fila, 0, celda_id)
                 self.tabla_historial.setItem(fila, 1, QTableWidgetItem(fecha_str))
                 self.tabla_historial.setItem(fila, 2, QTableWidgetItem(cliente.nombre_completo))
                 self.tabla_historial.setItem(fila, 3, QTableWidgetItem(vehiculo.patente))
@@ -483,27 +485,18 @@ class OrdenesWidget(QWidget):
             QMessageBox.critical(self, "Error", f"Ocurrió un error al guardar la orden: {str(e)}")
 
     def abrir_detalle_orden(self) -> None:
+        """Consultar una orden guardada no toca la que se esté armando.
+
+        Este cuerpo tenía copiado el de `_iniciar_nueva_orden` y limpiaba el
+        formulario de la otra pestaña: abrir una orden del historial para
+        mirarla descartaba carrito, kilometraje y observaciones en curso.
+        """
         fila = self.tabla_historial.currentRow()
-        if fila < 0: return
-        
-        # Extraemos el texto de la columna 0 (ID OT) y lo convertimos a entero
-        orden_id_str = self.tabla_historial.item(fila, 0).text()
-        try:
-            orden_id = int(orden_id_str)
-            dialogo = DialogoDetalleOrden(orden_id, self)
-            dialogo.exec()
-        except ValueError:
-            pass
-        
-        # Reiniciar campos visuales para una orden limpia
-        self.tabla_carrito.setRowCount(0)
-        self.spin_kilometraje.setValue(0)
-        self.combo_combustible.setCurrentIndex(0)
-        self.texto_observaciones.clear()
-        self.label_total.setText("Total: $0")
-        
-        self.panel_trabajo.setVisible(True)
-        self.boton_nueva_orden.setEnabled(False)
+        if fila < 0:
+            return
+
+        orden_id = self.tabla_historial.item(fila, 0).data(Qt.UserRole)
+        DialogoDetalleOrden(orden_id, self).exec()
 
     def cancelar_orden(self) -> None:
         # Solo pedir confirmación si el carrito ya tiene insumos
