@@ -12,33 +12,64 @@ from PySide6.QtCore import QLibraryInfo, QLocale, QTranslator
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication
 
+# Cada par texto/fondo de esta paleta está medido contra WCAG 2.1 AA: 4.5:1 para
+# texto y 3:1 para bordes de control. Los tonos oscuros de cada color existen
+# porque el tono medio no llegaba: ámbar 600 sobre el fondo da 3.02, y el mismo
+# ámbar relleno con texto blanco da 3.19. Hay una prueba que mide los 26 pares.
 FONDO = "#F8F9FA"
 SUPERFICIE = "#FFFFFF"
 TINTA = "#1E232A"
 TINTA_SUAVE = "#64748B"
+
+# Dos bordes con dos trabajos. El decorativo separa; el de campo delimita un
+# control y por eso tiene que ser perceptible: un input blanco sobre un fondo
+# casi blanco, con un borde de 1.23:1, es invisible hasta que recibe el foco.
 BORDE = "#E2E8F0"
+BORDE_CAMPO = "#7D8DA5"
 BORDE_SUAVE = "#F1F5F9"
+
+# Ámbar de aceite. El claro señala (borde con foco, subrayado de pestaña); el
+# oscuro es el que se puede leer como texto y rellenar con blanco encima.
 ACENTO = "#D97706"
-ACENTO_HOVER = "#B45309"
+ACENTO_OSCURO = "#B45309"
+ACENTO_PROFUNDO = "#92400E"
 ACENTO_FONDO = "#FEF3C7"
-ALERTA = "#DC2626"
+
+ALERTA = "#B91C1C"
 ALERTA_FONDO = "#FEE2E2"
-EXITO = "#16A34A"
+EXITO = "#15803D"
 EXITO_FONDO = "#DCFCE7"
-INFO = "#2563EB"
+INFO = "#1D4ED8"
 INFO_FONDO = "#DBEAFE"
 ALTERNA = "#FAFAFA"
-APAGADO = "#94A3B8"
 NEUTRAL_FONDO = "#F1F5F9"
 NEUTRAL_TEXTO = "#475569"
 
+# Solo para controles deshabilitados: la pauta exime a los inactivos del mínimo
+# de contraste, y es justamente lo apagado lo que comunica que no se pueden
+# usar. Para texto que sí hay que leer —un aviso, una fila inactiva— va
+# TINTA_SUAVE, que sí lo cumple.
+APAGADO = "#94A3B8"
+
 ALTO_FILA = 36
 CUERPO_PT = 10
+
+# El espaciado también es del tema: estaba copiado a mano en cinco pantallas y
+# las tres nuevas se quedaron con el margen por defecto de Qt.
+MARGEN_PANTALLA = (14, 12, 14, 10)
+MARGEN_DIALOGO = (20, 18, 20, 18)
+ESPACIO_PANTALLA = 8
+ESPACIO_DIALOGO = 16
+ESPACIO_BARRA = 10
+ESPACIO_FORMULARIO = 12
+CANAL_PANEL = 10   # separación entre los dos lados de un splitter
+INSIGNIA_PT = 9    # tipografía de las pastillas de estado
 
 # Familias monoespaciadas en orden de preferencia: Windows, Linux, macOS.
 # Con figuras de ancho fijo las columnas de stock y precios calzan dígito con
 # dígito y el inventario se lee de un vistazo.
 MONOESPACIADAS = ["Consolas", "DejaVu Sans Mono", "Menlo", "Liberation Mono", "monospace"]
+FAMILIAS_MONO = ", ".join(f'"{f}"' for f in MONOESPACIADAS)
 
 # Qt trae sus propias flechas como recursos internos. Apenas se aplica una hoja
 # de estilos a un QComboBox o QSpinBox, Qt deja de dibujar la flecha nativa y hay
@@ -74,7 +105,7 @@ QTabBar::tab:hover {{
     border-top-right-radius: 4px;
 }}
 QTabBar::tab:selected {{
-    color: {ACENTO};
+    color: {ACENTO_OSCURO};
     border-bottom: 2px solid {ACENTO};
     font-weight: 600;
 }}
@@ -114,7 +145,7 @@ QTableCornerButton::section {{
 
 QLineEdit, QComboBox, QSpinBox, QPlainTextEdit {{
     background: {SUPERFICIE};
-    border: 1px solid {BORDE};
+    border: 1px solid {BORDE_CAMPO};
     border-radius: 5px;
     padding: 7px 10px;
     color: {TINTA};
@@ -185,7 +216,7 @@ QDialogButtonBox {{
 
 QPushButton {{
     background: {SUPERFICIE};
-    border: 1px solid {BORDE};
+    border: 1px solid {BORDE_CAMPO};
     border-radius: 5px;
     padding: 7px 16px;
     color: {TINTA};
@@ -194,7 +225,7 @@ QPushButton {{
 QPushButton:hover {{
     border-color: {ACENTO};
     background: {SUPERFICIE};
-    color: {ACENTO_HOVER};
+    color: {ACENTO_OSCURO};
 }}
 QPushButton:pressed {{
     background: {ACENTO_FONDO};
@@ -205,37 +236,23 @@ QPushButton:disabled {{
     background: {BORDE_SUAVE};
 }}
 QPushButton[clase="primario"] {{
-    background: {ACENTO};
-    border: 1px solid {ACENTO};
+    background: {ACENTO_OSCURO};
+    border: 1px solid {ACENTO_OSCURO};
     color: {SUPERFICIE};
     font-weight: 600;
 }}
 QPushButton[clase="primario"]:hover {{
-    background: {ACENTO_HOVER};
-    border-color: {ACENTO_HOVER};
+    background: {ACENTO_PROFUNDO};
+    border-color: {ACENTO_PROFUNDO};
     color: {SUPERFICIE};
 }}
 QPushButton[clase="primario"]:pressed {{
-    background: #92400E;
-    border-color: #92400E;
+    background: {ACENTO_PROFUNDO};
+    border-color: {ACENTO_PROFUNDO};
 }}
 QPushButton[clase="primario"]:disabled {{
     background: {BORDE_SUAVE};
     border-color: {BORDE_SUAVE};
-    color: {APAGADO};
-}}
-
-QPushButton[clase="accion-rapida"] {{
-    background: {SUPERFICIE};
-    border: 1px solid {ACENTO};
-    color: {ACENTO_HOVER};
-    font-weight: 600;
-}}
-QPushButton[clase="accion-rapida"]:hover {{
-    background: {ACENTO_FONDO};
-}}
-QPushButton[clase="accion-rapida"]:disabled {{
-    border-color: {BORDE};
     color: {APAGADO};
 }}
 
@@ -251,9 +268,40 @@ QLabel[clase="resumen"] {{
     padding: 3px 2px;
 }}
 QLabel[clase="aviso-vacio"] {{
-    color: {APAGADO};
+    background: transparent;
+    color: {TINTA_SUAVE};
     font-style: italic;
     padding: 12px;
+}}
+
+/* El total es el resultado de la pantalla, no un campo más del formulario: va
+   sobre su propia superficie, separado por una línea, como el pie de una
+   boleta. La cifra en monoespaciada para que no baile de ancho al escribir. */
+QFrame[clase="total"] {{
+    background: {SUPERFICIE};
+    border: none;
+    border-top: 1px solid {BORDE};
+    border-radius: 0;
+}}
+QFrame[clase="total"] QLabel {{
+    background: transparent;
+}}
+QLabel[clase="total-rotulo"] {{
+    color: {TINTA_SUAVE};
+    font-size: 12px;
+    font-weight: 600;
+}}
+QLabel[clase="total-cifra"] {{
+    font-family: {FAMILIAS_MONO};
+    font-size: 30px;
+    font-weight: 700;
+    color: {TINTA};
+}}
+QLabel[clase="total-cifra-menor"] {{
+    font-family: {FAMILIAS_MONO};
+    font-size: 20px;
+    font-weight: 700;
+    color: {TINTA};
 }}
 
 QSplitter::handle:vertical {{

@@ -17,10 +17,10 @@ Lubri-Express (Inversiones Tres Puntos SpA). Corre localmente sobre PostgreSQL.
 | Carga masiva desde Excel | Pendiente |
 | Exportación a PDF y reportería | Pendiente |
 
-El historial de movimientos de cada producto ya se puede consultar desde el mantenedor
-de Inventario. **Registrar** entradas de mercadería y ajustes todavía no tiene pantalla:
-requiere un usuario autenticado, porque cada movimiento del Kardex queda firmado por
-quien lo hizo.
+El historial de movimientos de cada producto se consulta desde el mantenedor de
+Inventario, y desde ahí también se registran las entradas de mercadería. Los ajustes
+manuales todavía no tienen pantalla. Todo movimiento exige una sesión iniciada: cada
+línea del Kardex queda firmada por quien la hizo.
 
 ## Requisitos
 
@@ -40,8 +40,9 @@ source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements-dev.txt
 ```
 
-`requirements.txt` trae solo lo que necesita la aplicación para correr. **(EJECUTAR NUEVAMENTE YA QUE SE AGREGÓ UNA LIBRERIA)**
-`requirements-dev.txt` agrega las herramientas de pruebas.
+`requirements.txt` trae solo lo que necesita la aplicación para correr;
+`requirements-dev.txt` agrega las herramientas de pruebas. Al actualizar el
+repositorio conviene volver a correrlo: las dependencias cambian de vez en cuando.
 
 ### 2. Levantar PostgreSQL
 
@@ -89,7 +90,7 @@ DATABASE_URL=postgresql+psycopg2://postgres:lubriexpress@localhost:55432/lubriex
 ```bash
 python scripts/crear_usuario.py
 ```
-El script valida que la contraseña tenga a lo más 6 carácteres.
+El script valida que la contraseña tenga al menos 6 caracteres.
 ### 2. Ejecutar el programa
 
 ```bash
@@ -132,7 +133,7 @@ sist_lubriexpress/
 ├── docs/
 │   └── base-de-datos.md             # Contrato del esquema: tablas, triggers e invariantes
 ├── scripts/
-│    └── crear_usuario.py            # Script interactivo de consola para registrar usuarios con contraseñas seguras.
+│   └── crear_usuario.py             # Alta de usuarios por consola, con la contraseña hasheada
 ├── requirements.txt                 # Dependencias de la aplicación
 ├── requirements-dev.txt             # + herramientas de pruebas
 └── .env                             # Credenciales locales (no se sube)

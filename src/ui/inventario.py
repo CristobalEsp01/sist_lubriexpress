@@ -6,19 +6,22 @@ from PySide6.QtWidgets import (
     QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QPushButton, QSpinBox,
     QSplitter, QTableWidgetItem, QVBoxLayout, QWidget,
 )
-from sqlalchemy import or_, select
+from sqlalchemy import select
 
 from ..auth import Sesion
 from ..database import SessionLocal
 from ..models import KardexMovimiento, Producto, Ubicacion, Usuario, Venta
+from ..texto import filtro_busqueda
 from .comunes import (
     BADGE_ACENTO, BADGE_ALERTA, BADGE_EXITO, BADGE_NEUTRAL, ROL_INSIGNIA,
-    ItemNumerico, botonera, clp, crear_tabla, reordenar,
+    ItemNumerico, barra, botonera, clp, con_aviso_vacio, crear_tabla,
+    hacer_buscable, layout_de_dialogo, layout_de_pantalla, reordenar,
 )
-from .tema import ALERTA, EXITO, fuente_tabular
+from .tema import ALERTA, CANAL_PANEL, ESPACIO_BARRA, EXITO, TINTA_SUAVE, fuente_tabular
 
 COLUMNAS_PRODUCTO = ["Nombre", "Marca", "Categoría", "Ubicación", "Stock", "Mín.", "Costo", "Venta"]
 COLUMNAS_KARDEX = ["Fecha", "Tipo", "Cantidad", "Saldo", "Usuario", "Origen"]
+COLUMNAS_INGRESO = ["Producto", "Stock Actual", "Ingreso", "Nuevo Stock"]
 MAX_CLP = 99_999_999
 
 ETIQUETAS_MOVIMIENTO = {
@@ -82,8 +85,7 @@ class FormularioProducto(QDialog):
         self.marca.setPlaceholderText("Ej: Mobil, Castrol, Mann")
         self.categoria = QLineEdit()
         self.categoria.setPlaceholderText("Ej: Aceite Motor, Filtro de Aire")
-        self.ubicacion = QComboBox()
-        self.ubicacion.setEditable(True)
+        self.ubicacion = hacer_buscable(QComboBox(), libre=True)
         self.ubicacion.setPlaceholderText("Ej: Pasillo 1 - Repisa B")
         self.descripcion = QPlainTextEdit()
         self.descripcion.setPlaceholderText("Detalles técnicos o aplicaciones específicas...")
@@ -110,9 +112,7 @@ class FormularioProducto(QDialog):
 
         botones = botonera(self)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 18, 20, 18)
-        layout.setSpacing(16)
+        layout = layout_de_dialogo(self)
         layout.addLayout(form)
         layout.addWidget(botones)
 
@@ -207,63 +207,87 @@ class IngresoMercaderiaDialog(QDialog):
 
         self.lista_ingreso = []
 
-        self.combo_productos = QComboBox()
+        self.combo_productos = hacer_buscable(QComboBox())
         self.spin_cantidad = QSpinBox()
         self.spin_cantidad.setRange(1, 10000)
-        
+
         self.boton_agregar = QPushButton("Añadir a la lista")
         self.boton_agregar.clicked.connect(self.agregar_a_lista)
+        # Enter en cualquier campo añade a la lista; confirmar el ingreso —que
+        # mueve stock— exige un click deliberado.
+        self.boton_agregar.setDefault(True)
 
-        barra_superior = QHBoxLayout()
-        barra_superior.addWidget(QLabel("Producto:"))
-        barra_superior.addWidget(self.combo_productos, 1)
-        barra_superior.addWidget(QLabel("Cantidad:"))
-        barra_superior.addWidget(self.spin_cantidad)
-        barra_superior.addWidget(self.boton_agregar)
+        barra_superior = barra(
+            QLabel("Producto"), self.combo_productos,
+            QLabel("Cantidad"), self.spin_cantidad, self.boton_agregar, estira=1,
+        )
 
-        self.tabla = crear_tabla(["Producto", "Stock Actual", "Ingreso", "Nuevo Stock"], ancha=0, orden=0, numericas=(1, 2, 3))
-        
+        self.tabla = con_aviso_vacio(
+            crear_tabla(COLUMNAS_INGRESO, ancha=0, orden=0, numericas=(1, 2, 3)),
+            "Elige un producto y una cantidad, y añádelo a la lista.",
+        )
+        # El orden de la tabla es el de la lista en memoria: quitar_seleccionado
+        # indexa `lista_ingreso` por la fila visible, y ordenar las descalzaría.
+        self.tabla.setSortingEnabled(False)
+        self.tabla.itemSelectionChanged.connect(
+            lambda: self.boton_quitar.setEnabled(self.tabla.currentRow() >= 0)
+        )
+
         self.boton_quitar = QPushButton("Quitar seleccionado")
+        self.boton_quitar.setAutoDefault(False)
+        self.boton_quitar.setEnabled(False)
         self.boton_quitar.clicked.connect(self.quitar_seleccionado)
-        
+
         self.boton_confirmar = QPushButton("Confirmar Ingreso")
         self.boton_confirmar.setProperty("clase", "primario")
+        self.boton_confirmar.setAutoDefault(False)
+        self.boton_confirmar.setEnabled(False)  # se habilita al haber algo en la lista
         self.boton_confirmar.clicked.connect(self.confirmar_ingreso)
 
         barra_inferior = QHBoxLayout()
+        barra_inferior.setSpacing(ESPACIO_BARRA)
         barra_inferior.addWidget(self.boton_quitar)
         barra_inferior.addStretch()
         barra_inferior.addWidget(self.boton_confirmar)
 
-        layout = QVBoxLayout(self)
+        layout = layout_de_dialogo(self)
         layout.addLayout(barra_superior)
         layout.addWidget(self.tabla)
         layout.addLayout(barra_inferior)
 
         self._cargar_productos()
+        self.combo_productos.setFocus()
 
     def _cargar_productos(self) -> None:
         self.combo_productos.clear()
         with SessionLocal() as db:
             productos = db.scalars(select(Producto).where(Producto.activo.is_(True)).order_by(Producto.nombre)).all()
             for p in productos:
-                self.combo_productos.addItem(p.nombre, {"id": p.id, "stock": p.stock_actual})
+                # El nombre viaja en los datos, no se lee de currentText(): con
+                # el combo editable ese texto puede ser un filtro a medio
+                # escribir y quedaría guardado como nombre del producto.
+                self.combo_productos.addItem(
+                    p.nombre, {"id": p.id, "nombre": p.nombre, "stock": p.stock_actual}
+                )
 
     def agregar_a_lista(self) -> None:
         datos = self.combo_productos.currentData()
-        if not datos: return
-            
-        existente = next((item for item in self.lista_ingreso if item["producto_id"] == datos["id"]), None)
+        if not datos:
+            return
+
+        existente = next(
+            (item for item in self.lista_ingreso if item["producto_id"] == datos["id"]), None
+        )
         if existente:
             existente["cantidad"] += self.spin_cantidad.value()
         else:
             self.lista_ingreso.append({
                 "producto_id": datos["id"],
-                "nombre": self.combo_productos.currentText(),
+                "nombre": datos["nombre"],
                 "stock_actual": datos["stock"],
-                "cantidad": self.spin_cantidad.value()
+                "cantidad": self.spin_cantidad.value(),
             })
-        
+
         self.spin_cantidad.setValue(1)
         self._redibujar_tabla()
 
@@ -274,7 +298,6 @@ class IngresoMercaderiaDialog(QDialog):
             self._redibujar_tabla()
 
     def _redibujar_tabla(self) -> None:
-        self.tabla.setSortingEnabled(False)
         self.tabla.setRowCount(len(self.lista_ingreso))
         for fila, item in enumerate(self.lista_ingreso):
             nuevo = item["stock_actual"] + item["cantidad"]
@@ -282,28 +305,29 @@ class IngresoMercaderiaDialog(QDialog):
             self.tabla.setItem(fila, 1, ItemNumerico(str(item["stock_actual"]), item["stock_actual"]))
             self.tabla.setItem(fila, 2, ItemNumerico(f"+{item['cantidad']}", item["cantidad"]))
             self.tabla.setItem(fila, 3, ItemNumerico(str(nuevo), nuevo))
-        self.tabla.setSortingEnabled(True)
-        self.boton_confirmar.setEnabled(bool(self.lista_ingreso))
+        self.tabla.resizeColumnsToContents()
+        hay_lista = bool(self.lista_ingreso)
+        self.boton_confirmar.setEnabled(hay_lista)
+        self.boton_quitar.setEnabled(hay_lista and self.tabla.currentRow() >= 0)
 
     def confirmar_ingreso(self) -> None:
         if not Sesion.activa():
             QMessageBox.critical(self, "Error", "No hay sesión activa.")
             return
 
+        # Solo se inserta el movimiento: el trigger de la base
+        # (fn_aplicar_movimiento_manual) suma el stock y calcula el
+        # stock_resultante. Tocar stock_actual acá lo contaría dos veces.
         with SessionLocal() as db:
             for item in self.lista_ingreso:
-                producto = db.get(Producto, item["producto_id"])
-                if producto:
-                    producto.stock_actual += item["cantidad"]
-                    db.add(KardexMovimiento(
-                        producto_id=producto.id,
-                        usuario_id=Sesion.usuario_id,
-                        tipo_movimiento="ENTRADA",
-                        cantidad_movida=item["cantidad"],
-                        stock_resultante=producto.stock_actual
-                    ))
+                db.add(KardexMovimiento(
+                    producto_id=item["producto_id"],
+                    usuario_id=Sesion.usuario_id,
+                    tipo_movimiento="ENTRADA",
+                    cantidad_movida=item["cantidad"],
+                ))
             db.commit()
-            
+
         QMessageBox.information(self, "Éxito", "Mercadería ingresada correctamente al inventario.")
         self.accept()
 
@@ -321,7 +345,6 @@ class InventarioWidget(QWidget):
         self.solo_criticos.toggled.connect(self.recargar)
 
         self.boton_vender = QPushButton("Generar Venta")
-        self.boton_vender.setProperty("clase", "accion-rapida")
         self.boton_vender.setToolTip("Iniciar una venta rápida con el producto seleccionado (Propuesta 3.3)")
         self.boton_vender.setEnabled(False)
         self.boton_vender.clicked.connect(self.generar_venta)
@@ -329,43 +352,46 @@ class InventarioWidget(QWidget):
         boton_nuevo = QPushButton("Nuevo producto")
         boton_nuevo.setProperty("clase", "primario")
         boton_nuevo.clicked.connect(self.nuevo)
-        boton_editar = QPushButton("Editar")
-        boton_editar.clicked.connect(self.editar)
+        self.boton_editar = QPushButton("Editar")
+        self.boton_editar.setEnabled(False)
+        self.boton_editar.clicked.connect(self.editar)
 
         self.boton_ingreso = QPushButton("Ingresar Mercadería")
         self.boton_ingreso.clicked.connect(self.abrir_ingreso_mercaderia)
 
-        self.tabla = crear_tabla(COLUMNAS_PRODUCTO, ancha=0, orden=0, numericas=(4, 5, 6, 7))  # ordena por Nombre
+        self.tabla = con_aviso_vacio(
+            crear_tabla(COLUMNAS_PRODUCTO, ancha=0, orden=0, numericas=(4, 5, 6, 7)),
+            "No hay productos registrados.",
+        )  # ordena por Nombre
         self.tabla.doubleClicked.connect(self.editar)
         self.tabla.itemSelectionChanged.connect(self.recargar_kardex)
 
         # Historial de kardex del producto seleccionado. Solo lectura: los
         # movimientos los escriben los triggers, nunca esta pantalla.
-        self.tabla_kardex = crear_tabla(COLUMNAS_KARDEX, ancha=5, orden=0, descendente=True, numericas=(2, 3))
+        self.tabla_kardex = con_aviso_vacio(
+            crear_tabla(COLUMNAS_KARDEX, ancha=5, orden=0, descendente=True, numericas=(2, 3)),
+            "Elige un producto para ver sus movimientos.",
+        )
         self.titulo_kardex = QLabel()
         self.titulo_kardex.setProperty("clase", "seccion")
 
         self.resumen = QLabel()
         self.resumen.setProperty("clase", "resumen")
 
-        barra = QHBoxLayout()
-        barra.setSpacing(10)
-        barra.addWidget(self.busqueda, 1)
-        barra.addWidget(self.solo_criticos)
-        barra.addWidget(self.boton_vender)
-        barra.addWidget(self.boton_ingreso)
-        barra.addWidget(boton_nuevo)
-        barra.addWidget(boton_editar)
+        barra_superior = barra(
+            self.busqueda, self.solo_criticos, self.boton_vender,
+            self.boton_ingreso, boton_nuevo, self.boton_editar, estira=0,
+        )
 
         arriba = QWidget()
         layout_arriba = QVBoxLayout(arriba)
-        layout_arriba.setContentsMargins(0, 0, 0, 10)
-        layout_arriba.addLayout(barra)
+        layout_arriba.setContentsMargins(0, 0, 0, CANAL_PANEL)
+        layout_arriba.addLayout(barra_superior)
         layout_arriba.addWidget(self.tabla)
 
         abajo = QWidget()
         layout_abajo = QVBoxLayout(abajo)
-        layout_abajo.setContentsMargins(0, 10, 0, 0)
+        layout_abajo.setContentsMargins(0, CANAL_PANEL, 0, 0)
         layout_abajo.addWidget(self.titulo_kardex)
         layout_abajo.addWidget(self.tabla_kardex)
 
@@ -375,44 +401,48 @@ class InventarioWidget(QWidget):
         division.addWidget(abajo)
         division.setSizes([380, 220])
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 12, 14, 10)
-        layout.setSpacing(8)
+        layout = layout_de_pantalla(self)
         layout.addWidget(division)
         layout.addWidget(self.resumen)
 
         self.recargar()
 
+    def showEvent(self, evento) -> None:
+        """Una venta o un ingreso hechos en otra pestaña cambian el stock: al
+        volver acá la tabla tiene que estar al día, no como se dejó."""
+        super().showEvent(evento)
+        self.recargar()
+        self.busqueda.setFocus()
+
     def recargar(self) -> None:
         # Carga la tabla completa en memoria. Con miles de SKU conviene
         # pasar a QAbstractTableModel con paginación; para un lubricentro alcanza.
-        texto = self.busqueda.text().strip()
-        consulta = select(Producto).order_by(Producto.nombre)
-        if texto:
-            patron = f"%{texto}%"
-            consulta = consulta.where(or_(
-                Producto.nombre.ilike(patron),
-                Producto.marca.ilike(patron),
-                Producto.categoria.ilike(patron),
-            ))
+        consulta = filtro_busqueda(
+            select(Producto).order_by(Producto.nombre),
+            self.busqueda.text(),
+            Producto.nombre, Producto.marca, Producto.categoria,
+        )
         if self.solo_criticos.isChecked():
-            consulta = consulta.where(
-                Producto.activo.is_(True), Producto.stock_actual <= Producto.stock_minimo
-            )
+            # Solo por stock: filtrar además por activo hacía desaparecer
+            # productos que el listado sí mostraba y que el resumen contaba
+            # como críticos, sin nada en pantalla que lo explicara.
+            consulta = consulta.where(Producto.stock_actual <= Producto.stock_minimo)
 
         with SessionLocal() as db:
             productos = db.scalars(consulta).all()
             filas = [
                 (p.id, p.nombre, p.marca or "", p.categoria or "",
                  p.ubicacion.descripcion if p.ubicacion else "",
-                 p.stock_actual, p.stock_minimo, p.precio_costo, p.precio_venta, p.stock_critico)
+                 p.stock_actual, p.stock_minimo, p.precio_costo, p.precio_venta,
+                 p.stock_critico, p.activo)
                 for p in productos
             ]
 
         self.tabla.setSortingEnabled(False)
         self.tabla.setRowCount(len(filas))
         criticos = 0
-        for fila, (pid, nombre, marca, categoria, ubicacion, stock, minimo, costo, venta, critico) in enumerate(filas):
+        for fila, (pid, nombre, marca, categoria, ubicacion, stock, minimo, costo, venta,
+                   critico, activo) in enumerate(filas):
             for columna, texto in enumerate([nombre, marca, categoria, ubicacion]):
                 item = QTableWidgetItem(texto)
                 if columna == 0:
@@ -421,6 +451,16 @@ class InventarioWidget(QWidget):
             numeros = [(str(stock), stock), (str(minimo), minimo), (clp(costo), costo), (clp(venta), venta)]
             for desplazamiento, (texto, valor) in enumerate(numeros):
                 self.tabla.setItem(fila, 4 + desplazamiento, ItemNumerico(texto, valor))
+
+            # Un producto inactivo no sale en ventas ni en órdenes. Si la fila
+            # no lo dice, el único síntoma es que el producto "no aparece" en
+            # otra pantalla y no hay dónde averiguar por qué.
+            if not activo:
+                for columna in range(self.tabla.columnCount()):
+                    celda = self.tabla.item(fila, columna)
+                    celda.setForeground(QColor(TINTA_SUAVE))
+                    celda.setToolTip("Producto inactivo: no aparece en ventas ni en órdenes")
+
             if critico:
                 criticos += 1
                 celda = self.tabla.item(fila, 4)
@@ -428,6 +468,13 @@ class InventarioWidget(QWidget):
                 celda.setForeground(QColor(ALERTA))
                 celda.setFont(fuente_tabular(negrita=True))
         reordenar(self.tabla)
+
+        if self.busqueda.text().strip():
+            self.tabla.aviso.setText("Ningún producto coincide con la búsqueda.")
+        elif self.solo_criticos.isChecked():
+            self.tabla.aviso.setText("Ningún producto está bajo su stock mínimo.")
+        else:
+            self.tabla.aviso.setText("No hay productos registrados.")
 
         aviso = f" — {criticos} bajo stock mínimo" if criticos else ""
         self.resumen.setText(f"{len(filas)} producto(s){aviso}")
@@ -437,9 +484,11 @@ class InventarioWidget(QWidget):
         producto_id = self._id_seleccionado()
         hay_seleccion = producto_id is not None
         self.boton_vender.setEnabled(hay_seleccion)
+        self.boton_editar.setEnabled(hay_seleccion)
 
         if not hay_seleccion:
-            self.titulo_kardex.setText("Movimientos — selecciona un producto")
+            self.titulo_kardex.setText("Movimientos")
+            self.tabla_kardex.aviso.setText("Elige un producto para ver sus movimientos.")
             self.tabla_kardex.setRowCount(0)
             return
 
@@ -448,6 +497,7 @@ class InventarioWidget(QWidget):
             movimientos = movimientos_de(db, producto_id)
 
         self.titulo_kardex.setText(f"Movimientos de {nombre} ({len(movimientos)})")
+        self.tabla_kardex.aviso.setText("Este producto todavía no tiene movimientos.")
         self.tabla_kardex.setSortingEnabled(False)
         self.tabla_kardex.setRowCount(len(movimientos))
         for fila, (fecha, tipo, cantidad, saldo, usuario, origen) in enumerate(movimientos):
@@ -493,8 +543,7 @@ class InventarioWidget(QWidget):
     def editar(self) -> None:
         producto_id = self._id_seleccionado()
         if producto_id is None:
-            QMessageBox.information(self, "Sin selección", "Elige un producto de la lista.")
-            return
+            return  # el botón está apagado; solo queda el doble click al vacío
         if FormularioProducto(self, producto_id).exec():
             self.recargar()
 

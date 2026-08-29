@@ -72,3 +72,31 @@ def app():
     from PySide6.QtWidgets import QApplication
 
     yield QApplication.instance() or QApplication([])
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_call(item):
+    """Hace fallar la prueba si un slot de Qt lanzó una excepción.
+
+    Qt no propaga lo que revienta dentro de un slot: imprime el traceback por
+    sys.excepthook y sigue corriendo. Sin esto la batería pasa en verde mientras
+    la aplicación escupe errores en cada recarga de tabla, y el único que se
+    entera es quien la abre a mano. Ya pasó: un `connect` quedó copiado dentro
+    de InventarioWidget.recargar() y las 102 pruebas siguieron en verde.
+
+    Va como hookwrapper de la llamada y no como fixture porque una fixture solo
+    puede reclamar en el teardown, y ahí pytest ya cuenta la prueba como pasada:
+    el resumen diría "102 passed, 1 error", que es el mismo verde engañoso.
+    """
+    import sys
+
+    capturadas = []
+    anterior = sys.excepthook
+    sys.excepthook = lambda *info: capturadas.append(info) or anterior(*info)
+    try:
+        yield
+    finally:
+        sys.excepthook = anterior
+    if capturadas:
+        tipo, valor, _ = capturadas[0]
+        pytest.fail(f"un slot de Qt lanzó {tipo.__name__}: {valor}", pytrace=False)
