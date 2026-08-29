@@ -9,12 +9,13 @@ from .clientes import ClientesWidget, FormularioCliente, FormularioVehiculo
 from .comunes import ItemNumerico, clp
 from .inventario import FormularioProducto, InventarioWidget
 from .login import LoginDialog
-from .ventas import VentasWidget
 from .ordenes import OrdenesWidget
+from .ventas import VentasWidget
 
 __all__ = [
     "ClientesWidget", "FormularioCliente", "FormularioProducto", "FormularioVehiculo",
-    "InventarioWidget", "ItemNumerico", "LoginDialog", "VentanaPrincipal", "VentasWidget", "clp",
+    "InventarioWidget", "ItemNumerico", "LoginDialog", "OrdenesWidget", "VentanaPrincipal",
+    "VentasWidget", "clp",
 ]
 
 
@@ -28,12 +29,13 @@ class VentanaPrincipal(QMainWindow):
         self.inventario = InventarioWidget(self)
         self.ventas = VentasWidget(self)
         self.clientes = ClientesWidget(self)
+        self.ordenes = OrdenesWidget(self)
 
         self.pestanias = QTabWidget()
         self.pestanias.addTab(self.inventario, "Inventario")
         self.pestanias.addTab(self.ventas, "Ventas")
         self.pestanias.addTab(self.clientes, "Clientes")
-        self.pestanias.addTab(OrdenesWidget(), "Órdenes de Trabajo")
+        self.pestanias.addTab(self.ordenes, "Órdenes de Trabajo")
         self.setCentralWidget(self.pestanias)
 
         if Sesion.activa():

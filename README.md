@@ -13,7 +13,7 @@ Lubri-Express (Inversiones Tres Puntos SpA). Corre localmente sobre PostgreSQL.
 | Historial de Kardex por producto | Funcionando (solo lectura) |
 | Login y control de acceso por rol | Funcionando (correr script de creacion de usuario) |
 | Ventas de mostrador | Funcionando |
-| Órdenes de trabajo | Funcionando (Falta implementar Whatsapp) |
+| Órdenes de trabajo | En revisión (funcional; falta WhatsApp) |
 | Carga masiva desde Excel | Pendiente |
 | Exportación a PDF y reportería | Pendiente |
 
@@ -131,6 +131,7 @@ sist_lubriexpress/
 │   └── schema_lubriexpress.sql      # Tablas, restricciones, triggers y vistas
 ├── tests/
 ├── docs/
+│   ├── convenciones.md              # Cómo se escribe en este proyecto: léelo antes de tocar src/
 │   └── base-de-datos.md             # Contrato del esquema: tablas, triggers e invariantes
 ├── scripts/
 │   └── crear_usuario.py             # Alta de usuarios por consola, con la contraseña hasheada
@@ -138,6 +139,13 @@ sist_lubriexpress/
 ├── requirements-dev.txt             # + herramientas de pruebas
 └── .env                             # Credenciales locales (no se sube)
 ```
+
+## Antes de escribir código
+
+Las convenciones del proyecto están en [docs/convenciones.md](docs/convenciones.md):
+dónde va cada cosa, cómo se usan las piezas compartidas de `src/ui/comunes.py` y
+qué reglas verifica la batería de pruebas por su cuenta. Leerlo primero ahorra
+que la revisión devuelva lo mismo dos veces.
 
 ## Antes de modificar el inventario
 

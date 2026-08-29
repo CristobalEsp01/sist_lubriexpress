@@ -19,6 +19,8 @@ test_db.py
 .venv/
 .pytest_cache/
 
-# Notas de trabajo locales
+# Notas de trabajo locales. Las convenciones técnicas NO van acá: viven en
+# docs/convenciones.md, versionado, porque nadie puede seguir una regla que no
+# puede leer.
 docs/desarrollo.md
 
