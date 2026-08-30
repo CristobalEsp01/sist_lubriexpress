@@ -26,6 +26,7 @@ De `src/ui/comunes.py`:
 |---|---|
 | Una tabla de solo lectura, ordenable | `crear_tabla(columnas, ancha, orden, numericas=…)` |
 | Reordenarla tras repoblarla | `reordenar(tabla)` |
+| Reajustar sus anchos sin reordenar | `ajustar_columnas(tabla)` |
 | Que diga algo cuando está vacía | `con_aviso_vacio(tabla, mensaje)` y después `tabla.aviso.setText(…)` |
 | Elegir un cliente, producto o cualquier registro | `hacer_buscable(combo)` — se filtra tecleando, tolera tildes y RUT sin puntos |
 | Un combo donde escribir algo nuevo lo crea | `hacer_buscable(combo, libre=True)` |
@@ -78,8 +79,17 @@ todas partes deja de señalar nada.
 Las columnas numéricas van en monoespaciada (`fuente_tabular()`), incluidos RUT y
 patentes: son identificadores de dígitos y alineados se escanean de un vistazo.
 
-Cinco cosas que cuestan tiempo si no se saben:
+Seis cosas que cuestan tiempo si no se saben:
 
+- **`resizeColumnsToContents()`, en plural, arruina la columna que estira.**
+  Le aplica ancho de contenido también a la sección en `Stretch`, que deja de
+  absorber el sobrante: la tabla se pasa del ancho disponible y la última
+  columna —el subtotal, en una pantalla de cobro— queda detrás de una barra de
+  scroll. La versión en singular respeta el modo de cada sección; eso hace
+  `ajustar_columnas()`, y `reordenar()` la usa.
+- **`QSpinBox.setSpecialValueText("")` con cadena vacía no hace nada:** Qt lo
+  lee como "sin texto especial". Para que un campo obligatorio no muestre un
+  `0` que parece dato escrito, hay que darle texto de verdad.
 - **`currentRow()` no es "hay una fila elegida".** Qt conserva la celda actual
   después de un ctrl+clic que deselecciona, así que un botón encendido con
   `currentRow() >= 0` queda apuntando a una fila que ya no se ve elegida. Para
