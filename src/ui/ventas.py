@@ -24,7 +24,7 @@ from ..database import SessionLocal
 from ..models import Cliente, DetalleVenta, Producto, Venta
 from ..texto import filtro_busqueda
 from .comunes import (
-    ItemNumerico, barra, bloque_total, clp, con_aviso_vacio, crear_tabla,
+    ItemNumerico, ajustar_columnas, barra, bloque_total, clp, con_aviso_vacio, crear_tabla,
     hacer_buscable, layout_de_dialogo, layout_de_pantalla, reordenar,
 )
 from .tema import ALERTA, CANAL_PANEL, ESPACIO_PANTALLA
@@ -325,7 +325,7 @@ class PuntoVentaWidget(QWidget):
                 fila, 2, ItemNumerico(clp(entrada["precio_unitario"]), entrada["precio_unitario"])
             )
             self.tabla_carrito.setItem(fila, 3, ItemNumerico(clp(subtotal), subtotal))
-        self.tabla_carrito.resizeColumnsToContents()
+        ajustar_columnas(self.tabla_carrito)
         self.total.setText(clp(total))
         self.boton_quitar.setEnabled(False)
         self._actualizar_boton_cobrar()

@@ -15,7 +15,7 @@ from ..models import KardexMovimiento, Producto, Ubicacion, Usuario, Venta
 from ..texto import filtro_busqueda
 from .comunes import (
     BADGE_ACENTO, BADGE_ALERTA, BADGE_EXITO, BADGE_NEUTRAL, ROL_INSIGNIA,
-    ItemNumerico, barra, botonera, clp, con_aviso_vacio, crear_tabla,
+    ItemNumerico, ajustar_columnas, barra, botonera, clp, con_aviso_vacio, crear_tabla,
     hacer_buscable, layout_de_dialogo, layout_de_pantalla, reordenar,
 )
 from .tema import ALERTA, CANAL_PANEL, ESPACIO_BARRA, EXITO, TINTA_SUAVE, fuente_tabular
@@ -321,7 +321,7 @@ class IngresoMercaderiaDialog(QDialog):
             self.tabla.setItem(fila, 1, ItemNumerico(str(item["stock_actual"]), item["stock_actual"]))
             self.tabla.setItem(fila, 2, ItemNumerico(f"+{item['cantidad']}", item["cantidad"]))
             self.tabla.setItem(fila, 3, ItemNumerico(str(nuevo), nuevo))
-        self.tabla.resizeColumnsToContents()
+        ajustar_columnas(self.tabla)
         hay_lista = bool(self.lista_ingreso)
         self.boton_confirmar.setEnabled(hay_lista)
         self.boton_quitar.setEnabled(hay_lista and self.tabla.selectionModel().hasSelection())

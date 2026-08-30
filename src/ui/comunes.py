@@ -138,12 +138,26 @@ def crear_tabla(columnas: list[str], ancha: int, orden: int, descendente: bool =
     return tabla
 
 
+def ajustar_columnas(tabla: QTableWidget) -> None:
+    """Ajusta cada columna a su contenido, una por una.
+
+    En plural (`resizeColumnsToContents()`) Qt pisa el modo de la columna en
+    Stretch y le da ancho de contenido, así que deja de absorber el sobrante:
+    la suma se pasa del ancho disponible y la última columna —el subtotal, en
+    una pantalla de cobro— queda detrás de una barra de scroll horizontal que
+    nadie va a buscar. En singular respeta el modo de cada sección, que es
+    exactamente lo que hace falta.
+    """
+    for columna in range(tabla.columnCount()):
+        tabla.resizeColumnToContents(columna)
+
+
 def reordenar(tabla: QTableWidget) -> None:
     """Reaplica el orden vigente tras repoblar la tabla y ajusta los anchos."""
     encabezado = tabla.horizontalHeader()
     tabla.setSortingEnabled(True)
     tabla.sortItems(encabezado.sortIndicatorSection(), encabezado.sortIndicatorOrder())
-    tabla.resizeColumnsToContents()
+    ajustar_columnas(tabla)
 
 
 class _FiltroNormalizado(QSortFilterProxyModel):
