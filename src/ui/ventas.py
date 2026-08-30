@@ -388,20 +388,31 @@ class PuntoVentaWidget(QWidget):
             )
             return
 
-        # Revalidación de stock justo antes de cobrar: lo que se vio en el
-        # catálogo puede haber quedado desactualizado mientras se armaba el
-        # carrito. La última palabra la tiene siempre el CHECK de la base de
-        # datos, pero avisar acá evita un error críptico al momento de guardar.
+        # Revalidación justo antes de cobrar: lo que se vio en el catálogo puede
+        # haber quedado desactualizado mientras se armaba el carrito. El stock
+        # lo ataja igual el CHECK de la base, pero que el producto siga activo
+        # no lo ataja nadie: darlo de baja en Inventario con el carrito ya
+        # armado dejaba pasar la venta y el Kardex terminaba con una salida de
+        # algo que el catálogo ya no ofrece.
         with SessionLocal() as db:
             for entrada in self.carrito:
-                stock_vigente = db.scalar(
-                    select(Producto.stock_actual).where(Producto.id == entrada["producto_id"])
-                )
-                if stock_vigente is None or stock_vigente < entrada["cantidad"]:
+                vigente = db.execute(
+                    select(Producto.stock_actual, Producto.activo)
+                    .where(Producto.id == entrada["producto_id"])
+                ).first()
+                if vigente is None or not vigente.activo:
+                    QMessageBox.warning(
+                        self, "Producto no disponible",
+                        f"'{entrada['nombre']}' ya no está activo en el catálogo. "
+                        "Quítalo del carrito para poder cobrar.",
+                    )
+                    self.recargar_catalogo()
+                    return
+                if vigente.stock_actual < entrada["cantidad"]:
                     QMessageBox.warning(
                         self, "Stock insuficiente",
                         f"'{entrada['nombre']}' ya no tiene stock suficiente "
-                        f"(disponible: {stock_vigente or 0}).",
+                        f"(disponible: {vigente.stock_actual}).",
                     )
                     self.recargar_catalogo()
                     return
