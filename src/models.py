@@ -1,14 +1,19 @@
+"""Modelos ORM. Calzan uno a uno con database/schema_lubriexpress.sql; hay una
+prueba que lo verifica.
+
+Dos cosas que el esquema hace y estas clases no muestran:
+
+- `created_at` y `updated_at` no se mapean: los mantienen los triggers.
+- Los triggers de stock modifican "productos" por fuera de la sesión, así que
+  después de confirmar una venta, una orden o un movimiento de kardex hay que
+  hacer `db.refresh(producto)` para no leer un `stock_actual` viejo de la caché.
+"""
 from sqlalchemy import (
     Column, Integer, String, Boolean, Numeric, DateTime, Text, ForeignKey, func
 )
 from sqlalchemy.orm import relationship
-from .database import Base
 
-# Nota general: created_at / updated_at no se mapean porque los triggers de la
-# base de datos ya se encargan de mantenerlos.
-# Los triggers de stock modifican "productos" por fuera de la sesión.
-# Después de confirmar una venta u orden hay que hacer session.refresh(producto)
-# (o session.expire_all()) para no leer un stock_actual obsoleto de la caché.
+from .database import Base
 
 
 class Usuario(Base):

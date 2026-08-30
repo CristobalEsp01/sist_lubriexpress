@@ -222,6 +222,19 @@ class OrdenesWidget(QTabWidget):
             crear_tabla(COLUMNAS_CARRITO, ancha=0, orden=0, numericas=(1, 2, 3)),
             "Elige un insumo y una cantidad, y agrégalo a la orden.",
         )
+        self.tabla_carrito.itemSelectionChanged.connect(
+            lambda: self.boton_quitar.setEnabled(
+                self.tabla_carrito.selectionModel().hasSelection()
+            )
+        )
+
+        # Nace apagado y se enciende con la fila elegida, como en el resto: sin
+        # esto, equivocarse de insumo obligaba a cancelar la orden entera y
+        # volver a pasar por el asistente.
+        self.boton_quitar = QPushButton("Quitar")
+        self.boton_quitar.setAutoDefault(False)
+        self.boton_quitar.setEnabled(False)
+        self.boton_quitar.clicked.connect(self.quitar_del_carrito)
 
         titulo_insumos = QLabel("1. Insumos y Servicios Aplicados")
         titulo_insumos.setProperty("clase", "seccion")
@@ -233,7 +246,8 @@ class OrdenesWidget(QTabWidget):
         layout_izq.addWidget(titulo_insumos)
         layout_izq.addLayout(barra(
             QLabel("Producto"), self.combo_productos,
-            QLabel("Cantidad"), self.spin_cantidad, self.boton_agregar, estira=1,
+            QLabel("Cantidad"), self.spin_cantidad, self.boton_agregar,
+            self.boton_quitar, estira=1,
         ))
         layout_izq.addWidget(self.tabla_carrito, 1)
 
@@ -474,6 +488,16 @@ class OrdenesWidget(QTabWidget):
 
         reordenar(self.tabla_carrito)
         self.spin_cantidad.setValue(1)
+        self.recalcular_total()
+
+    def quitar_del_carrito(self) -> None:
+        """Saca la fila elegida. Se indexa por la fila visible y eso está bien:
+        acá el producto, la cantidad y los precios viajan dentro de la fila, así
+        que ordenar la tabla no descalza nada."""
+        fila = self.tabla_carrito.currentRow()
+        if fila < 0:
+            return
+        self.tabla_carrito.removeRow(fila)
         self.recalcular_total()
 
     def recalcular_total(self) -> None:

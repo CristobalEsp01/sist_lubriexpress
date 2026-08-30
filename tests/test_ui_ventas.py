@@ -223,3 +223,30 @@ def test_al_cliente_recien_creado_se_llega_tecleando_su_rut(app, limpiar):
     sugeridos = [filtro.index(f, 0).data() for f in range(filtro.rowCount())]
 
     assert sugeridos == [f"{rut} — {NOMBRE_CLIENTE}"]
+
+
+def test_no_se_cobra_un_producto_desactivado_despues_de_agregarlo(
+    app, usuario_qa, producto_qa, sin_modales
+):
+    """Agregar ya revisaba que el producto estuviera activo; cobrar no.
+
+    Un producto dado de baja en Inventario mientras el carrito estaba armado se
+    vendía igual, y el Kardex quedaba con una salida de algo que el catálogo ya
+    no ofrece. La revalidación previa al cobro ahora mira las dos cosas.
+    """
+    from src.ui.ventas import PuntoVentaWidget
+
+    widget = PuntoVentaWidget()
+    widget.agregar_producto(producto_qa, cantidad=2)
+    widget.boleta.setText("QA-0009")
+
+    with SessionLocal() as db:
+        db.get(Producto, producto_qa).activo = False
+        db.commit()
+
+    widget.generar_venta()
+
+    assert sin_modales[-1] == "Producto no disponible"
+    with SessionLocal() as db:
+        assert db.scalar(select(Venta).where(Venta.numero_boleta == "QA-0009")) is None
+        assert db.get(Producto, producto_qa).stock_actual == 10  # intacto
