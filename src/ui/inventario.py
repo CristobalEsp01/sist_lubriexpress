@@ -234,7 +234,9 @@ class IngresoMercaderiaDialog(QDialog):
         # indexa `lista_ingreso` por la fila visible, y ordenar las descalzaría.
         self.tabla.setSortingEnabled(False)
         self.tabla.itemSelectionChanged.connect(
-            lambda: self.boton_quitar.setEnabled(self.tabla.currentRow() >= 0)
+            lambda: self.boton_quitar.setEnabled(
+                self.tabla.selectionModel().hasSelection()
+            )
         )
 
         self.boton_quitar = QPushButton("Quitar seleccionado")
@@ -312,7 +314,7 @@ class IngresoMercaderiaDialog(QDialog):
         self.tabla.resizeColumnsToContents()
         hay_lista = bool(self.lista_ingreso)
         self.boton_confirmar.setEnabled(hay_lista)
-        self.boton_quitar.setEnabled(hay_lista and self.tabla.currentRow() >= 0)
+        self.boton_quitar.setEnabled(hay_lista and self.tabla.selectionModel().hasSelection())
 
     def confirmar_ingreso(self) -> None:
         if not Sesion.activa():

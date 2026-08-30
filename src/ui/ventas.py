@@ -95,7 +95,12 @@ class PuntoVentaWidget(QWidget):
         self.tabla_carrito.setSortingEnabled(False)  # el orden del carrito es el de agregado
         self.tabla_carrito.doubleClicked.connect(self.cambiar_cantidad)
         self.tabla_carrito.itemSelectionChanged.connect(
-            lambda: self.boton_quitar.setEnabled(self.tabla_carrito.currentRow() >= 0)
+            # hasSelection() y no currentRow(): Qt conserva la celda actual
+            # después de un ctrl+clic que deselecciona, así que el botón
+            # quedaba encendido apuntando a una fila que ya no se ve elegida.
+            lambda: self.boton_quitar.setEnabled(
+                self.tabla_carrito.selectionModel().hasSelection()
+            )
         )
 
         titulo_carrito = QLabel("Carrito")
