@@ -78,8 +78,15 @@ todas partes deja de señalar nada.
 Las columnas numéricas van en monoespaciada (`fuente_tabular()`), incluidos RUT y
 patentes: son identificadores de dígitos y alineados se escanean de un vistazo.
 
-Tres cosas que cuestan tiempo si no se saben:
+Cinco cosas que cuestan tiempo si no se saben:
 
+- **`currentRow()` no es "hay una fila elegida".** Qt conserva la celda actual
+  después de un ctrl+clic que deselecciona, así que un botón encendido con
+  `currentRow() >= 0` queda apuntando a una fila que ya no se ve elegida. Para
+  encender un botón con la selección va `tabla.selectionModel().hasSelection()`.
+- **`QComboBox.setPlaceholderText()` no hace nada si el combo es editable**, y
+  `hacer_buscable()` los deja editables a todos. El texto de fondo va en
+  `combo.lineEdit().setPlaceholderText(...)`.
 - **`app.setStyle("Fusion")` es obligatorio.** Sin fijarlo, Qt usa el estilo nativo de cada sistema y la aplicación se ve distinta en Linux que en el Windows del taller.
 - **Apenas se aplica QSS a un `QComboBox` o `QSpinBox`, Qt deja de dibujar sus flechas.** Hay que dárselas explícitamente; se usan los recursos internos de Qt (`ICONOS_QT` en `tema.py`) para no sumar imágenes al proyecto.
 - **El locale se fija a es-CL** en `aplicar()`. Sin eso los `QSpinBox` muestran `$ 20,000` con coma. En la misma función se instala `qtbase_es.qm`, que traduce los botones estándar de los diálogos; al empaquetar con PyInstaller hay que incluir ese archivo.

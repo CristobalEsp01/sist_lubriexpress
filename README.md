@@ -88,7 +88,7 @@ DATABASE_URL=postgresql+psycopg2://postgres:lubriexpress@localhost:55432/lubriex
 ### 1. Ejecutar script de creación de usuarios
 `(Funcionalidad temporal mientras se implementa la ventana de administración)`
 ```bash
-python scripts/crear_usuario.py
+.venv/bin/python scripts/crear_usuario.py
 ```
 El script valida que la contraseña tenga al menos 6 caracteres.
 ### 2. Ejecutar el programa
