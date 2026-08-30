@@ -8,6 +8,7 @@ test_ui_ventas.py.
 from types import SimpleNamespace
 
 import pytest
+from PySide6.QtCore import Qt
 from sqlalchemy import select
 
 from conftest import patente_de_prueba, rut_de_prueba
@@ -113,19 +114,41 @@ def test_mirar_el_historial_no_descarta_la_orden_en_progreso(app, taller, sin_mo
     assert widget.texto_observaciones.toPlainText() == "Ingresa con raya en la puerta"
 
 
-def test_guardar_la_orden_descuenta_el_stock_y_deja_kardex(app, taller, sin_modales):
+def test_lo_que_queda_en_el_carrito_es_lo_que_se_guarda(app, taller, sin_modales):
     """El camino del dinero, de punta a punta y por la pantalla.
 
     `test_triggers.py` ya prueba que insertar en detalle_ordenes descuenta y
     deja rastro; lo que falta cubrir es que la pantalla llegue hasta ahí: una
     sola transacción, el usuario de la sesión, y ni una escritura a
     `stock_actual` de por medio.
+
+    Quitar va en la misma prueba porque es el mismo sujeto: lo que la tabla
+    tiene al apretar Guardar es lo que termina en la base.
     """
     from src.ui import ordenes
 
     widget = ordenes.OrdenesWidget()
     widget._iniciar_nueva_orden(taller.vehiculo_id)
+    widget.agregar_al_carrito(taller.producto_id, 5)  # cantidad equivocada
     widget.agregar_al_carrito(taller.producto_id, 3)
+
+    # Ordenar antes de quitar: así la fila visible deja de ser la de inserción,
+    # que es exactamente como el ingreso de mercadería llegó a quitar el
+    # producto equivocado. Acá los datos viajan en la fila, no en una lista
+    # paralela, y por eso no se descalza.
+    widget.tabla_carrito.sortItems(1, Qt.DescendingOrder)
+    widget.tabla_carrito.selectRow(0)                 # la de 5
+    assert widget.boton_quitar.isEnabled()
+    widget.quitar_del_carrito()
+    assert widget.tabla_carrito.rowCount() == 1
+    assert widget.total.text() == "$38.700"           # 3 x 12.900, no 5
+
+    # Soltar la selección apaga el botón. Qt conserva la celda actual, así que
+    # preguntar por currentRow() lo dejaba encendido sobre una fila que ya no
+    # se ve elegida — y Quitar sacaba esa.
+    widget.tabla_carrito.clearSelection()
+    assert not widget.boton_quitar.isEnabled()
+
     widget.spin_kilometraje.setValue(120000)
     widget.guardar_orden()
 
