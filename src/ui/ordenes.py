@@ -248,6 +248,9 @@ class OrdenesWidget(QTabWidget):
 
         self.texto_observaciones = QTextEdit()
         self.texto_observaciones.setPlaceholderText("Ej: Vehículo ingresa con raya en puerta...")
+        # Crece con la ventana, pero hasta ahí: sin tope, en pantalla completa
+        # queda una caja vacía de 700 px donde caben ocho líneas de texto.
+        self.texto_observaciones.setMaximumHeight(240)
 
         marco_total, self.total = bloque_total()
 
@@ -269,7 +272,7 @@ class OrdenesWidget(QTabWidget):
         layout_der.addWidget(QLabel("3. Nivel de Combustible (Opcional)"))
         layout_der.addWidget(self.combo_combustible)
         layout_der.addWidget(QLabel("4. Observaciones y Estado Visual"))
-        layout_der.addWidget(self.texto_observaciones)
+        layout_der.addWidget(self.texto_observaciones, 1)
         layout_der.addStretch()
         layout_der.addWidget(marco_total)
         layout_der.addLayout(barra(self.boton_cancelar, self.boton_guardar, estira=1))
@@ -279,6 +282,10 @@ class OrdenesWidget(QTabWidget):
         division.addWidget(panel_izq)
         division.addWidget(panel_der)
         division.setSizes([600, 350])
+        # Al agrandar la ventana el ancho extra es para los insumos: el lateral
+        # son tres campos y no mejora por ser más ancho.
+        division.setStretchFactor(0, 1)
+        division.setStretchFactor(1, 0)
 
         layout_trabajo = QVBoxLayout(self.panel_trabajo)
         layout_trabajo.setContentsMargins(0, ESPACIO_PANTALLA, 0, 0)
@@ -286,7 +293,10 @@ class OrdenesWidget(QTabWidget):
 
         layout_tab_1 = layout_de_pantalla(self.tab_nueva_orden)
         layout_tab_1.addLayout(barra(self.boton_nueva_orden, self.label_contexto, estira=1))
-        layout_tab_1.addWidget(self.panel_trabajo)
+        # El 1 es lo que hace que el alto sobrante se lo lleve la mesa de trabajo.
+        # Sin él, el QLabel de contexto y el panel se reparten la ventana mitad y
+        # mitad: en pantalla completa el rótulo medía 506 px de alto.
+        layout_tab_1.addWidget(self.panel_trabajo, 1)
 
     def _configurar_ui_historial(self) -> None:
         """Diseño visual de la segunda pestaña (Historial)."""
