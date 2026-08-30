@@ -149,7 +149,17 @@ def test_lo_que_queda_en_el_carrito_es_lo_que_se_guarda(app, taller, sin_modales
     widget.tabla_carrito.clearSelection()
     assert not widget.boton_quitar.isEnabled()
 
+    # El kilometraje se promete obligatorio con un asterisco y nace en 0, que
+    # parece un valor escrito. Sin él la OT no sirve: es el dato con que se
+    # calcula el próximo servicio.
+    assert widget.spin_kilometraje.value() == 0
+    assert widget.spin_kilometraje.text() == "Sin registrar"   # no "0 km"
+    assert not widget.boton_guardar.isEnabled()
+    widget.guardar_orden()
+    assert sin_modales[-1] == "Falta el kilometraje"
+
     widget.spin_kilometraje.setValue(120000)
+    assert widget.boton_guardar.isEnabled()
     widget.guardar_orden()
 
     with SessionLocal() as db:

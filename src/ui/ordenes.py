@@ -213,7 +213,11 @@ class OrdenesWidget(QTabWidget):
         self.spin_cantidad.setRange(1, 1000)
 
         self.boton_agregar = QPushButton("Agregar")
+        self.boton_agregar.setEnabled(False)
         self.boton_agregar.clicked.connect(self.agregar_desde_el_combo)
+        self.combo_productos.currentIndexChanged.connect(
+            lambda indice: self.boton_agregar.setEnabled(indice >= 0)
+        )
         # Enter agrega a la orden; guardarla —que mueve stock— exige un click
         # deliberado, igual que confirmar el ingreso de mercadería.
         self.boton_agregar.setDefault(True)
@@ -256,6 +260,14 @@ class OrdenesWidget(QTabWidget):
         self.spin_kilometraje.setRange(0, 9999999)
         self.spin_kilometraje.setSuffix(" km")
         self.spin_kilometraje.setGroupSeparatorShown(True)
+        # En el mínimo dice "Sin registrar" en vez de "0 km": el asterisco
+        # promete que es obligatorio y un cero se lee como un dato ya escrito.
+        # Sin el kilometraje la OT no sirve — es con lo que se calcula el
+        # próximo servicio, que es a lo que vuelve el cliente. El rótulo es el
+        # mismo que usa el combo de combustible justo abajo. (Una cadena vacía
+        # acá no sirve: Qt la toma como "sin texto especial".)
+        self.spin_kilometraje.setSpecialValueText("Sin registrar")
+        self.spin_kilometraje.valueChanged.connect(self._actualizar_boton_guardar)
 
         self.combo_combustible = QComboBox()
         self.combo_combustible.addItems(NIVELES_COMBUSTIBLE)
@@ -275,6 +287,7 @@ class OrdenesWidget(QTabWidget):
         self.boton_guardar = QPushButton("Guardar Orden")
         self.boton_guardar.setProperty("clase", "primario")
         self.boton_guardar.setAutoDefault(False)
+        self.boton_guardar.setEnabled(False)
         self.boton_guardar.clicked.connect(self.guardar_orden)
 
         panel_der = QWidget()
@@ -423,7 +436,7 @@ class OrdenesWidget(QTabWidget):
         self.spin_cantidad.setValue(1)
         self.combo_combustible.setCurrentIndex(0)
         self.texto_observaciones.clear()
-        self.total.setText(clp(0))
+        self.recalcular_total()
 
     def _volver_al_reposo(self) -> None:
         self._vaciar_formulario()
@@ -507,6 +520,13 @@ class OrdenesWidget(QTabWidget):
             for fila in range(self.tabla_carrito.rowCount())
         )
         self.total.setText(clp(suma_total))
+        self._actualizar_boton_guardar()
+
+    def _actualizar_boton_guardar(self) -> None:
+        """Guardar exige insumos Y kilometraje, y lo dice apagándose."""
+        self.boton_guardar.setEnabled(
+            self.tabla_carrito.rowCount() > 0 and self.spin_kilometraje.value() > 0
+        )
 
     def guardar_orden(self) -> None:
         if not Sesion.activa():
@@ -518,6 +538,13 @@ class OrdenesWidget(QTabWidget):
         if self.tabla_carrito.rowCount() == 0:
             QMessageBox.warning(
                 self, "Orden vacía", "La orden no tiene repuestos ni servicios cargados."
+            )
+            return
+        if self.spin_kilometraje.value() == 0:
+            QMessageBox.warning(
+                self, "Falta el kilometraje",
+                "Anota el kilometraje con que entró el vehículo: es con lo que "
+                "se calcula el próximo servicio.",
             )
             return
 
