@@ -216,7 +216,11 @@ class IngresoMercaderiaDialog(QDialog):
         self.spin_cantidad.setRange(1, 10000)
 
         self.boton_agregar = QPushButton("Añadir a la lista")
+        self.boton_agregar.setEnabled(False)
         self.boton_agregar.clicked.connect(self.agregar_a_lista)
+        self.combo_productos.currentIndexChanged.connect(
+            lambda indice: self.boton_agregar.setEnabled(indice >= 0)
+        )
         # Enter en cualquier campo añade a la lista; confirmar el ingreso —que
         # mueve stock— exige un click deliberado.
         self.boton_agregar.setDefault(True)
@@ -275,6 +279,12 @@ class IngresoMercaderiaDialog(QDialog):
                 self.combo_productos.addItem(
                     p.nombre, {"id": p.id, "nombre": p.nombre, "stock": p.stock_actual}
                 )
+        # Nace vacío, con su texto de fondo. Abrir con el primer producto del
+        # catálogo ya elegido convierte un "Añadir" sin mirar en stock sumado al
+        # producto equivocado, y eso se descubre recién cuando no cuadra el
+        # inventario. Ventas y órdenes ya abren así.
+        self.combo_productos.setCurrentIndex(-1)
+        self.combo_productos.lineEdit().setPlaceholderText("Busca por nombre o marca")
 
     def agregar_a_lista(self) -> None:
         datos = self.combo_productos.currentData()

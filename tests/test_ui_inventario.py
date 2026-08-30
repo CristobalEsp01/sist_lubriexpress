@@ -183,7 +183,15 @@ def test_el_ingreso_de_mercaderia_suma_el_stock_una_sola_vez(app, bodeguero_qa, 
         producto_id = producto.id
 
     dialogo = IngresoMercaderiaDialog()
+    # El combo abría con el primer producto del catálogo ya elegido, así que
+    # "Añadir a la lista" sin mirar le sumaba stock al producto equivocado, y
+    # eso se descubre recién cuando no cuadra el inventario.
+    assert dialogo.combo_productos.count() > 0  # si no, lo de abajo no prueba nada
+    assert dialogo.combo_productos.currentIndex() == -1
+    assert not dialogo.boton_agregar.isEnabled()
+
     dialogo.combo_productos.setCurrentIndex(dialogo.combo_productos.findText(NOMBRE_INGRESO))
+    assert dialogo.boton_agregar.isEnabled()
     # El combo es editable para poder filtrar: si el nombre saliera de
     # currentText(), este filtro a medio escribir quedaría guardado como nombre.
     dialogo.combo_productos.lineEdit().setText("qa fil")
