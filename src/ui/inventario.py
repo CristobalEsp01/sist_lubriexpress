@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QSplitter, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from ..auth import Sesion
 from ..database import SessionLocal
@@ -86,7 +87,10 @@ class FormularioProducto(QDialog):
         self.categoria = QLineEdit()
         self.categoria.setPlaceholderText("Ej: Aceite Motor, Filtro de Aire")
         self.ubicacion = hacer_buscable(QComboBox(), libre=True)
-        self.ubicacion.setPlaceholderText("Ej: Pasillo 1 - Repisa B")
+        # En el lineEdit y no en el combo: Qt ignora setPlaceholderText()
+        # apenas el combo es editable, y Ubicación quedaba como el único
+        # campo del formulario sin una pista de qué se escribe ahí.
+        self.ubicacion.lineEdit().setPlaceholderText("Ej: Pasillo 1 - Repisa B")
         self.descripcion = QPlainTextEdit()
         self.descripcion.setPlaceholderText("Detalles técnicos o aplicaciones específicas...")
         self.descripcion.setFixedHeight(65)
@@ -326,7 +330,18 @@ class IngresoMercaderiaDialog(QDialog):
                     tipo_movimiento="ENTRADA",
                     cantidad_movida=item["cantidad"],
                 ))
-            db.commit()
+            try:
+                db.commit()
+            except IntegrityError as e:
+                # Sin esto, lo que rechaza la base sale por sys.excepthook y el
+                # ingreso "no pasa nada" en pantalla. Es el mismo trato que ya
+                # les da ventas, clientes y órdenes a sus escrituras.
+                db.rollback()
+                QMessageBox.warning(
+                    self, "No se pudo registrar el ingreso",
+                    f"La base de datos rechazó el movimiento:\n\n{e.orig}",
+                )
+                return
 
         QMessageBox.information(self, "Éxito", "Mercadería ingresada correctamente al inventario.")
         self.accept()
@@ -552,15 +567,7 @@ class InventarioWidget(QWidget):
         producto_id = self._id_seleccionado()
         if producto_id is None:
             return
-        # Disparador para cuando el módulo de ventas esté acoplado en VentanaPrincipal
-        ventana = self.window()
-        if hasattr(ventana, "iniciar_venta_con_producto"):
-            ventana.iniciar_venta_con_producto(producto_id)
-        else:
-            QMessageBox.information(
-                self, "Generar Venta",
-                "El módulo de ventas de mostrador se conectará a esta acción directa.",
-            )
+        self.window().iniciar_venta_con_producto(producto_id)
 
     def abrir_ingreso_mercaderia(self) -> None:
         dialogo = IngresoMercaderiaDialog(self)
