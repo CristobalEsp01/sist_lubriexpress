@@ -13,7 +13,7 @@ Lubri-Express (Inversiones Tres Puntos SpA). Corre localmente sobre PostgreSQL.
 | Historial de Kardex por producto | Funcionando (solo lectura) |
 | Login y control de acceso por rol | Funcionando (correr script de creacion de usuario) |
 | Ventas de mostrador | Funcionando |
-| Órdenes de trabajo | En revisión (funcional; falta WhatsApp) |
+| Órdenes de trabajo | Funcionando (falta el botón de WhatsApp) |
 | Carga masiva desde Excel | Pendiente |
 | Exportación a PDF y reportería | Pendiente |
 
