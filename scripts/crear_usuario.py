@@ -1,7 +1,8 @@
 """Crea o actualiza un usuario con contraseña hasheada.
 
-Todavía no hay pantalla de administración de usuarios (Propuesta 3.5: Roles y
-Perfiles), así que mientras tanto los usuarios se dan de alta por acá.
+Sirve para dar de alta el primer administrador de una instalación nueva; de
+ahí en adelante los usuarios se administran desde la pestaña Usuarios (solo
+ADMINISTRADOR, ver src/permisos.py).
 
 Uso:
     .venv/bin/python scripts/crear_usuario.py

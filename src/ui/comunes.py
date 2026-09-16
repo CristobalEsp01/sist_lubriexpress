@@ -6,12 +6,13 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QAbstractItemView, QComboBox, QCompleter, QDialog, QDialogButtonBox, QFrame,
-    QHBoxLayout, QHeaderView, QLabel, QStyle, QStyledItemDelegate,
+    QHBoxLayout, QHeaderView, QLabel, QMessageBox, QStyle, QStyledItemDelegate,
     QStyleOptionViewItem, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from shiboken6 import isValid
 
+from ..permisos import puede
 from ..precios import iva_de
 from ..texto import normalizar
 from .tema import (
@@ -394,6 +395,20 @@ def bloque_total(rotulo: str = "Total", menor: bool = False) -> tuple[QFrame, To
     totales.fila_descuento = [rotulo_descuento, descuento]
     totales.fijar(0, 0, 0, 0)
     return marco, totales
+
+
+def exigir_permiso(accion: str, widget) -> bool:
+    """Para el slot de una acción restringida (ver permisos.py): avisa y
+    devuelve False si el rol de la sesión no la permite. El botón ya nace
+    apagado; esto cubre el doble click, el atajo y las pruebas que llaman al
+    slot directo."""
+    if puede(accion):
+        return True
+    QMessageBox.warning(
+        widget, "Acción reservada",
+        "Tu rol no permite esta acción. Pídesela a un supervisor o administrador.",
+    )
+    return False
 
 
 def botonera(dialogo: QDialog) -> QDialogButtonBox:

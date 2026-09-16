@@ -5,17 +5,19 @@ Cada mantenedor vive en su módulo; acá solo se arma la ventana con pestañas.
 from PySide6.QtWidgets import QMainWindow, QTabWidget
 
 from ..auth import Sesion
+from ..permisos import puede
 from .clientes import ClientesWidget, FormularioCliente, FormularioVehiculo
 from .comunes import ItemNumerico, clp
 from .inventario import FormularioProducto, InventarioWidget
 from .login import LoginDialog
 from .ordenes import OrdenesWidget
+from .usuarios import FormularioUsuario, UsuariosWidget
 from .ventas import VentasWidget
 
 __all__ = [
-    "ClientesWidget", "FormularioCliente", "FormularioProducto", "FormularioVehiculo",
-    "InventarioWidget", "ItemNumerico", "LoginDialog", "OrdenesWidget", "VentanaPrincipal",
-    "VentasWidget", "clp",
+    "ClientesWidget", "FormularioCliente", "FormularioProducto", "FormularioUsuario",
+    "FormularioVehiculo", "InventarioWidget", "ItemNumerico", "LoginDialog", "OrdenesWidget",
+    "UsuariosWidget", "VentanaPrincipal", "VentasWidget", "clp",
 ]
 
 
@@ -36,6 +38,11 @@ class VentanaPrincipal(QMainWindow):
         self.pestanias.addTab(self.ventas, "Ventas")
         self.pestanias.addTab(self.clientes, "Clientes")
         self.pestanias.addTab(self.ordenes, "Órdenes de Trabajo")
+        # La pestaña de usuarios existe solo para quien puede usarla: una
+        # pestaña apagada invita a preguntar por qué.
+        if puede("usuarios"):
+            self.usuarios = UsuariosWidget(self)
+            self.pestanias.addTab(self.usuarios, "Usuarios")
         self.setCentralWidget(self.pestanias)
 
         if Sesion.activa():

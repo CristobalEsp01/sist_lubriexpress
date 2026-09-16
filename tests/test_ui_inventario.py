@@ -36,13 +36,13 @@ def bodeguero_qa():
     with SessionLocal() as db:
         usuario = Usuario(
             nombre="Bodeguero QA", username=f"qa_bodega_{rut_de_prueba()}",
-            password_hash="hash-de-prueba", rol="USUARIO_NORMAL",
+            password_hash="hash-de-prueba", rol="SUPERVISOR",
         )
         db.add(usuario)
         db.commit()
         usuario_id = usuario.id
 
-    Sesion.iniciar(SimpleNamespace(id=usuario_id, nombre="Bodeguero QA", rol="USUARIO_NORMAL"))
+    Sesion.iniciar(SimpleNamespace(id=usuario_id, nombre="Bodeguero QA", rol="SUPERVISOR"))
     yield usuario_id
     Sesion.cerrar()
     with SessionLocal() as db:
@@ -88,10 +88,12 @@ def test_el_formulario_crea_el_producto_y_no_deja_mover_el_stock_al_editar(app, 
         assert int(p.precio_venta) == 40000
 
 
-def test_el_listado_marca_lo_critico_sin_esconder_los_inactivos(app, limpiar):
+def test_el_listado_marca_lo_critico_sin_esconder_los_inactivos(app, limpiar, bodeguero_qa):
     """Reportado: un producto crítico desaparecía al marcar "Solo stock
     crítico" porque el filtro exigía además activo=TRUE, mientras el resumen
-    sin el tick sí lo contaba entre los críticos."""
+    sin el tick sí lo contaba entre los críticos.
+
+    Con sesión de supervisor: Editar exige rol además de fila."""
     from src.ui import InventarioWidget
 
     with SessionLocal() as db:
@@ -209,6 +211,45 @@ def test_el_ingreso_de_mercaderia_suma_el_stock_una_sola_vez(app, bodeguero_qa, 
         )
         assert (mov.tipo_movimiento, mov.cantidad_movida) == ("ENTRADA", 6)
         assert mov.stock_resultante == 16  # lo calcula el trigger, no la aplicación
+
+
+def test_el_ajuste_de_stock_registra_la_diferencia_por_kardex(app, bodeguero_qa, monkeypatch):
+    """Recuento físico: lo que se teclea es el stock real, y lo que entra al
+    Kardex es la diferencia, con signo. Un recuento igual al sistema no deja
+    rastro, y es el mismo trigger el que mueve el stock."""
+    from PySide6.QtWidgets import QMessageBox
+
+    from src.ui.inventario import AjusteStockDialog
+
+    avisos = []
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: avisos.append(a[1]))
+
+    with SessionLocal() as db:
+        producto = Producto(nombre=NOMBRE_INGRESO, precio_costo=1000, precio_venta=2000,
+                            stock_actual=10, stock_minimo=2)
+        db.add(producto)
+        db.commit()
+        producto_id = producto.id
+
+    igual = AjusteStockDialog(producto_id=producto_id)
+    assert igual.diferencia.text() == "sin cambios"
+    igual.accept()
+    assert avisos == ["Sin cambios"]
+
+    recuento = AjusteStockDialog(producto_id=producto_id)
+    recuento.contado.setValue(7)
+    assert recuento.diferencia.text() == "-3"
+    recuento.accept()
+
+    with SessionLocal() as db:
+        assert db.get(Producto, producto_id).stock_actual == 7
+        (mov,) = db.scalars(
+            select(KardexMovimiento).where(KardexMovimiento.producto_id == producto_id)
+        ).all()
+        assert (mov.tipo_movimiento, mov.cantidad_movida, mov.stock_resultante) == (
+            "AJUSTE_MANUAL", -3, 7
+        )
+        assert mov.usuario_id == bodeguero_qa
 
 
 def test_la_lista_de_ingreso_respeta_el_orden_en_que_se_agrego(app):
