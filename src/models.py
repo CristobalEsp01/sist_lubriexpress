@@ -132,6 +132,13 @@ class Orden(Base):
     usuario = relationship("Usuario")
     detalles = relationship("DetalleOrden", back_populates="orden")
 
+    @property
+    def descuento_aplicado(self) -> int:
+        """El descuento en pesos, venga como monto o como porcentaje del neto."""
+        if self.descuento_monto:
+            return int(self.descuento_monto)
+        return int(round(self.subtotal * self.descuento_porcentaje / 100))
+
 
 class DetalleOrden(Base):
     __tablename__ = "detalle_ordenes"

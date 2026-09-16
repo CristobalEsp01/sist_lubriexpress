@@ -10,8 +10,8 @@ este módulo nunca toca "stock_actual" (ver database/schema_lubriexpress.sql).
 """
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QComboBox, QDialog, QLabel, QLineEdit, QMessageBox, QPushButton, QSpinBox,
-    QSplitter, QStackedWidget, QTabWidget, QTableWidgetItem, QTextEdit,
+    QCheckBox, QComboBox, QDialog, QLabel, QLineEdit, QMessageBox, QPushButton,
+    QSpinBox, QSplitter, QStackedWidget, QTabWidget, QTableWidgetItem, QTextEdit,
     QVBoxLayout, QWidget,
 )
 from sqlalchemy import String, cast, select
@@ -23,15 +23,24 @@ from ..models import Cliente, DetalleOrden, Orden, Producto, Servicio, Usuario, 
 from ..texto import filtro_busqueda
 from .clientes import FormularioCliente, FormularioVehiculo
 from .comunes import (
-    ItemNumerico, barra, bloque_total, clp, con_aviso_vacio, crear_tabla,
-    hacer_buscable, layout_de_dialogo, layout_de_pantalla, reordenar,
+    BADGE_ALERTA, BADGE_EXITO, ROL_INSIGNIA, ItemNumerico, barra, bloque_total, clp,
+    con_aviso_vacio, crear_tabla, hacer_buscable, layout_de_dialogo, layout_de_pantalla,
+    reordenar,
 )
 from .tema import CANAL_PANEL, ESPACIO_PANTALLA, fuente_tabular
 
 COLUMNAS_CARRITO = ["Ítem", "Cant.", "Precio Unit.", "Subtotal"]
 COLUMNAS_DETALLE = ["Ítem", "Cant.", "Precio Unit.", "Subtotal"]
-COLUMNAS_HISTORIAL = ["ID OT", "Fecha", "Cliente", "Patente", "Vehículo", "Mecánico", "Total"]
+COLUMNAS_HISTORIAL = [
+    "ID OT", "Fecha", "Cliente", "Patente", "Vehículo", "Mecánico", "Folio MP", "Estado", "Total",
+]
 NIVELES_COMBUSTIBLE = ["No registrado", "Reserva", "1/4", "Medio", "3/4", "Lleno"]
+# Un selector y un solo campo: la base prohíbe porcentaje y monto a la vez
+# (CHECK descuento_exclusivo_orden) y la pantalla lo hace imposible de intentar.
+TIPOS_DESCUENTO = ["Sin descuento", "Porcentaje (%)", "Monto ($)"]
+# El filtro del historial: la propuesta pide separar lo institucional (con
+# folio de Mercado Público) de los clientes tradicionales.
+FILTROS_HISTORIAL = ["Todas", "Mercado Público", "Clientes"]
 
 REPOSO = "Seleccione 'Nueva Orden' para comenzar."
 
@@ -293,6 +302,16 @@ class OrdenesWidget(QTabWidget):
         # queda una caja vacía de 700 px donde caben ocho líneas de texto.
         self.texto_observaciones.setMaximumHeight(240)
 
+        self.tipo_descuento = QComboBox()
+        self.tipo_descuento.addItems(TIPOS_DESCUENTO)
+        self.valor_descuento = QSpinBox()
+        self.valor_descuento.setEnabled(False)
+        self.tipo_descuento.currentIndexChanged.connect(self._cambiar_tipo_descuento)
+        self.valor_descuento.valueChanged.connect(self.recalcular_total)
+
+        self.folio = QLineEdit(placeholderText="Folio Mercado Público (solo institucionales)")
+        self.pagada = QCheckBox("Pagada")
+
         marco_total, self.totales = bloque_total()
         self.total = self.totales.total
 
@@ -316,6 +335,9 @@ class OrdenesWidget(QTabWidget):
         layout_der.addWidget(self.combo_combustible)
         layout_der.addWidget(QLabel("4. Observaciones y Estado Visual"))
         layout_der.addWidget(self.texto_observaciones, 1)
+        layout_der.addWidget(QLabel("5. Descuento, folio y pago"))
+        layout_der.addLayout(barra(self.tipo_descuento, self.valor_descuento, estira=1))
+        layout_der.addLayout(barra(self.folio, self.pagada, estira=0))
         layout_der.addStretch()
         layout_der.addWidget(marco_total)
         layout_der.addLayout(barra(self.boton_cancelar, self.boton_guardar, estira=1))
@@ -347,16 +369,19 @@ class OrdenesWidget(QTabWidget):
             placeholderText="Buscar por N° OT, Patente o Cliente..."
         )
         self.busqueda_historial.textChanged.connect(self.cargar_historial)
+        self.filtro_historial = QComboBox()
+        self.filtro_historial.addItems(FILTROS_HISTORIAL)
+        self.filtro_historial.currentIndexChanged.connect(self.cargar_historial)
 
         self.tabla_historial = con_aviso_vacio(
             crear_tabla(COLUMNAS_HISTORIAL, ancha=2, orden=0, descendente=True,
-                        numericas=(0, 6)),
+                        numericas=(0, 8)),
             "Todavía no hay órdenes de trabajo registradas.",
         )
         self.tabla_historial.doubleClicked.connect(self.abrir_detalle_orden)
 
         layout_tab_2 = layout_de_pantalla(self.tab_historial)
-        layout_tab_2.addWidget(self.busqueda_historial)
+        layout_tab_2.addLayout(barra(self.busqueda_historial, self.filtro_historial, estira=0))
         layout_tab_2.addWidget(self.tabla_historial)
 
     def _al_cambiar_pestana(self, index: int) -> None:
@@ -376,12 +401,18 @@ class OrdenesWidget(QTabWidget):
             # con tilde no encontraban nada.
             cast(Orden.id, String), Vehiculo.patente, Cliente.nombre_completo,
         )
+        filtro = self.filtro_historial.currentText()
+        if filtro == "Mercado Público":
+            consulta = consulta.where(Orden.folio_mercado_publico.is_not(None))
+        elif filtro == "Clientes":
+            consulta = consulta.where(Orden.folio_mercado_publico.is_(None))
 
         with SessionLocal() as db:
             filas = [
                 (orden.id, orden.fecha_creacion, cliente.nombre_completo, vehiculo.patente,
                  f"{vehiculo.marca or ''} {vehiculo.modelo or ''}".strip() or "S/D",
-                 usuario.nombre, orden.total_final)
+                 usuario.nombre, orden.folio_mercado_publico or "", orden.estado_pago,
+                 orden.total_final)
                 for orden, cliente, vehiculo, usuario in db.execute(consulta).all()
             ]
 
@@ -389,7 +420,8 @@ class OrdenesWidget(QTabWidget):
         self.tabla_historial.setSortingEnabled(False)
         self.tabla_historial.setRowCount(len(filas))
 
-        for fila, (oid, fecha, cliente, patente, vehiculo, mecanico, total) in enumerate(filas):
+        for fila, (oid, fecha, cliente, patente, vehiculo, mecanico, folio, pagada,
+                   total) in enumerate(filas):
             celda_id = ItemNumerico(str(oid), oid)
             celda_id.setData(Qt.UserRole, oid)
             # Ordenable por el instante real: como texto, "%d-%m-%Y" ordena por
@@ -405,7 +437,13 @@ class OrdenesWidget(QTabWidget):
             self.tabla_historial.setItem(fila, 3, celda_patente)
             self.tabla_historial.setItem(fila, 4, QTableWidgetItem(vehiculo))
             self.tabla_historial.setItem(fila, 5, QTableWidgetItem(mecanico))
-            self.tabla_historial.setItem(fila, 6, ItemNumerico(clp(total), total))
+            celda_folio = QTableWidgetItem(folio)
+            celda_folio.setFont(fuente_tabular())
+            self.tabla_historial.setItem(fila, 6, celda_folio)
+            estado = QTableWidgetItem("Pagada" if pagada else "No pagada")
+            estado.setData(ROL_INSIGNIA, BADGE_EXITO if pagada else BADGE_ALERTA)
+            self.tabla_historial.setItem(fila, 7, estado)
+            self.tabla_historial.setItem(fila, 8, ItemNumerico(clp(total), total))
 
         reordenar(self.tabla_historial)
         self.tabla_historial.aviso.setText(
@@ -453,7 +491,36 @@ class OrdenesWidget(QTabWidget):
         self.spin_cantidad.setValue(1)
         self.combo_combustible.setCurrentIndex(0)
         self.texto_observaciones.clear()
+        self.tipo_descuento.setCurrentIndex(0)
+        self.folio.clear()
+        self.pagada.setChecked(False)
         self.recalcular_total()
+
+    def _cambiar_tipo_descuento(self, indice: int) -> None:
+        """El campo cambia de forma con el tipo: tope 100 y sufijo % para el
+        porcentaje, pesos para el monto, apagado sin descuento."""
+        self.valor_descuento.setValue(0)
+        self.valor_descuento.setEnabled(indice > 0)
+        if indice == 1:
+            self.valor_descuento.setRange(0, 100)
+            self.valor_descuento.setPrefix("")
+            self.valor_descuento.setSuffix(" %")
+        else:
+            self.valor_descuento.setRange(0, 99_999_999)
+            self.valor_descuento.setPrefix("$ ")
+            self.valor_descuento.setSuffix("")
+            self.valor_descuento.setGroupSeparatorShown(True)
+        self.recalcular_total()
+
+    def _descuento(self, neto: int) -> tuple[int, int, int]:
+        """(porcentaje, monto, pesos aplicados) según lo elegido. Solo uno de
+        los dos primeros es distinto de cero; es lo que se guarda."""
+        tipo, valor = self.tipo_descuento.currentIndex(), self.valor_descuento.value()
+        if tipo == 1 and valor:
+            return valor, 0, int(round(neto * valor / 100))
+        if tipo == 2 and valor:
+            return 0, valor, min(valor, neto)
+        return 0, 0, 0
 
     def _volver_al_reposo(self) -> None:
         self._vaciar_formulario()
@@ -562,7 +629,7 @@ class OrdenesWidget(QTabWidget):
             self.tabla_carrito.item(fila, 3).data(Qt.UserRole)
             for fila in range(self.tabla_carrito.rowCount())
         )
-        self.totales.calcular(suma_total)
+        self.totales.calcular(suma_total, self._descuento(suma_total)[2])
         self._actualizar_boton_guardar()
 
     def _actualizar_boton_guardar(self) -> None:
@@ -602,7 +669,8 @@ class OrdenesWidget(QTabWidget):
             for fila in range(self.tabla_carrito.rowCount())
         ]
         suma_total = sum(d["subtotal"] for d in detalles)
-        impuesto, total_final = self.totales.calcular(suma_total)
+        porcentaje, monto, aplicado = self._descuento(suma_total)
+        impuesto, total_final = self.totales.calcular(suma_total, aplicado)
 
         # Armar las notas incluyendo el nivel de combustible
         notas_finales = f"Nivel de Combustible: {self.combo_combustible.currentText()}"
@@ -615,9 +683,13 @@ class OrdenesWidget(QTabWidget):
                 vehiculo_id=self.vehiculo_actual_id,
                 usuario_id=Sesion.usuario_id,  # Extraído de tu clase auth
                 kilometraje_ingreso=self.spin_kilometraje.value(),
+                descuento_porcentaje=porcentaje,
+                descuento_monto=monto,
                 subtotal=suma_total,
                 impuesto=impuesto,
                 total_final=total_final,
+                folio_mercado_publico=self.folio.text().strip() or None,
+                estado_pago=self.pagada.isChecked(),
                 notas=notas_finales,
             )
             db.add(nueva_orden)
@@ -713,7 +785,10 @@ class DialogoDetalleOrden(QDialog):
                 f"<b>Kilometraje:</b> "
                 f"{'sin registrar' if orden.kilometraje_ingreso is None else f'{orden.kilometraje_ingreso} km'}<br>"
                 f"<b>Mecánico:</b> {usuario.nombre} | "
-                f"<b>Fecha:</b> {orden.fecha_creacion.strftime('%d-%m-%Y %H:%M')}"
+                f"<b>Fecha:</b> {orden.fecha_creacion.strftime('%d-%m-%Y %H:%M')}<br>"
+                f"<b>Estado:</b> {'Pagada' if orden.estado_pago else 'No pagada'}"
+                + (f" | <b>Folio MP:</b> {orden.folio_mercado_publico}"
+                   if orden.folio_mercado_publico else "")
             )
             # La relación 'orden.detalles' nos permite acceder a los productos
             # sin hacer joins manuales.
@@ -723,7 +798,7 @@ class DialogoDetalleOrden(QDialog):
                 for det in orden.detalles
             ]
             notas_guardadas = orden.notas or "Sin observaciones registradas."
-            cifras = (orden.subtotal, orden.descuento_monto, orden.impuesto, orden.total_final)
+            cifras = (orden.subtotal, orden.descuento_aplicado, orden.impuesto, orden.total_final)
 
         # Tabla de productos
         tabla = con_aviso_vacio(

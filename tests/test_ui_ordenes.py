@@ -17,6 +17,7 @@ from src.database import SessionLocal
 from src.models import (
     Cliente, DetalleOrden, KardexMovimiento, Orden, Producto, Servicio, Usuario, Vehiculo,
 )
+from src.ui.ordenes import COLUMNAS_HISTORIAL
 
 NOMBRE_PRODUCTO = "QA Aceite de motor 10W40"
 NOMBRE_SERVICIO = "QA Cambio de aceite"
@@ -154,6 +155,19 @@ def test_lo_que_queda_en_el_carrito_es_lo_que_se_guarda(app, taller, sin_modales
     assert widget.tabla_carrito.rowCount() == 2
     assert widget.totales.neto.text() == "$53.700"    # + 15.000 de mano de obra
 
+    # Descuento: un selector y un solo campo, así porcentaje y monto no pueden
+    # coincidir (la base lo prohíbe). El IVA se calcula sobre lo descontado.
+    widget.tipo_descuento.setCurrentIndex(2)          # monto
+    widget.valor_descuento.setValue(5000)
+    assert widget.total.text() == "$57.953"           # (53.700 - 5.000) x 1,19
+    widget.tipo_descuento.setCurrentIndex(1)          # porcentaje: el campo se reinicia
+    assert widget.valor_descuento.value() == 0
+    widget.valor_descuento.setValue(10)
+    assert widget.totales.descuento.text() == "- $5.370"
+    assert widget.total.text() == "$57.513"           # 48.330 + 9.183
+    widget.folio.setText("MP-2026-001")
+    widget.pagada.setChecked(True)
+
     # Soltar la selección apaga el botón. Qt conserva la celda actual, así que
     # preguntar por currentRow() lo dejaba encendido sobre una fila que ya no
     # se ve elegida — y Quitar sacaba esa.
@@ -178,9 +192,10 @@ def test_lo_que_queda_en_el_carrito_es_lo_que_se_guarda(app, taller, sin_modales
         assert orden.usuario_id == taller.usuario_id
         assert orden.kilometraje_ingreso == 120000
         # El IVA se calcula al cobrar y queda en la orden, no se re-deriva.
-        assert (int(orden.subtotal), int(orden.impuesto), int(orden.total_final)) == (
-            53700, 10203, 63903
-        )
+        assert (int(orden.subtotal), int(orden.descuento_porcentaje), int(orden.descuento_monto),
+                int(orden.impuesto), int(orden.total_final)) == (53700, 10, 0, 9183, 57513)
+        assert orden.descuento_aplicado == 5370
+        assert (orden.folio_mercado_publico, orden.estado_pago) == ("MP-2026-001", True)
 
         detalles = db.scalars(
             select(DetalleOrden).where(DetalleOrden.orden_id == orden.id).order_by(DetalleOrden.id)
@@ -201,6 +216,17 @@ def test_lo_que_queda_en_el_carrito_es_lo_que_se_guarda(app, taller, sin_modales
     # La pantalla vuelve al reposo: sin esto la orden siguiente arrastraría la anterior.
     assert not widget.panel_trabajo.isEnabled()
     assert widget.boton_nueva_orden.isEnabled()
+    assert widget.tipo_descuento.currentIndex() == 0 and widget.folio.text() == ""
+
+    # El historial separa lo institucional (con folio) de los clientes.
+    widget.setCurrentIndex(1)
+    widget.busqueda_historial.setText(NOMBRE_CLIENTE)
+    columna = COLUMNAS_HISTORIAL.index("Folio MP")
+    widget.filtro_historial.setCurrentText("Mercado Público")
+    assert [widget.tabla_historial.item(f, columna).text()
+            for f in range(widget.tabla_historial.rowCount())] == ["MP-2026-001"]
+    widget.filtro_historial.setCurrentText("Clientes")
+    assert widget.tabla_historial.rowCount() == 0
 
 
 def test_la_ventana_recorre_sus_cuatro_pestanas_sin_reventar(app, taller, sin_modales):
