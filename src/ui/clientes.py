@@ -1,5 +1,8 @@
 """Mantenedor de Clientes y sus vehículos."""
-from PySide6.QtCore import Qt
+import re
+
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QFormLayout, QHBoxLayout, QLabel,
     QLineEdit, QMessageBox, QPushButton, QSpinBox, QSplitter, QTableWidgetItem,
@@ -26,6 +29,19 @@ COLUMNAS_VEHICULO = ["Patente", "Marca", "Modelo", "Año", "Combustible", "Trans
 COMBUSTIBLES = ["", "Bencina", "Diésel", "Eléctrico", "Híbrido", "GLP"]
 TRANSMISIONES = ["", "Manual", "Automática", "CVT"]
 TRACCIONES = ["", "4x2", "4x4", "AWD"]
+
+
+def enlace_whatsapp(telefono: str | None) -> str | None:
+    """'9 5666 7509' -> 'https://wa.me/56956667509'. Celulares chilenos: 9
+    dígitos, o 8 de los tiempos en que el 9 no se anotaba. Otra cosa, None."""
+    digitos = re.sub(r"\D", "", telefono or "")
+    if digitos.startswith("56") and len(digitos) == 11:
+        return f"https://wa.me/{digitos}"
+    if len(digitos) == 9:
+        return f"https://wa.me/56{digitos}"
+    if len(digitos) == 8:
+        return f"https://wa.me/569{digitos}"
+    return None
 
 
 class FormularioCliente(QDialog):
@@ -273,6 +289,11 @@ class ClientesWidget(QWidget):
         self.boton_editar = QPushButton("Editar cliente")
         self.boton_editar.setEnabled(False)
         self.boton_editar.clicked.connect(self.editar_cliente)
+        # Abre el chat en WhatsApp Web/escritorio con el teléfono del cliente
+        # elegido; apagado si no tiene uno que parezca celular chileno.
+        self.boton_whatsapp = QPushButton("WhatsApp")
+        self.boton_whatsapp.setEnabled(False)
+        self.boton_whatsapp.clicked.connect(self.abrir_whatsapp)
 
         self.tabla = con_aviso_vacio(
             crear_tabla(COLUMNAS_CLIENTE, ancha=1, orden=1, numericas=(4,)),
@@ -299,7 +320,7 @@ class ClientesWidget(QWidget):
         self.resumen = QLabel()
         self.resumen.setProperty("clase", "resumen")
 
-        barra_clientes = barra(self.busqueda, boton_nuevo, self.boton_editar)
+        barra_clientes = barra(self.busqueda, self.boton_whatsapp, boton_nuevo, self.boton_editar)
         barra_vehiculos = barra(
             self.titulo_vehiculos, self.boton_nuevo_vehiculo, self.boton_editar_vehiculo,
         )
@@ -387,6 +408,15 @@ class ClientesWidget(QWidget):
             return None
         return self.tabla_vehiculos.item(fila, 0).data(Qt.UserRole)
 
+    def enlace_whatsapp_seleccionado(self) -> str | None:
+        fila = self.tabla.currentRow()
+        return enlace_whatsapp(self.tabla.item(fila, 3).text()) if fila >= 0 else None
+
+    def abrir_whatsapp(self) -> None:
+        enlace = self.enlace_whatsapp_seleccionado()
+        if enlace:
+            QDesktopServices.openUrl(QUrl(enlace))
+
     def _actualizar_boton_vehiculo(self) -> None:
         self.boton_editar_vehiculo.setEnabled(self.vehiculo_seleccionado() is not None)
 
@@ -394,6 +424,7 @@ class ClientesWidget(QWidget):
         cliente_id = self.cliente_seleccionado()
         hay_cliente = cliente_id is not None
         self.boton_editar.setEnabled(hay_cliente)
+        self.boton_whatsapp.setEnabled(hay_cliente and self.enlace_whatsapp_seleccionado() is not None)
         self.boton_nuevo_vehiculo.setEnabled(hay_cliente)
         self._actualizar_boton_vehiculo()
 
