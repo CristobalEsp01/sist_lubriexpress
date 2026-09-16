@@ -107,7 +107,20 @@ def test_mirar_el_historial_no_descarta_la_orden_en_progreso(app, taller, sin_mo
 
     widget = ordenes.OrdenesWidget()
     widget._iniciar_nueva_orden(taller.vehiculo_id)
+    # La tarjeta dice contra qué se compara el kilometraje de hoy.
+    assert not widget.tarjeta.isHidden()
+    assert "98.000 km" in widget.label_servicio.text()
+    assert widget.label_vehiculo.text() == "Toyota Yaris"
     widget.agregar_al_carrito(taller.producto_id, 2)
+
+    # Menos kilómetros que el servicio anterior: se pregunta; con No, no se guarda.
+    from PySide6.QtWidgets import QMessageBox
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.No)
+    widget.spin_kilometraje.setValue(50000)
+    widget.guardar_orden()
+    with SessionLocal() as db:
+        assert db.query(Orden).filter_by(vehiculo_id=taller.vehiculo_id).count() == 1
+
     widget.spin_kilometraje.setValue(120000)
     widget.texto_observaciones.setPlainText("Ingresa con raya en la puerta")
 

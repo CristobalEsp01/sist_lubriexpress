@@ -262,6 +262,37 @@ QLabel[clase="seccion"] {{
     font-size: 13px;
     padding: 4px 2px;
 }}
+QLabel[clase="titulo"] {{
+    color: {TINTA};
+    font-weight: 700;
+    font-size: 20px;
+}}
+QFrame[clase="tarjeta"] {{
+    background: {SUPERFICIE};
+    border: 1px solid {BORDE};
+    border-radius: 8px;
+}}
+QFrame[clase="tarjeta"] QLabel {{
+    background: transparent;
+}}
+QLabel[clase="tarjeta-titulo"] {{
+    color: {TINTA};
+    font-weight: 600;
+    font-size: 14px;
+}}
+QLabel[clase="tarjeta-texto"] {{
+    color: {TINTA_SUAVE};
+    font-size: 12px;
+}}
+QFrame[clase="tarjeta"] QLabel[clase="patente"] {{
+    font-family: {FAMILIAS_MONO};
+    font-size: 22px;
+    font-weight: 700;
+    color: {ACENTO_OSCURO};
+    background: {ACENTO_FONDO};
+    border-radius: 6px;
+    padding: 6px 12px;
+}}
 QLabel[clase="resumen"] {{
     color: {TINTA_SUAVE};
     font-size: 12px;

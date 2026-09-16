@@ -21,11 +21,13 @@ class LoginDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Lubri-Express — Iniciar sesión")
-        self.setMinimumWidth(360)
+        self.setMinimumWidth(400)
         self.setModal(True)
 
-        titulo = QLabel("Sistema de Gestión de Taller")
-        titulo.setProperty("clase", "seccion")
+        titulo = QLabel("Lubri-Express")
+        titulo.setProperty("clase", "titulo")
+        subtitulo = QLabel("Sistema de Gestión de Taller — inicia sesión para abrir el turno")
+        subtitulo.setProperty("clase", "resumen")
 
         self.username = QLineEdit(placeholderText="Usuario")
         self.password = QLineEdit(placeholderText="Contraseña")
@@ -44,6 +46,8 @@ class LoginDialog(QDialog):
 
         layout = layout_de_dialogo(self)
         layout.addWidget(titulo)
+        layout.addWidget(subtitulo)
+        layout.addSpacing(ESPACIO_FORMULARIO)
         layout.addLayout(form)
         layout.addWidget(boton_entrar)
 

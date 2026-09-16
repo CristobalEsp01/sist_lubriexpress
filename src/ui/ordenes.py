@@ -10,9 +10,9 @@ este módulo nunca toca "stock_actual" (ver database/schema_lubriexpress.sql).
 """
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QDialog, QLabel, QLineEdit, QMessageBox, QPushButton,
-    QSpinBox, QSplitter, QStackedWidget, QTabWidget, QTableWidgetItem, QTextEdit,
-    QVBoxLayout, QWidget,
+    QCheckBox, QComboBox, QDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
+    QPushButton, QSpinBox, QSplitter, QStackedWidget, QTabWidget, QTableWidgetItem,
+    QTextEdit, QVBoxLayout, QWidget,
 )
 from sqlalchemy import String, cast, select
 from sqlalchemy.exc import IntegrityError
@@ -43,6 +43,11 @@ TIPOS_DESCUENTO = ["Sin descuento", "Porcentaje (%)", "Monto ($)"]
 FILTROS_HISTORIAL = ["Todas", "Mercado Público", "Clientes"]
 
 REPOSO = "Seleccione 'Nueva Orden' para comenzar."
+
+
+def km(valor: int) -> str:
+    """120000 -> '120.000 km'."""
+    return f"{valor:,} km".replace(",", ".")
 
 
 class AsistenteNuevaOrden(QDialog):
@@ -212,6 +217,32 @@ class OrdenesWidget(QTabWidget):
         self.label_contexto = QLabel(REPOSO)
         self.label_contexto.setProperty("clase", "seccion")
 
+        # La tarjeta del vehículo en proceso: patente grande (es lo que se lee
+        # desde el patio), el auto, el dueño y el último servicio registrado,
+        # que es contra lo que se compara el kilometraje de hoy.
+        self.tarjeta = QFrame()
+        self.tarjeta.setProperty("clase", "tarjeta")
+        self.label_patente = QLabel()
+        self.label_patente.setProperty("clase", "patente")
+        self.label_vehiculo = QLabel()
+        self.label_vehiculo.setProperty("clase", "tarjeta-titulo")
+        self.label_cliente = QLabel()
+        self.label_cliente.setProperty("clase", "tarjeta-texto")
+        self.label_servicio = QLabel()
+        self.label_servicio.setProperty("clase", "tarjeta-texto")
+        columna = QVBoxLayout()
+        columna.setSpacing(2)
+        columna.addWidget(self.label_vehiculo)
+        columna.addWidget(self.label_cliente)
+        columna.addWidget(self.label_servicio)
+        fila_tarjeta = QHBoxLayout(self.tarjeta)
+        fila_tarjeta.setContentsMargins(14, 10, 14, 10)
+        fila_tarjeta.setSpacing(16)
+        fila_tarjeta.addWidget(self.label_patente)
+        fila_tarjeta.addLayout(columna, 1)
+        self.tarjeta.hide()
+        self.ultimo_km: int | None = None
+
         self.panel_trabajo = QWidget()
         self.panel_trabajo.setEnabled(False)  # Bloqueado al inicio
 
@@ -358,6 +389,7 @@ class OrdenesWidget(QTabWidget):
 
         layout_tab_1 = layout_de_pantalla(self.tab_nueva_orden)
         layout_tab_1.addLayout(barra(self.boton_nueva_orden, self.label_contexto, estira=1))
+        layout_tab_1.addWidget(self.tarjeta)
         # El 1 es lo que hace que el alto sobrante se lo lleve la mesa de trabajo.
         # Sin él, el QLabel de contexto y el panel se reparten la ventana mitad y
         # mitad: en pantalla completa el rótulo medía 506 px de alto.
@@ -426,7 +458,8 @@ class OrdenesWidget(QTabWidget):
             celda_id.setData(Qt.UserRole, oid)
             # Ordenable por el instante real: como texto, "%d-%m-%Y" ordena por
             # el día del mes. Mismo patrón que el historial de ventas.
-            celda_fecha = ItemNumerico(fecha.strftime("%d-%m-%Y %H:%M"), fecha.timestamp())
+            formato = "%d-%m-%Y" if (fecha.hour, fecha.minute) == (0, 0) else "%d-%m-%Y %H:%M"
+            celda_fecha = ItemNumerico(fecha.strftime(formato), fecha.timestamp())
             celda_fecha.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
             celda_patente = QTableWidgetItem(patente)
             celda_patente.setFont(fuente_tabular())
@@ -445,6 +478,8 @@ class OrdenesWidget(QTabWidget):
             self.tabla_historial.setItem(fila, 7, estado)
             self.tabla_historial.setItem(fila, 8, ItemNumerico(clp(total), total))
 
+        # Sin folios a la vista la columna es aire que le falta al cliente.
+        self.tabla_historial.setColumnHidden(6, not any(f[6] for f in filas))
         reordenar(self.tabla_historial)
         self.tabla_historial.aviso.setText(
             "Ninguna orden coincide con la búsqueda."
@@ -464,11 +499,32 @@ class OrdenesWidget(QTabWidget):
         with SessionLocal() as db:
             vehiculo = db.get(Vehiculo, vehiculo_id)
             cliente = db.get(Cliente, vehiculo.cliente_id)
-
-            self.label_contexto.setText(
-                f"OT en proceso | {cliente.nombre_completo} | "
-                f"{vehiculo.marca or ''} {vehiculo.modelo or ''} ({vehiculo.patente})"
+            ultima = db.scalar(
+                select(Orden).where(Orden.vehiculo_id == vehiculo_id)
+                .order_by(Orden.fecha_creacion.desc(), Orden.id.desc()).limit(1)
             )
+
+            self.label_contexto.setText("OT en proceso")
+            self.label_patente.setText(vehiculo.patente)
+            self.label_vehiculo.setText(" ".join(filter(None, (
+                vehiculo.marca, vehiculo.modelo,
+                str(vehiculo.anio_fabricacion) if vehiculo.anio_fabricacion else None,
+            ))) or "Vehículo sin marca ni modelo")
+            self.label_cliente.setText(" · ".join(filter(None, (
+                cliente.nombre_completo, cliente.telefono, vehiculo.color,
+            ))))
+            self.ultimo_km = ultima.kilometraje_ingreso if ultima else None
+            if ultima is None:
+                self.label_servicio.setText("Primer servicio registrado en el sistema.")
+            else:
+                self.label_servicio.setText(
+                    f"Último servicio: OT #{ultima.id} el {ultima.fecha_creacion:%d-%m-%Y}"
+                    + (f", con {km(self.ultimo_km)}" if self.ultimo_km is not None else "")
+                )
+        self.tarjeta.show()
+        self.spin_kilometraje.setToolTip(
+            f"Último registrado: {km(self.ultimo_km)}" if self.ultimo_km is not None else ""
+        )
 
         self._vaciar_formulario()
         self._cargar_productos()
@@ -525,6 +581,8 @@ class OrdenesWidget(QTabWidget):
     def _volver_al_reposo(self) -> None:
         self._vaciar_formulario()
         self.vehiculo_actual_id = None
+        self.ultimo_km = None
+        self.tarjeta.hide()
         self.panel_trabajo.setEnabled(False)
         self.boton_nueva_orden.setEnabled(True)
         self.label_contexto.setText(REPOSO)
@@ -657,6 +715,17 @@ class OrdenesWidget(QTabWidget):
                 "se calcula el próximo servicio.",
             )
             return
+
+        # Un kilometraje menor que el del servicio anterior es casi siempre un
+        # dedo cambiado; se pregunta, no se prohíbe (hay cambios de tablero).
+        if self.ultimo_km is not None and self.spin_kilometraje.value() < self.ultimo_km:
+            seguir = QMessageBox.question(
+                self, "Kilometraje menor que el anterior",
+                f"El servicio anterior registró {km(self.ultimo_km)} y ahora se anotan "
+                f"{km(self.spin_kilometraje.value())}. ¿Guardar igual?",
+            )
+            if seguir != QMessageBox.Yes:
+                return
 
         # Capturar totales y empaquetar detalles
         detalles = [

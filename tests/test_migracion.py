@@ -8,7 +8,7 @@ from decimal import Decimal
 
 import pytest
 from conftest import patente_de_prueba, rut_de_prueba
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from scripts.migrar_sistema_antiguo import (
     USUARIO_MIGRACION, PATENTE_ORDEN, cuadre, fecha_excel, migrar,
@@ -79,6 +79,11 @@ def planillas():
 
 def test_la_migracion_carga_lo_que_cuadra_y_cuenta_lo_que_no(db, planillas):
     p1, p2, p3 = planillas.pop("_patentes")
+    # La base de desarrollo puede tener la migración real ya hecha; el guardián
+    # la vería y no haría nada. Se le esconde el marcador dentro de la
+    # transacción de la prueba, que se revierte entera al terminar.
+    db.execute(update(Usuario).where(Usuario.username == USUARIO_MIGRACION)
+               .values(username=f"{USUARIO_MIGRACION}_{SUFIJO}"))
     informe = migrar(db, planillas)
 
     # Usuarios: el técnico y sistema_antiguo, inactivos y sin poder entrar.
