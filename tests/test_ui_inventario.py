@@ -272,3 +272,42 @@ def test_la_lista_de_ingreso_respeta_el_orden_en_que_se_agrego(app):
     dialogo.tabla.setCurrentCell(0, 0)
     dialogo.quitar_seleccionado()
     assert [item["nombre"] for item in dialogo.lista_ingreso] == ["AA Agregado después"]
+
+
+def test_el_minimo_por_categoria_alcanza_solo_a_su_categoria(app, bodeguero_qa):
+    """Propuesta 3.2 pide configurar el mínimo por categoría; el dato sigue
+    viviendo en cada producto (es lo que lee vw_stock_critico) y esto solo
+    evita teclearlo 2.372 veces. No toca el stock ni pasa por Kardex."""
+    from src.ui.inventario import MinimoPorCategoriaDialog
+
+    categoria = f"QA Categoría {rut_de_prueba()}"
+    with SessionLocal() as db:
+        db.add_all([
+            Producto(nombre=f"{NOMBRE_INGRESO} 1", categoria=categoria,
+                     precio_costo=1, precio_venta=2, stock_actual=5),
+            Producto(nombre=f"{NOMBRE_INGRESO} 2", categoria=categoria,
+                     precio_costo=1, precio_venta=2, stock_actual=5, stock_minimo=99),
+            Producto(nombre=f"{NOMBRE_INGRESO} 3", categoria="QA Otra",
+                     precio_costo=1, precio_venta=2, stock_actual=5, stock_minimo=7),
+        ])
+        db.commit()
+
+    dialogo = MinimoPorCategoriaDialog()
+    dialogo.categoria.setCurrentIndex(dialogo.categoria.findText(categoria))
+    assert "2 producto(s)" in dialogo.cuantos.text()
+    dialogo.minimo.setValue(4)
+    dialogo.accept()
+
+    with SessionLocal() as db:
+        de_la_categoria = db.scalars(
+            select(Producto).where(Producto.categoria == categoria)
+        ).all()
+        assert [p.stock_minimo for p in de_la_categoria] == [4, 4]
+        assert [p.stock_actual for p in de_la_categoria] == [5, 5]  # el stock no se toca
+        otra = db.scalar(select(Producto).where(Producto.categoria == "QA Otra"))
+        assert otra.stock_minimo == 7
+
+    with SessionLocal() as db:  # limpieza: los deja el fixture bodeguero_qa por nombre
+        for p in db.scalars(select(Producto).where(Producto.nombre.like(f"{NOMBRE_INGRESO}%"))):
+            db.delete(p)
+        db.commit()

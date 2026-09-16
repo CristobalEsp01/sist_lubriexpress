@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QPushButton, QSpinBox,
     QSplitter, QTableWidgetItem, QVBoxLayout, QWidget,
 )
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
 from ..auth import Sesion
@@ -430,6 +430,78 @@ class AjusteStockDialog(QDialog):
         super().accept()
 
 
+class MinimoPorCategoriaDialog(QDialog):
+    """Fija el stock mínimo de toda una categoría de una vez (Propuesta 3.2).
+
+    El mínimo sigue viviendo en cada producto —que es lo que lee
+    `vw_stock_critico`— y cualquiera puede sobrescribirlo después desde su
+    formulario; esto solo evita teclearlo 2.372 veces. No pasa por Kardex:
+    `stock_minimo` no es stock, es el umbral con que se lo compara.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Stock mínimo por categoría")
+        self.setMinimumWidth(420)
+
+        self.categoria = hacer_buscable(QComboBox())
+        self.categoria.lineEdit().setPlaceholderText("Busca la categoría")
+        self.minimo = QSpinBox(maximum=999_999)
+        self.cuantos = QLabel()
+        self.categoria.currentIndexChanged.connect(self._contar)
+
+        with SessionLocal() as db:
+            self._categorias = db.scalars(
+                select(Producto.categoria).where(Producto.categoria.is_not(None))
+                .distinct().order_by(Producto.categoria)
+            ).all()
+        self.categoria.addItems(list(self._categorias))
+        self.categoria.setCurrentIndex(-1)
+
+        form = QFormLayout()
+        form.setSpacing(11)
+        form.addRow("Categoría *", self.categoria)
+        form.addRow("Stock mínimo", self.minimo)
+        form.addRow("", self.cuantos)
+
+        layout = layout_de_dialogo(self)
+        layout.addLayout(form)
+        layout.addWidget(botonera(self))
+        self._contar()
+
+    def _contar(self) -> None:
+        categoria = self.categoria.currentText().strip()
+        if categoria not in self._categorias:
+            self.cuantos.setText("")
+            return
+        with SessionLocal() as db:
+            n = db.scalar(
+                select(func.count(Producto.id)).where(Producto.categoria == categoria)
+            )
+        self.cuantos.setText(f"Se aplicará a {n} producto(s) de esta categoría.")
+
+    def accept(self) -> None:
+        categoria = self.categoria.currentText().strip()
+        if categoria not in self._categorias:
+            QMessageBox.warning(
+                self, "Elige una categoría",
+                "Escoge una de las categorías que ya existen en el inventario.",
+            )
+            return
+        self.aplicar(categoria, self.minimo.value())
+        super().accept()
+
+    @staticmethod
+    def aplicar(categoria: str, minimo: int) -> int:
+        """Devuelve cuántos productos quedaron con ese mínimo."""
+        with SessionLocal() as db:
+            afectados = db.query(Producto).filter(Producto.categoria == categoria).update(
+                {Producto.stock_minimo: minimo}, synchronize_session=False
+            )
+            db.commit()
+        return afectados
+
+
 class InventarioWidget(QWidget):
     """Listado de productos con búsqueda, alta y edición. Crear, editar,
     ingresar mercadería, ajustar stock y ver el costo están reservados a
@@ -464,6 +536,8 @@ class InventarioWidget(QWidget):
         self.boton_ajuste.clicked.connect(self.ajustar_stock)
         self.boton_excel = QPushButton("Cargar Excel")
         self.boton_excel.clicked.connect(self.abrir_carga_excel)
+        self.boton_minimos = QPushButton("Mínimo por categoría")
+        self.boton_minimos.clicked.connect(self.fijar_minimos)
 
         # El rol manda: el botón nace apagado y lo dice, y el slot vuelve a
         # preguntar. Editar y Ajustar además exigen una fila (recargar_kardex).
@@ -471,9 +545,10 @@ class InventarioWidget(QWidget):
         boton_nuevo.setEnabled(self.supervisa)
         self.boton_ingreso.setEnabled(self.supervisa)
         self.boton_excel.setEnabled(self.supervisa)
+        self.boton_minimos.setEnabled(self.supervisa)
         if not self.supervisa:
             for boton in (boton_nuevo, self.boton_editar, self.boton_ingreso,
-                          self.boton_ajuste, self.boton_excel):
+                          self.boton_ajuste, self.boton_excel, self.boton_minimos):
                 boton.setToolTip("Reservado a supervisores y administradores")
 
         self.tabla = con_aviso_vacio(
@@ -498,8 +573,8 @@ class InventarioWidget(QWidget):
 
         barra_superior = barra(
             self.busqueda, self.solo_criticos, self.boton_vender,
-            self.boton_ingreso, self.boton_excel, self.boton_ajuste, boton_nuevo,
-            self.boton_editar, estira=0,
+            self.boton_ingreso, self.boton_excel, self.boton_minimos, self.boton_ajuste,
+            boton_nuevo, self.boton_editar, estira=0,
         )
 
         arriba = QWidget()
@@ -685,6 +760,12 @@ class InventarioWidget(QWidget):
         if producto_id is None:
             return
         self.window().iniciar_venta_con_producto(producto_id)
+
+    def fijar_minimos(self) -> None:
+        if not exigir_permiso("inventario", self):
+            return
+        if MinimoPorCategoriaDialog(self).exec():
+            self.recargar()
 
     def abrir_carga_excel(self) -> None:
         if not exigir_permiso("inventario", self):
