@@ -267,4 +267,4 @@ def test_la_ventana_recorre_sus_cuatro_pestanas_sin_reventar(app, taller, sin_mo
         if tabla.rowCount():
             tabla.selectRow(0)
 
-    assert ventana.pestanias.count() == 4
+    assert ventana.pestanias.count() == 5  # Reportes también, para todos

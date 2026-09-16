@@ -11,13 +11,14 @@ from .comunes import ItemNumerico, clp
 from .inventario import FormularioProducto, InventarioWidget
 from .login import LoginDialog
 from .ordenes import OrdenesWidget
+from .reportes import ReportesWidget
 from .usuarios import ETIQUETAS_ROL, FormularioUsuario, UsuariosWidget
 from .ventas import VentasWidget
 
 __all__ = [
     "ClientesWidget", "FormularioCliente", "FormularioProducto", "FormularioUsuario",
     "FormularioVehiculo", "InventarioWidget", "ItemNumerico", "LoginDialog", "OrdenesWidget",
-    "UsuariosWidget", "VentanaPrincipal", "VentasWidget", "clp",
+    "ReportesWidget", "UsuariosWidget", "VentanaPrincipal", "VentasWidget", "clp",
 ]
 
 
@@ -38,6 +39,8 @@ class VentanaPrincipal(QMainWindow):
         self.pestanias.addTab(self.ventas, "Ventas")
         self.pestanias.addTab(self.clientes, "Clientes")
         self.pestanias.addTab(self.ordenes, "Órdenes de Trabajo")
+        self.reportes = ReportesWidget(self)
+        self.pestanias.addTab(self.reportes, "Reportes")
         # La pestaña de usuarios existe solo para quien puede usarla: una
         # pestaña apagada invita a preguntar por qué.
         if puede("usuarios"):

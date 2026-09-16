@@ -49,9 +49,9 @@ def sesion():
 
 
 @pytest.mark.parametrize("rol, supervisa, pestanas", [
-    ("USUARIO_NORMAL", False, 4),
-    ("SUPERVISOR", True, 4),
-    ("ADMINISTRADOR", True, 5),
+    ("USUARIO_NORMAL", False, 5),
+    ("SUPERVISOR", True, 5),
+    ("ADMINISTRADOR", True, 6),
 ])
 def test_el_rol_manda_en_inventario_y_en_las_pestanas(app, sesion, avisos, rol, supervisa, pestanas):
     """Un botón apagado no basta: el slot vuelve a preguntar, que es lo que
@@ -73,9 +73,9 @@ def test_el_rol_manda_en_inventario_y_en_las_pestanas(app, sesion, avisos, rol, 
 
     ventana = VentanaPrincipal()
     assert ventana.pestanias.count() == pestanas
-    if pestanas == 5:
-        assert ventana.pestanias.tabText(4) == "Usuarios"
-        ventana.pestanias.setCurrentIndex(4)
+    if pestanas == 6:
+        assert ventana.pestanias.tabText(5) == "Usuarios"
+        ventana.pestanias.setCurrentIndex(5)
         ventana.usuarios.tabla.selectRow(0)  # elegir una fila es lo que junta los connect
         assert ventana.usuarios.boton_editar.isEnabled()
 
