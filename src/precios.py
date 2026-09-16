@@ -17,3 +17,8 @@ def iva_de(neto) -> int:
 
 def con_iva(neto) -> int:
     return int(neto) + iva_de(neto)
+
+
+def clp(valor) -> str:
+    """20000.00 -> '$20.000'. En Chile no se usan decimales en caja."""
+    return f"${int(valor):,}".replace(",", ".")

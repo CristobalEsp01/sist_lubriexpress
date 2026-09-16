@@ -9,16 +9,18 @@ triggers de Postgres los que descuentan el stock y dejan el rastro en el Kardex:
 este módulo nunca toca "stock_actual" (ver database/schema_lubriexpress.sql).
 """
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QPageSize, QPdfWriter, QTextDocument
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
-    QPushButton, QSpinBox, QSplitter, QStackedWidget, QTabWidget, QTableWidgetItem,
-    QTextEdit, QVBoxLayout, QWidget,
+    QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
+    QMessageBox, QPushButton, QSpinBox, QSplitter, QStackedWidget, QTabWidget,
+    QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
 )
 from sqlalchemy import String, cast, select
 from sqlalchemy.exc import IntegrityError
 
 from ..auth import Sesion
 from ..database import SessionLocal
+from ..documentos import html_de_orden
 from ..models import Cliente, DetalleOrden, Orden, Producto, Servicio, Usuario, Vehiculo
 from ..texto import filtro_busqueda
 from .clientes import FormularioCliente, FormularioVehiculo
@@ -48,6 +50,33 @@ REPOSO = "Seleccione 'Nueva Orden' para comenzar."
 def km(valor: int) -> str:
     """120000 -> '120.000 km'."""
     return f"{valor:,} km".replace(",", ".")
+
+
+def guardar_pdf_de_orden(orden_id: int, ruta) -> None:
+    """La orden como PDF para el cliente (Propuesta 3.4): lo guardado, tal cual."""
+    with SessionLocal() as db:
+        orden = db.get(Orden, orden_id)
+        vehiculo, cliente, usuario = orden.vehiculo, orden.vehiculo.cliente, orden.usuario
+        datos = {
+            "numero": orden.id, "fecha": orden.fecha_creacion,
+            "cliente": cliente.nombre_completo, "rut": cliente.rut, "telefono": cliente.telefono,
+            "patente": vehiculo.patente,
+            "vehiculo": " ".join(filter(None, (
+                vehiculo.marca, vehiculo.modelo,
+                str(vehiculo.anio_fabricacion) if vehiculo.anio_fabricacion else None,
+            ))) or "Sin marca ni modelo",
+            "kilometraje": orden.kilometraje_ingreso, "tecnico": usuario.nombre,
+            "lineas": [((d.producto or d.servicio).nombre, d.cantidad, int(d.precio_unitario_cobrado))
+                       for d in orden.detalles],
+            "subtotal": orden.subtotal, "descuento": orden.descuento_aplicado,
+            "impuesto": orden.impuesto, "total": orden.total_final,
+            "pagada": orden.estado_pago, "folio": orden.folio_mercado_publico, "notas": orden.notas,
+        }
+    documento = QTextDocument()
+    documento.setHtml(html_de_orden(datos))
+    escritor = QPdfWriter(str(ruta))
+    escritor.setPageSize(QPageSize(QPageSize.A4))
+    documento.print_(escritor)
 
 
 class AsistenteNuevaOrden(QDialog):
@@ -892,6 +921,10 @@ class DialogoDetalleOrden(QDialog):
         marco_total, totales = bloque_total("Total final", menor=True)
         totales.fijar(*cifras)
 
+        boton_pdf = QPushButton("Exportar PDF")
+        boton_pdf.setAutoDefault(False)
+        boton_pdf.clicked.connect(self.exportar_pdf)
+
         titulo_insumos = QLabel("Insumos y Servicios")
         titulo_insumos.setProperty("clase", "seccion")
         titulo_notas = QLabel("Notas y Combustible")
@@ -905,3 +938,14 @@ class DialogoDetalleOrden(QDialog):
         layout.addWidget(titulo_notas)
         layout.addWidget(notas)
         layout.addWidget(marco_total)
+        layout.addLayout(barra(boton_pdf, estira=0))
+        self.orden_id = orden_id
+
+    def exportar_pdf(self) -> None:
+        ruta, _ = QFileDialog.getSaveFileName(
+            self, "Guardar PDF", f"OT-{self.orden_id}.pdf", "PDF (*.pdf)"
+        )
+        if not ruta:
+            return
+        guardar_pdf_de_orden(self.orden_id, ruta)
+        QMessageBox.information(self, "PDF guardado", f"La orden quedó en:\n{ruta}")

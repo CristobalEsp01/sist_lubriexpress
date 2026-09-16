@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
 from shiboken6 import isValid
 
 from ..permisos import puede
-from ..precios import iva_de
+from ..precios import clp, iva_de  # noqa: F401  (clp se re-exporta desde acá)
 from ..texto import normalizar
 from .tema import (
     ACENTO_FONDO, ACENTO_OSCURO, ALERTA, ALERTA_FONDO, ALTERNA, ALTO_FILA,
@@ -90,11 +90,6 @@ class InsigniaDelegate(QStyledItemDelegate):
             painter.drawText(rect_badge, Qt.AlignCenter, texto)
         finally:
             painter.restore()
-
-
-def clp(valor) -> str:
-    """20000.00 -> '$20.000'. En Chile no se usan decimales en caja."""
-    return f"${int(valor):,}".replace(",", ".")
 
 
 class ItemNumerico(QTableWidgetItem):

@@ -133,7 +133,7 @@ def test_mirar_el_historial_no_descarta_la_orden_en_progreso(app, taller, sin_mo
     assert widget.texto_observaciones.toPlainText() == "Ingresa con raya en la puerta"
 
 
-def test_lo_que_queda_en_el_carrito_es_lo_que_se_guarda(app, taller, sin_modales):
+def test_lo_que_queda_en_el_carrito_es_lo_que_se_guarda(app, taller, sin_modales, tmp_path):
     """El camino del dinero, de punta a punta y por la pantalla.
 
     `test_triggers.py` ya prueba que insertar en detalle_ordenes descuenta y
@@ -218,6 +218,10 @@ def test_lo_que_queda_en_el_carrito_es_lo_que_se_guarda(app, taller, sin_modales
         ]
 
         assert db.get(Producto, taller.producto_id).stock_actual == 7  # 10 - 3
+
+        # El PDF para el cliente sale de lo guardado, con el servicio incluido.
+        ordenes.guardar_pdf_de_orden(orden.id, tmp_path / "ot.pdf")
+        assert (tmp_path / "ot.pdf").read_bytes()[:4] == b"%PDF"
 
         # Un solo movimiento: el del producto. El servicio no deja rastro en el Kardex.
         mov = db.scalar(select(KardexMovimiento).where(KardexMovimiento.orden_id == orden.id))
