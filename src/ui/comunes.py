@@ -1,7 +1,9 @@
 """Piezas compartidas por los mantenedores: formato de moneda, insignias, tablas
 y combos que se buscan tecleando."""
+from pathlib import Path
+
 from PySide6.QtCore import (
-    QEvent, QModelIndex, QObject, QRectF, QSortFilterProxyModel, Qt, QTimer,
+    QEvent, QModelIndex, QObject, QRectF, QSortFilterProxyModel, QStandardPaths, Qt, QTimer,
 )
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
@@ -398,6 +400,14 @@ def bloque_total(rotulo: str = "Total", menor: bool = False) -> tuple[QFrame, To
     totales.fila_descuento = [rotulo_descuento, descuento]
     totales.fijar(0, 0, 0, 0)
     return marco, totales
+
+
+def carpeta_de_documentos(subcarpeta: str) -> Path:
+    """Documentos/Lubri-Express/<subcarpeta>, creada si no existe: donde caen
+    los reportes y los PDF, para que nadie tenga que buscar dónde quedaron."""
+    carpeta = Path(QStandardPaths.writableLocation(QStandardPaths.DocumentsLocation)) / "Lubri-Express" / subcarpeta
+    carpeta.mkdir(parents=True, exist_ok=True)
+    return carpeta
 
 
 def exigir_permiso(accion: str, widget) -> bool:

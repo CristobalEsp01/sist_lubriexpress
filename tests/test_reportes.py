@@ -45,6 +45,12 @@ def test_los_cuatro_reportes_cuadran_con_lo_guardado(db, app, tmp_path):
     for tabla in widget.tablas:
         if tabla.rowCount():
             tabla.selectRow(0)
-    widget.exportar_a(3, tmp_path / "reabastecimiento.xlsx")
-    exportado = leer_xlsx(tmp_path / "reabastecimiento.xlsx")
+    ruta = widget.exportar_a_carpeta(3, tmp_path)
+    assert ruta.name == "reabastecimiento_20310301_20310331.xlsx"
+    exportado = leer_xlsx(ruta)
     assert exportado and list(exportado[0]) == reportes.COLUMNAS_REABASTECIMIENTO
+    # Una barra por fila, con la columna que resume el reporte.
+    barras = widget.graficos[0].chart().series()[0].barSets()[0]
+    assert barras.count() == len(widget.filas[0])
+    grafico = ReportesWidget._grafico("Ingresos", "Total", [("10-03-2031", 1, 2, 35700)], 3, True)
+    assert grafico.series()[0].barSets()[0].at(0) == 35700

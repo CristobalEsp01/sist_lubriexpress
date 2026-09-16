@@ -29,6 +29,7 @@ from .comunes import (
     con_aviso_vacio, crear_tabla, hacer_buscable, layout_de_dialogo, layout_de_pantalla,
     reordenar,
 )
+from .comunes import carpeta_de_documentos
 from .tema import CANAL_PANEL, ESPACIO_PANTALLA, fuente_tabular
 
 COLUMNAS_CARRITO = ["Ítem", "Cant.", "Precio Unit.", "Subtotal"]
@@ -945,7 +946,8 @@ class DialogoDetalleOrden(QDialog):
 
     def exportar_pdf(self) -> None:
         ruta, _ = QFileDialog.getSaveFileName(
-            self, "Guardar PDF", f"OT-{self.orden_id}.pdf", "PDF (*.pdf)"
+            self, "Guardar PDF", str(carpeta_de_documentos("Órdenes") / f"OT-{self.orden_id}.pdf"),
+            "PDF (*.pdf)",
         )
         if not ruta:
             return

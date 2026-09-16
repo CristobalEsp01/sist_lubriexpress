@@ -23,7 +23,7 @@ a = Analysis(
     datas=[(str(traducciones / "qtbase_es.qm"), "PySide6/Qt/translations")],
     # Solo los módulos de Qt que se usan: cada uno que sobra son megas.
     excludes=["PySide6.QtNetwork", "PySide6.QtQml", "PySide6.QtQuick", "PySide6.QtWebEngineCore",
-              "PySide6.QtMultimedia", "PySide6.QtOpenGL", "PySide6.Qt3DCore", "PySide6.QtCharts"],
+              "PySide6.QtMultimedia", "PySide6.QtOpenGL", "PySide6.Qt3DCore"],  # QtCharts sí: Reportes
 )
 pyz = PYZ(a.pure)
 exe = EXE(
