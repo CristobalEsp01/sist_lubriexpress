@@ -91,24 +91,32 @@ def test_el_rut_se_guarda_con_formato_unico_y_no_se_repite(app, limpiar_cliente,
     assert repetido.cliente_id is None
 
 
-def test_el_vehiculo_cuelga_del_cliente_y_los_botones_siguen_la_seleccion(app, limpiar_cliente):
+def test_el_vehiculo_cuelga_del_cliente_y_los_botones_siguen_la_seleccion(
+    app, limpiar_cliente, monkeypatch
+):
+    from PySide6.QtGui import QDesktopServices
+
     from src.ui import ClientesWidget, FormularioCliente, FormularioVehiculo
+    from src.ui.clientes import enlace_whatsapp
 
     cliente = FormularioCliente()
     cliente.rut.setText(RUT_QA)
     cliente.nombre.setText(NOMBRE_QA)
+    cliente.telefono.setText("9 5666 7509")
     cliente.accept()
 
     vehiculo = FormularioVehiculo(cliente_id=cliente.cliente_id)
     vehiculo.patente.setText(f"  {PATENTE_QA[:2].lower()}-{PATENTE_QA[2:]}  ")  # se normaliza
     vehiculo.marca.setText("Toyota")
     vehiculo.anio.setValue(2019)
+    vehiculo.tipo.setText("Camioneta")
+    vehiculo.vin.setText("mr0fz22g401234567")  # se guarda en mayúscula
     vehiculo.accept()
 
     with SessionLocal() as db:
         v = db.get(Vehiculo, vehiculo.vehiculo_id)
-        assert (v.patente, v.cliente_id, v.anio_fabricacion) == (
-            PATENTE_QA, cliente.cliente_id, 2019
+        assert (v.patente, v.cliente_id, v.anio_fabricacion, v.tipo, v.vin) == (
+            PATENTE_QA, cliente.cliente_id, 2019, "Camioneta", "MR0FZ22G401234567"
         )
 
     widget = ClientesWidget()
@@ -128,6 +136,16 @@ def test_el_vehiculo_cuelga_del_cliente_y_los_botones_siguen_la_seleccion(app, l
 
     widget.tabla_vehiculos.selectRow(0)
     assert widget.boton_editar_vehiculo.isEnabled()
+
+    # WhatsApp: se enciende con un teléfono que parezca celular chileno y abre wa.me.
+    abiertos = []
+    monkeypatch.setattr(QDesktopServices, "openUrl", staticmethod(lambda url: abiertos.append(url.toString())))
+    assert widget.boton_whatsapp.isEnabled()
+    widget.abrir_whatsapp()
+    assert abiertos == ["https://wa.me/56956667509"]
+    assert enlace_whatsapp("+56 9 8220 0997") == "https://wa.me/56982200997"
+    assert enlace_whatsapp("82200997") == "https://wa.me/56982200997"   # sin el 9 de antes
+    assert enlace_whatsapp("") is None and enlace_whatsapp("123") is None
 
 
 @pytest.mark.parametrize("tecleado, encuentra", [

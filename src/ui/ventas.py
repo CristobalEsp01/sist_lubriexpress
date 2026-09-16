@@ -24,12 +24,14 @@ from ..database import SessionLocal
 from ..models import Cliente, DetalleVenta, Producto, Venta
 from ..texto import filtro_busqueda
 from .comunes import (
-    ItemNumerico, barra, bloque_total, clp, con_aviso_vacio, crear_tabla,
+    ItemNumerico, ajustar_columnas, barra, bloque_total, clp, con_aviso_vacio, crear_tabla,
     hacer_buscable, layout_de_dialogo, layout_de_pantalla, reordenar,
 )
 from .tema import ALERTA, CANAL_PANEL, ESPACIO_PANTALLA
 
-COLUMNAS_CATALOGO = ["Nombre", "Marca", "Categoría", "Stock", "Precio"]
+# Sin categoría: se busca por ella igual, y en el mesón lo que se mira es
+# nombre, marca, cuánto queda y a cuánto.
+COLUMNAS_CATALOGO = ["Nombre", "Marca", "Stock", "Precio neto"]
 COLUMNAS_CARRITO = ["Producto", "Cantidad", "Precio Unit.", "Subtotal"]
 COLUMNAS_DETALLE = ["Producto", "Cantidad", "Precio Unit.", "Subtotal"]
 COLUMNAS_HISTORIAL = ["Fecha", "Nº Boleta", "Cliente", "Vendedor", "Total"]
@@ -66,7 +68,7 @@ class PuntoVentaWidget(QWidget):
         self.busqueda.returnPressed.connect(self.agregar_desde_busqueda)
 
         self.tabla_catalogo = con_aviso_vacio(
-            crear_tabla(COLUMNAS_CATALOGO, ancha=0, orden=0, numericas=(3, 4)),
+            crear_tabla(COLUMNAS_CATALOGO, ancha=0, orden=0, numericas=(2, 3)),
             "No hay productos activos en el catálogo.",
         )
         self.tabla_catalogo.itemSelectionChanged.connect(self._actualizar_boton_agregar)
@@ -120,7 +122,8 @@ class PuntoVentaWidget(QWidget):
         self.boleta = QLineEdit(placeholderText="Ej: B-1043")
         self.boleta.returnPressed.connect(self.generar_venta)
 
-        marco_total, self.total = bloque_total()
+        marco_total, self.totales = bloque_total()
+        self.total = self.totales.total
 
         self.boton_vaciar = QPushButton("Vaciar carrito")
         self.boton_vaciar.clicked.connect(self.vaciar_carrito)
@@ -149,7 +152,7 @@ class PuntoVentaWidget(QWidget):
         division.setHandleWidth(1)
         division.addWidget(panel_catalogo)
         division.addWidget(panel_carrito)
-        division.setSizes([540, 430])
+        division.setSizes([680, 420])  # el catálogo necesita más que el carrito
 
         layout = layout_de_pantalla(self)
         layout.addWidget(division)
@@ -176,7 +179,7 @@ class PuntoVentaWidget(QWidget):
         self.tabla_catalogo.setSortingEnabled(False)
         self.tabla_catalogo.setRowCount(len(filas))
         for fila, (pid, nombre, marca, categoria, stock, precio) in enumerate(filas):
-            for columna, valor in enumerate([nombre, marca, categoria]):
+            for columna, valor in enumerate([nombre, marca]):
                 item = QTableWidgetItem(valor)
                 if columna == 0:
                     item.setData(Qt.UserRole, pid)
@@ -184,8 +187,8 @@ class PuntoVentaWidget(QWidget):
             celda_stock = ItemNumerico(str(stock), stock)
             if stock <= 0:
                 celda_stock.setForeground(QColor(ALERTA))
-            self.tabla_catalogo.setItem(fila, 3, celda_stock)
-            self.tabla_catalogo.setItem(fila, 4, ItemNumerico(clp(precio), precio))
+            self.tabla_catalogo.setItem(fila, 2, celda_stock)
+            self.tabla_catalogo.setItem(fila, 3, ItemNumerico(clp(precio), precio))
         reordenar(self.tabla_catalogo)
         self.resumen.setText(f"{len(filas)} producto(s) a la venta")
         if self.busqueda.text().strip():
@@ -325,8 +328,8 @@ class PuntoVentaWidget(QWidget):
                 fila, 2, ItemNumerico(clp(entrada["precio_unitario"]), entrada["precio_unitario"])
             )
             self.tabla_carrito.setItem(fila, 3, ItemNumerico(clp(subtotal), subtotal))
-        self.tabla_carrito.resizeColumnsToContents()
-        self.total.setText(clp(total))
+        ajustar_columnas(self.tabla_carrito)
+        self.totales.calcular(total)
         self.boton_quitar.setEnabled(False)
         self._actualizar_boton_cobrar()
 
@@ -417,7 +420,8 @@ class PuntoVentaWidget(QWidget):
                     self.recargar_catalogo()
                     return
 
-        total = sum(e["cantidad"] * e["precio_unitario"] for e in self.carrito)
+        neto = sum(e["cantidad"] * e["precio_unitario"] for e in self.carrito)
+        impuesto, total = self.totales.calcular(neto)
         cliente_id = self.cliente.currentData()
 
         with SessionLocal() as db:
@@ -425,6 +429,7 @@ class PuntoVentaWidget(QWidget):
                 usuario_id=Sesion.usuario_id,
                 cliente_id=cliente_id,
                 numero_boleta=numero_boleta,
+                impuesto=impuesto,
                 total_final=total,
             )
             db.add(venta)
@@ -481,7 +486,7 @@ class DetalleVentaDialog(QDialog):
         self.setModal(True)
 
         self.tabla = crear_tabla(COLUMNAS_DETALLE, ancha=0, orden=0, numericas=(1, 2, 3))
-        marco_total, self.label_total = bloque_total("Total cobrado", menor=True)
+        marco_total, self.totales = bloque_total("Total cobrado", menor=True)
 
         # Sin esto la única salida es la X de la ventana.
         cerrar = QDialogButtonBox(QDialogButtonBox.Close)
@@ -496,6 +501,8 @@ class DetalleVentaDialog(QDialog):
 
     def _cargar_detalle(self, venta_id: int) -> None:
         with SessionLocal() as db:
+            venta = db.get(Venta, venta_id)
+            cifras = (venta.total_final - venta.impuesto, 0, venta.impuesto, venta.total_final)
             detalles = db.scalars(
                 select(DetalleVenta)
                 .options(joinedload(DetalleVenta.producto))  # sin esto, un SELECT por fila
@@ -503,12 +510,10 @@ class DetalleVentaDialog(QDialog):
             ).all()
             self.tabla.setSortingEnabled(False)
             self.tabla.setRowCount(len(detalles))
-            suma_total = 0
 
             for fila, det in enumerate(detalles):
                 nombre = det.producto.nombre if det.producto else "Producto eliminado"
                 subtotal = det.cantidad * det.precio_unitario_cobrado
-                suma_total += subtotal
 
                 self.tabla.setItem(fila, 0, QTableWidgetItem(nombre))
                 self.tabla.setItem(fila, 1, ItemNumerico(str(det.cantidad), det.cantidad))
@@ -519,7 +524,7 @@ class DetalleVentaDialog(QDialog):
                 self.tabla.setItem(fila, 3, ItemNumerico(clp(subtotal), subtotal))
 
         reordenar(self.tabla)
-        self.label_total.setText(clp(suma_total))
+        self.totales.fijar(*cifras)
 
 
 class HistorialVentasWidget(QWidget):

@@ -1,8 +1,8 @@
 """Piezas compartidas de la interfaz, sin pantalla ni base de datos."""
 import pytest
-from PySide6.QtWidgets import QComboBox
+from PySide6.QtWidgets import QComboBox, QTableWidgetItem
 
-from src.ui.comunes import hacer_buscable
+from src.ui.comunes import ajustar_columnas, crear_tabla, hacer_buscable
 
 OPCIONES = [
     ("Venta sin cliente registrado", None),
@@ -74,3 +74,33 @@ def test_el_combo_libre_conserva_lo_tecleado(app):
     combo.lineEdit().editingFinished.emit()
 
     assert combo.currentText() == "Bodega del fondo"
+
+
+def test_ajustar_columnas_deja_la_tabla_del_ancho_exacto(app):
+    """La columna que estira tiene que seguir absorbiendo el sobrante.
+
+    `resizeColumnsToContents()` —en plural— le pone ancho de contenido también
+    a esa columna, que deja de repartir: con el tema puesto la suma se pasa del
+    viewport y el subtotal de la venta queda detrás de una barra de scroll; sin
+    el tema se queda corta y sobra una franja muerta. Las dos son la misma
+    falla, así que lo que se exige es la igualdad, no que quepa.
+    """
+    tabla = crear_tabla(["Producto", "Cantidad", "Precio Unit.", "Subtotal"],
+                        ancha=0, orden=0, numericas=(1, 2, 3))
+    tabla.resize(441, 300)
+    tabla.show()
+    # El paso de layout no es adorno: hasta que Qt reparte los anchos, la
+    # columna Stretch no tiene un ancho que pisar y el defecto no aparece.
+    app.processEvents()
+    tabla.setRowCount(2)
+    filas = [("Aceite 10W40 Castrol Magnatec 4L", "2", "$21.900", "$43.800"),
+             ("Refrigerante verde concentrado 1L", "10", "$7.500", "$75.000")]
+    for f, fila in enumerate(filas):
+        for c, texto in enumerate(fila):
+            tabla.setItem(f, c, QTableWidgetItem(texto))
+
+    ajustar_columnas(tabla)
+
+    ancho_columnas = sum(tabla.columnWidth(c) for c in range(tabla.columnCount()))
+    assert ancho_columnas == tabla.viewport().width()
+    assert not tabla.horizontalScrollBar().isVisible()

@@ -8,7 +8,9 @@ después.
 import pathlib
 
 RAIZ = pathlib.Path(__file__).resolve().parent.parent
-FUENTES = sorted((RAIZ / "src").rglob("*.py"))
+# Los scripts también: la migración es el lugar más tentador para asignar el
+# stock a mano, y el que carga el inventario inicial de verdad.
+FUENTES = sorted((RAIZ / "src").rglob("*.py")) + sorted((RAIZ / "scripts").glob("*.py"))
 
 
 def lineas_de(archivo: pathlib.Path):

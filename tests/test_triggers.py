@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 
 from src.models import (
     Cliente, DetalleOrden, DetalleVenta, KardexMovimiento, Orden, Producto,
-    Ubicacion, Usuario, Vehiculo, Venta,
+    Servicio, Ubicacion, Usuario, Vehiculo, Venta,
 )
 
 
@@ -54,6 +54,13 @@ def test_vender_y_atender_una_orden_descuentan_stock_con_su_rastro(db, datos):
     db.refresh(producto)
     assert producto.stock_actual == 5
 
+    # La mano de obra se cobra en la misma orden y no toca el inventario.
+    servicio = Servicio(nombre="Cambio de aceite QA", precio_venta=15000)
+    db.add(DetalleOrden(orden=orden, servicio=servicio, cantidad=1, precio_unitario_cobrado=15000))
+    db.flush()
+    db.refresh(producto)
+    assert producto.stock_actual == 5
+
     por_tipo = {
         m.tipo_movimiento: m
         for m in db.query(KardexMovimiento).filter_by(producto_id=producto.id)
@@ -64,6 +71,7 @@ def test_vender_y_atender_una_orden_descuentan_stock_con_su_rastro(db, datos):
     assert salida_venta.usuario_id == usuario.id
     assert (salida_orden.cantidad_movida, salida_orden.stock_resultante) == (-2, 5)
     assert salida_orden.orden_id == orden.id and salida_orden.venta_id is None
+    assert db.query(KardexMovimiento).filter_by(orden_id=orden.id).count() == 1  # el servicio, no
 
 
 @pytest.mark.parametrize("tipo, cantidad, esperado", [
@@ -102,11 +110,19 @@ def test_vender_mas_de_lo_que_hay_no_deja_rastro(db, datos):
     assert db.query(DetalleVenta).filter_by(producto_id=producto.id).count() == 0
 
 
-@pytest.mark.parametrize("caso", ["ajuste bajo cero", "movimiento de cero", "descuento doble"])
+@pytest.mark.parametrize("caso", [
+    "ajuste bajo cero", "movimiento de cero", "descuento doble",
+    "línea sin ítem", "línea con producto y servicio",
+])
 def test_la_base_rechaza_lo_que_no_cuadra(db, datos, caso):
     usuario, producto, _, vehiculo = datos
 
-    if caso == "ajuste bajo cero":
+    if caso.startswith("línea"):
+        orden = Orden(vehiculo=vehiculo, usuario=usuario, kilometraje_ingreso=1)
+        servicio = Servicio(nombre="QA", precio_venta=1) if "servicio" in caso else None
+        db.add(DetalleOrden(orden=orden, producto=producto if servicio else None,
+                            servicio=servicio, cantidad=1, precio_unitario_cobrado=1))
+    elif caso == "ajuste bajo cero":
         db.add(KardexMovimiento(producto=producto, usuario=usuario,
                                 tipo_movimiento="AJUSTE_MANUAL", cantidad_movida=-11))
     elif caso == "movimiento de cero":

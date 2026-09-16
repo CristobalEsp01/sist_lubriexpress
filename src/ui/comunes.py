@@ -1,21 +1,26 @@
 """Piezas compartidas por los mantenedores: formato de moneda, insignias, tablas
 y combos que se buscan tecleando."""
+from pathlib import Path
+
 from PySide6.QtCore import (
-    QEvent, QModelIndex, QObject, QRectF, QSortFilterProxyModel, Qt, QTimer,
+    QEvent, QModelIndex, QObject, QRectF, QSortFilterProxyModel, QStandardPaths, Qt, QTimer,
 )
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QAbstractItemView, QComboBox, QCompleter, QDialog, QDialogButtonBox, QFrame,
-    QHBoxLayout, QHeaderView, QLabel, QStyle, QStyledItemDelegate,
+    QHBoxLayout, QHeaderView, QLabel, QMessageBox, QStyle, QStyledItemDelegate,
     QStyleOptionViewItem, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from shiboken6 import isValid
 
+from ..permisos import puede
+from ..precios import clp, iva_de  # noqa: F401  (clp se re-exporta desde acá)
 from ..texto import normalizar
 from .tema import (
     ACENTO_FONDO, ACENTO_OSCURO, ALERTA, ALERTA_FONDO, ALTERNA, ALTO_FILA,
-    ESPACIO_BARRA, ESPACIO_DIALOGO, ESPACIO_PANTALLA, EXITO, EXITO_FONDO, INSIGNIA_PT,
+    ANCHO_MAX_COLUMNA, ESPACIO_BARRA, ESPACIO_DIALOGO, ESPACIO_PANTALLA, EXITO, EXITO_FONDO,
+    INSIGNIA_PT,
     INFO, INFO_FONDO, MARGEN_DIALOGO, MARGEN_PANTALLA, NEUTRAL_FONDO,
     NEUTRAL_TEXTO, SUPERFICIE, fuente_tabular,
 )
@@ -90,11 +95,6 @@ class InsigniaDelegate(QStyledItemDelegate):
             painter.restore()
 
 
-def clp(valor) -> str:
-    """20000.00 -> '$20.000'. En Chile no se usan decimales en caja."""
-    return f"${int(valor):,}".replace(",", ".")
-
-
 class ItemNumerico(QTableWidgetItem):
     """Ordena por el valor real: como texto, '$3.500' quedaría antes que '$20.000'."""
 
@@ -138,12 +138,33 @@ def crear_tabla(columnas: list[str], ancha: int, orden: int, descendente: bool =
     return tabla
 
 
+def ajustar_columnas(tabla: QTableWidget) -> None:
+    """Ajusta cada columna a su contenido, una por una.
+
+    En plural (`resizeColumnsToContents()`) Qt pisa el modo de la columna en
+    Stretch y le da ancho de contenido, así que deja de absorber el sobrante:
+    la suma se pasa del ancho disponible y la última columna —el subtotal, en
+    una pantalla de cobro— queda detrás de una barra de scroll horizontal que
+    nadie va a buscar. En singular respeta el modo de cada sección, que es
+    exactamente lo que hace falta.
+    """
+    cabecera = tabla.horizontalHeader()
+    for columna in range(tabla.columnCount()):
+        # La que estira no se toca: Qt le daría ancho de contenido y dejaría
+        # de absorber el sobrante. Las demás, a su contenido pero con tope.
+        if cabecera.sectionResizeMode(columna) == QHeaderView.Stretch:
+            continue
+        tabla.resizeColumnToContents(columna)
+        if tabla.columnWidth(columna) > ANCHO_MAX_COLUMNA:
+            tabla.setColumnWidth(columna, ANCHO_MAX_COLUMNA)
+
+
 def reordenar(tabla: QTableWidget) -> None:
     """Reaplica el orden vigente tras repoblar la tabla y ajusta los anchos."""
     encabezado = tabla.horizontalHeader()
     tabla.setSortingEnabled(True)
     tabla.sortItems(encabezado.sortIndicatorSection(), encabezado.sortIndicatorOrder())
-    tabla.resizeColumnsToContents()
+    ajustar_columnas(tabla)
 
 
 class _FiltroNormalizado(QSortFilterProxyModel):
@@ -314,28 +335,93 @@ def con_aviso_vacio(tabla: QTableWidget, mensaje: str) -> QTableWidget:
     return tabla
 
 
-def bloque_total(rotulo: str = "Total", menor: bool = False) -> tuple[QFrame, QLabel]:
-    """El pie de una pantalla de cobro: rótulo a la izquierda, cifra a la derecha.
+class Totales:
+    """Las cifras del pie de una pantalla de cobro: neto, descuento, IVA y total.
+
+    La aritmética vive acá y no en cada pantalla para que órdenes y ventas
+    cobren igual. La fila de descuento solo se muestra cuando hay uno.
+    """
+
+    def __init__(self, neto: QLabel, descuento: QLabel, iva: QLabel, total: QLabel):
+        self.neto, self.descuento, self.iva, self.total = neto, descuento, iva, total
+        self.fila_descuento: list = []  # los widgets de la fila, para esconderla
+
+    def fijar(self, neto, descuento, impuesto, total) -> None:
+        """Muestra cifras ya guardadas, sin recalcular nada."""
+        self.neto.setText(clp(neto))
+        self.descuento.setText(f"- {clp(descuento)}")
+        for w in self.fila_descuento:
+            w.setVisible(int(descuento) > 0)
+        self.iva.setText(clp(impuesto))
+        self.total.setText(clp(total))
+
+    def calcular(self, neto: int, descuento: int = 0) -> tuple[int, int]:
+        """Calcula el IVA sobre lo que efectivamente se cobra y muestra todo.
+        Devuelve (impuesto, total), que es lo que se guarda en el documento."""
+        impuesto = iva_de(neto - descuento)
+        total = neto - descuento + impuesto
+        self.fijar(neto, descuento, impuesto, total)
+        return impuesto, total
+
+
+def bloque_total(rotulo: str = "Total", menor: bool = False) -> tuple[QFrame, Totales]:
+    """El pie de una pantalla de cobro: neto, IVA y total, rótulo a la
+    izquierda y cifra a la derecha.
 
     Va sobre su propia superficie y separado por una línea porque es el
     resultado de la pantalla, no un campo más del formulario. Devuelve el marco,
-    para meterlo en el layout, y la etiqueta de la cifra, que es la que cambia.
+    para meterlo en el layout, y las cifras (ver `Totales`).
     """
     marco = QFrame()
     marco.setProperty("clase", "total")
+    columna = QVBoxLayout(marco)
+    columna.setContentsMargins(2, 10, 2, 0)
+    columna.setSpacing(2)
 
-    etiqueta = QLabel(rotulo)
-    etiqueta.setProperty("clase", "total-rotulo")
-    cifra = QLabel(clp(0))
-    cifra.setProperty("clase", "total-cifra-menor" if menor else "total-cifra")
-    cifra.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+    def fila(rotulo: str, clase: str) -> tuple[QLabel, QLabel]:
+        etiqueta = QLabel(rotulo)
+        etiqueta.setProperty("clase", "total-rotulo")
+        cifra = QLabel(clp(0))
+        cifra.setProperty("clase", clase)
+        cifra.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        linea = QHBoxLayout()
+        linea.addWidget(etiqueta)
+        linea.addStretch()
+        linea.addWidget(cifra)
+        columna.addLayout(linea)
+        return etiqueta, cifra
 
-    fila = QHBoxLayout(marco)
-    fila.setContentsMargins(2, 10, 2, 0)
-    fila.addWidget(etiqueta)
-    fila.addStretch()
-    fila.addWidget(cifra)
-    return marco, cifra
+    _, neto = fila("Neto", "total-cifra-desglose")
+    rotulo_descuento, descuento = fila("Descuento", "total-cifra-desglose")
+    _, iva = fila("IVA 19 %", "total-cifra-desglose")
+    _, total = fila(rotulo, "total-cifra-menor" if menor else "total-cifra")
+
+    totales = Totales(neto, descuento, iva, total)
+    totales.fila_descuento = [rotulo_descuento, descuento]
+    totales.fijar(0, 0, 0, 0)
+    return marco, totales
+
+
+def carpeta_de_documentos(subcarpeta: str) -> Path:
+    """Documentos/Lubri-Express/<subcarpeta>, creada si no existe: donde caen
+    los reportes y los PDF, para que nadie tenga que buscar dónde quedaron."""
+    carpeta = Path(QStandardPaths.writableLocation(QStandardPaths.DocumentsLocation)) / "Lubri-Express" / subcarpeta
+    carpeta.mkdir(parents=True, exist_ok=True)
+    return carpeta
+
+
+def exigir_permiso(accion: str, widget) -> bool:
+    """Para el slot de una acción restringida (ver permisos.py): avisa y
+    devuelve False si el rol de la sesión no la permite. El botón ya nace
+    apagado; esto cubre el doble click, el atajo y las pruebas que llaman al
+    slot directo."""
+    if puede(accion):
+        return True
+    QMessageBox.warning(
+        widget, "Acción reservada",
+        "Tu rol no permite esta acción. Pídesela a un supervisor o administrador.",
+    )
+    return False
 
 
 def botonera(dialogo: QDialog) -> QDialogButtonBox:

@@ -54,6 +54,11 @@ class Vehiculo(Base):
     cilindrada = Column(String(20))
     traccion = Column(String(20))
     combustible = Column(String(20))
+    # Del sistema antiguo, tal cual vienen (ver el .sql).
+    tipo = Column(String(30))
+    version = Column(String(50))
+    vin = Column(String(20))
+    numero_motor = Column(String(30))
 
     # Relaciones
     cliente = relationship("Cliente", back_populates="vehiculos")
@@ -79,7 +84,7 @@ class Producto(Base):
     categoria = Column(String(50))
     descripcion = Column(Text)
     precio_costo = Column(Numeric(10, 2), nullable=False)
-    precio_venta = Column(Numeric(10, 2), nullable=False)
+    precio_venta = Column(Numeric(10, 2), nullable=False)  # neto, sin IVA
     stock_actual = Column(Integer, default=0, nullable=False)
     stock_minimo = Column(Integer, default=0, nullable=False)
     activo = Column(Boolean, default=True, nullable=False)
@@ -91,6 +96,18 @@ class Producto(Base):
         return self.stock_actual <= self.stock_minimo
 
 
+class Servicio(Base):
+    """Mano de obra que se cobra en una orden. No tiene stock ni Kardex."""
+
+    __tablename__ = "servicios"
+
+    id = Column(Integer, primary_key=True, index=True)
+    nombre = Column(String(100), nullable=False)
+    categoria = Column(String(50))
+    precio_venta = Column(Numeric(10, 2), nullable=False)  # neto, sin IVA
+    activo = Column(Boolean, default=True, nullable=False)
+
+
 class Orden(Base):
     __tablename__ = "ordenes"
 
@@ -99,11 +116,13 @@ class Orden(Base):
     usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
     folio_mercado_publico = Column(String(50))
     fecha_creacion = Column(DateTime, server_default=func.now(), nullable=False)
-    kilometraje_ingreso = Column(Integer, nullable=False)
+    kilometraje_ingreso = Column(Integer)  # la pantalla lo exige; NULL solo en lo migrado
     # La BD prohíbe usar porcentaje y monto a la vez (CHECK descuento_exclusivo_orden).
     descuento_porcentaje = Column(Numeric(5, 2), default=0, nullable=False)
     descuento_monto = Column(Numeric(10, 2), default=0, nullable=False)
+    # subtotal es neto; total_final = subtotal - descuento + impuesto.
     subtotal = Column(Numeric(10, 2), default=0, nullable=False)
+    impuesto = Column(Numeric(10, 2), default=0, nullable=False)
     total_final = Column(Numeric(10, 2), default=0, nullable=False)
     numero_boleta = Column(String(50), unique=True)
     estado_pago = Column(Boolean, default=False, nullable=False)
@@ -113,18 +132,29 @@ class Orden(Base):
     usuario = relationship("Usuario")
     detalles = relationship("DetalleOrden", back_populates="orden")
 
+    @property
+    def descuento_aplicado(self) -> int:
+        """El descuento en pesos, venga como monto o como porcentaje del neto."""
+        if self.descuento_monto:
+            return int(self.descuento_monto)
+        return int(round(self.subtotal * self.descuento_porcentaje / 100))
+
 
 class DetalleOrden(Base):
     __tablename__ = "detalle_ordenes"
 
     id = Column(Integer, primary_key=True, index=True)
     orden_id = Column(Integer, ForeignKey("ordenes.id"), nullable=False)
-    producto_id = Column(Integer, ForeignKey("productos.id"), nullable=False)
+    # Uno de los dos, nunca ambos (CHECK detalle_orden_un_item). Solo las
+    # líneas de producto descuentan stock.
+    producto_id = Column(Integer, ForeignKey("productos.id"))
+    servicio_id = Column(Integer, ForeignKey("servicios.id"))
     cantidad = Column(Integer, nullable=False)
     precio_unitario_cobrado = Column(Numeric(10, 2), nullable=False)
 
     orden = relationship("Orden", back_populates="detalles")
     producto = relationship("Producto")
+    servicio = relationship("Servicio")
 
 
 class Venta(Base):
@@ -135,7 +165,8 @@ class Venta(Base):
     cliente_id = Column(Integer, ForeignKey("clientes.id"))
     fecha_venta = Column(DateTime, server_default=func.now(), nullable=False)
     numero_boleta = Column(String(50), unique=True)
-    total_final = Column(Numeric(10, 2), nullable=False)
+    impuesto = Column(Numeric(10, 2), default=0, nullable=False)
+    total_final = Column(Numeric(10, 2), nullable=False)  # neto + impuesto
 
     usuario = relationship("Usuario")
     cliente = relationship("Cliente")

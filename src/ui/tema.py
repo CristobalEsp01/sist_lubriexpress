@@ -52,6 +52,9 @@ NEUTRAL_TEXTO = "#475569"
 APAGADO = "#94A3B8"
 
 ALTO_FILA = 36
+# Tope para una columna ajustada a su contenido: una marca de 30 caracteres
+# no puede empujar el stock y el precio fuera de la pantalla.
+ANCHO_MAX_COLUMNA = 280
 CUERPO_PT = 10
 
 # El espaciado también es del tema: estaba copiado a mano en cinco pantallas y
@@ -262,6 +265,41 @@ QLabel[clase="seccion"] {{
     font-size: 13px;
     padding: 4px 2px;
 }}
+QLabel[clase="error"] {{
+    color: {ALERTA};
+    font-size: 12px;
+}}
+QLabel[clase="titulo"] {{
+    color: {TINTA};
+    font-weight: 700;
+    font-size: 20px;
+}}
+QFrame[clase="tarjeta"] {{
+    background: {SUPERFICIE};
+    border: 1px solid {BORDE};
+    border-radius: 8px;
+}}
+QFrame[clase="tarjeta"] QLabel {{
+    background: transparent;
+}}
+QLabel[clase="tarjeta-titulo"] {{
+    color: {TINTA};
+    font-weight: 600;
+    font-size: 14px;
+}}
+QLabel[clase="tarjeta-texto"] {{
+    color: {TINTA_SUAVE};
+    font-size: 12px;
+}}
+QFrame[clase="tarjeta"] QLabel[clase="patente"] {{
+    font-family: {FAMILIAS_MONO};
+    font-size: 22px;
+    font-weight: 700;
+    color: {ACENTO_OSCURO};
+    background: {ACENTO_FONDO};
+    border-radius: 6px;
+    padding: 6px 12px;
+}}
 QLabel[clase="resumen"] {{
     color: {TINTA_SUAVE};
     font-size: 12px;
@@ -302,6 +340,11 @@ QLabel[clase="total-cifra-menor"] {{
     font-size: 20px;
     font-weight: 700;
     color: {TINTA};
+}}
+QLabel[clase="total-cifra-desglose"] {{
+    font-family: {FAMILIAS_MONO};
+    font-size: 13px;
+    color: {TINTA_SUAVE};
 }}
 
 QSplitter::handle:vertical {{

@@ -5,6 +5,13 @@
 - `src/models.py` — modelos ORM. Deben calzar exactamente con el `.sql`; hay una prueba que lo verifica.
 - `src/rut.py` — RUT chileno. Sin dependencias de UI ni de base de datos, para que lo pueda usar también la carga masiva desde Excel.
 - `src/texto.py` — normalización para buscar (sin tildes ni puntuación), en Python y en SQL. Sin dependencias de UI.
+- `src/patente.py` — patente chilena, con el mismo criterio que `rut.py`.
+- `src/precios.py` — el IVA. Los precios del catálogo son netos; el impuesto se calcula al cobrar y se guarda en el documento.
+- `src/permisos.py` — qué puede hacer cada rol, una acción por entrada. La sesión sigue en `src/auth.py`.
+- `src/xlsx.py` — leer y escribir `.xlsx` con la biblioteca estándar. Lo usan la migración y la carga masiva; no se suma pandas ni openpyxl por esto.
+- `src/carga_excel.py` — carga masiva de inventario por plantilla, sin UI. Todo o nada: una fila rechazada no deja escribir ninguna.
+- `scripts/migrar_sistema_antiguo.py` — las cinco planillas del sistema viejo; las planillas viven fuera del repo.
+- `lubriexpress.spec` — el empaquetado con PyInstaller para el PC del taller. El `.exe` se construye en Windows.
 - `src/ui/` — un módulo por mantenedor. `comunes.py` tiene lo que comparten y `tema.py` la identidad visual.
 - `main.py` — solo arranca la aplicación y avisa si la base no responde.
 
@@ -26,6 +33,7 @@ De `src/ui/comunes.py`:
 |---|---|
 | Una tabla de solo lectura, ordenable | `crear_tabla(columnas, ancha, orden, numericas=…)` |
 | Reordenarla tras repoblarla | `reordenar(tabla)` |
+| Reajustar sus anchos sin reordenar | `ajustar_columnas(tabla)` |
 | Que diga algo cuando está vacía | `con_aviso_vacio(tabla, mensaje)` y después `tabla.aviso.setText(…)` |
 | Elegir un cliente, producto o cualquier registro | `hacer_buscable(combo)` — se filtra tecleando, tolera tildes y RUT sin puntos |
 | Un combo donde escribir algo nuevo lo crea | `hacer_buscable(combo, libre=True)` |
@@ -33,9 +41,10 @@ De `src/ui/comunes.py`:
 | Márgenes de una pestaña | `layout_de_pantalla(self)` |
 | Márgenes de un diálogo | `layout_de_dialogo(self)` |
 | Una fila de controles | `barra(uno, otro, …, estira=0)` |
-| Mostrar el total de una pantalla de cobro | `bloque_total()` |
+| Mostrar neto, IVA y total de una pantalla de cobro | `bloque_total()` → `Totales.calcular(neto)` al armar, `Totales.fijar(...)` al mostrar lo guardado |
 | Formatear pesos | `clp(valor)` |
 | Una celda numérica que ordene por su valor | `ItemNumerico(texto, valor)` |
+| Restringir una acción por rol | `puede(accion)` para apagar el botón al construir, y `exigir_permiso(accion, self)` al inicio del slot |
 
 De `src/texto.py`:
 
@@ -78,8 +87,17 @@ todas partes deja de señalar nada.
 Las columnas numéricas van en monoespaciada (`fuente_tabular()`), incluidos RUT y
 patentes: son identificadores de dígitos y alineados se escanean de un vistazo.
 
-Cinco cosas que cuestan tiempo si no se saben:
+Seis cosas que cuestan tiempo si no se saben:
 
+- **`resizeColumnsToContents()`, en plural, arruina la columna que estira.**
+  Le aplica ancho de contenido también a la sección en `Stretch`, que deja de
+  absorber el sobrante: la tabla se pasa del ancho disponible y la última
+  columna —el subtotal, en una pantalla de cobro— queda detrás de una barra de
+  scroll. La versión en singular respeta el modo de cada sección; eso hace
+  `ajustar_columnas()`, y `reordenar()` la usa.
+- **`QSpinBox.setSpecialValueText("")` con cadena vacía no hace nada:** Qt lo
+  lee como "sin texto especial". Para que un campo obligatorio no muestre un
+  `0` que parece dato escrito, hay que darle texto de verdad.
 - **`currentRow()` no es "hay una fila elegida".** Qt conserva la celda actual
   después de un ctrl+clic que deselecciona, así que un botón encendido con
   `currentRow() >= 0` queda apuntando a una fila que ya no se ve elegida. Para
@@ -90,6 +108,23 @@ Cinco cosas que cuestan tiempo si no se saben:
 - **`app.setStyle("Fusion")` es obligatorio.** Sin fijarlo, Qt usa el estilo nativo de cada sistema y la aplicación se ve distinta en Linux que en el Windows del taller.
 - **Apenas se aplica QSS a un `QComboBox` o `QSpinBox`, Qt deja de dibujar sus flechas.** Hay que dárselas explícitamente; se usan los recursos internos de Qt (`ICONOS_QT` en `tema.py`) para no sumar imágenes al proyecto.
 - **El locale se fija a es-CL** en `aplicar()`. Sin eso los `QSpinBox` muestran `$ 20,000` con coma. En la misma función se instala `qtbase_es.qm`, que traduce los botones estándar de los diálogos; al empaquetar con PyInstaller hay que incluir ese archivo.
+
+## Roles
+
+Tres roles (`usuarios.rol`, con CHECK en la base) y dos acciones restringidas,
+en `src/permisos.py`:
+
+| Acción | USUARIO_NORMAL | SUPERVISOR | ADMINISTRADOR |
+|---|---|---|---|
+| Vender, abrir órdenes, mantener clientes y vehículos, consultar inventario y Kardex | ✓ | ✓ | ✓ |
+| Crear y editar productos, ingresar mercadería, ajustar stock, ver el costo | | ✓ | ✓ |
+| Dar de alta usuarios y asignar roles (pestaña Usuarios) | | | ✓ |
+
+El botón nace apagado según `puede()` y el slot vuelve a preguntar con
+`exigir_permiso()`: el doble click, el atajo y las pruebas que llaman al slot
+directo pasan por el mismo filtro. La pestaña Usuarios solo se agrega a la
+ventana cuando el rol puede usarla. El primer administrador de una instalación
+nueva se crea con `scripts/crear_usuario.py`.
 
 ## Sesiones de base de datos
 
@@ -172,7 +207,8 @@ Para listarlos:
 grep -rn "ponytail:" src/
 ```
 
-Hoy hay dos: el listado de inventario carga la tabla completa en memoria (sirve para
-un lubricentro, no para miles de SKU) y el recordatorio de `db.refresh()` tras los
-triggers de stock.
+Hoy hay tres: el listado de inventario carga la tabla completa en memoria (sirve para
+un lubricentro, no para miles de SKU), el recordatorio de `db.refresh()` tras los
+triggers de stock, y la idempotencia de la migración, que es un guardián global y no
+un upsert por fila.
 

@@ -12,15 +12,18 @@ from sqlalchemy.exc import IntegrityError
 from ..auth import Sesion
 from ..database import SessionLocal
 from ..models import KardexMovimiento, Producto, Ubicacion, Usuario, Venta
+from ..permisos import puede
+from ..precios import con_iva
 from ..texto import filtro_busqueda
 from .comunes import (
     BADGE_ACENTO, BADGE_ALERTA, BADGE_EXITO, BADGE_NEUTRAL, ROL_INSIGNIA,
-    ItemNumerico, barra, botonera, clp, con_aviso_vacio, crear_tabla,
-    hacer_buscable, layout_de_dialogo, layout_de_pantalla, reordenar,
+    ItemNumerico, ajustar_columnas, barra, botonera, clp, con_aviso_vacio, crear_tabla,
+    exigir_permiso, hacer_buscable, layout_de_dialogo, layout_de_pantalla, reordenar,
 )
+from .carga_excel import CargaExcelDialog
 from .tema import ALERTA, CANAL_PANEL, ESPACIO_BARRA, EXITO, TINTA_SUAVE, fuente_tabular
 
-COLUMNAS_PRODUCTO = ["Nombre", "Marca", "Categoría", "Ubicación", "Stock", "Mín.", "Costo", "Venta"]
+COLUMNAS_PRODUCTO = ["Nombre", "Marca", "Categoría", "Ubicación", "Stock", "Mín.", "Costo", "Venta neto"]
 COLUMNAS_KARDEX = ["Fecha", "Tipo", "Cantidad", "Saldo", "Usuario", "Origen"]
 COLUMNAS_INGRESO = ["Producto", "Stock Actual", "Ingreso", "Nuevo Stock"]
 MAX_CLP = 99_999_999
@@ -96,6 +99,11 @@ class FormularioProducto(QDialog):
         self.descripcion.setFixedHeight(65)
         self.precio_costo = self._campo_pesos()
         self.precio_venta = self._campo_pesos()
+        # El catálogo guarda netos; el precio que paga el cliente se ve al lado.
+        self.precio_con_iva = QLabel(clp(0))
+        self.precio_venta.valueChanged.connect(
+            lambda neto: self.precio_con_iva.setText(clp(con_iva(neto)))
+        )
         self.stock_actual = QSpinBox(maximum=999_999)
         self.stock_minimo = QSpinBox(maximum=999_999)
         self.activo = QCheckBox("Producto activo (disponible en ventas y órdenes)")
@@ -109,7 +117,8 @@ class FormularioProducto(QDialog):
         form.addRow("Ubicación", self.ubicacion)
         form.addRow("Descripción", self.descripcion)
         form.addRow("Precio costo *", self.precio_costo)
-        form.addRow("Precio venta *", self.precio_venta)
+        form.addRow("Precio venta neto *", self.precio_venta)
+        form.addRow("Con IVA (19 %)", self.precio_con_iva)
         form.addRow("Stock inicial", self.stock_actual)
         form.addRow("Stock mínimo", self.stock_minimo)
         form.addRow("", self.activo)
@@ -216,7 +225,11 @@ class IngresoMercaderiaDialog(QDialog):
         self.spin_cantidad.setRange(1, 10000)
 
         self.boton_agregar = QPushButton("Añadir a la lista")
+        self.boton_agregar.setEnabled(False)
         self.boton_agregar.clicked.connect(self.agregar_a_lista)
+        self.combo_productos.currentIndexChanged.connect(
+            lambda indice: self.boton_agregar.setEnabled(indice >= 0)
+        )
         # Enter en cualquier campo añade a la lista; confirmar el ingreso —que
         # mueve stock— exige un click deliberado.
         self.boton_agregar.setDefault(True)
@@ -275,6 +288,12 @@ class IngresoMercaderiaDialog(QDialog):
                 self.combo_productos.addItem(
                     p.nombre, {"id": p.id, "nombre": p.nombre, "stock": p.stock_actual}
                 )
+        # Nace vacío, con su texto de fondo. Abrir con el primer producto del
+        # catálogo ya elegido convierte un "Añadir" sin mirar en stock sumado al
+        # producto equivocado, y eso se descubre recién cuando no cuadra el
+        # inventario. Ventas y órdenes ya abren así.
+        self.combo_productos.setCurrentIndex(-1)
+        self.combo_productos.lineEdit().setPlaceholderText("Busca por nombre o marca")
 
     def agregar_a_lista(self) -> None:
         datos = self.combo_productos.currentData()
@@ -311,7 +330,7 @@ class IngresoMercaderiaDialog(QDialog):
             self.tabla.setItem(fila, 1, ItemNumerico(str(item["stock_actual"]), item["stock_actual"]))
             self.tabla.setItem(fila, 2, ItemNumerico(f"+{item['cantidad']}", item["cantidad"]))
             self.tabla.setItem(fila, 3, ItemNumerico(str(nuevo), nuevo))
-        self.tabla.resizeColumnsToContents()
+        ajustar_columnas(self.tabla)
         hay_lista = bool(self.lista_ingreso)
         self.boton_confirmar.setEnabled(hay_lista)
         self.boton_quitar.setEnabled(hay_lista and self.tabla.selectionModel().hasSelection())
@@ -348,8 +367,73 @@ class IngresoMercaderiaDialog(QDialog):
         QMessageBox.information(self, "Éxito", "Mercadería ingresada correctamente al inventario.")
         self.accept()
 
+class AjusteStockDialog(QDialog):
+    """Recuento físico: se anota lo que hay en la repisa y la diferencia entra
+    al Kardex como AJUSTE_MANUAL. Es la forma de corregir un stock que no se
+    puede reconstruir —el migrado del sistema antiguo, una merma, un error—
+    sin perder el rastro de que se corrigió."""
+
+    def __init__(self, parent=None, producto_id: int | None = None):
+        super().__init__(parent)
+        self.producto_id = producto_id
+        with SessionLocal() as db:
+            producto = db.get(Producto, producto_id)
+            self.nombre, self.stock_actual = producto.nombre, producto.stock_actual
+        self.setWindowTitle(f"Ajustar stock — {self.nombre}")
+        self.setMinimumWidth(380)
+
+        self.contado = QSpinBox(maximum=999_999)
+        self.contado.setValue(self.stock_actual)
+        self.diferencia = QLabel()
+        self.contado.valueChanged.connect(self._mostrar_diferencia)
+        self._mostrar_diferencia()
+
+        form = QFormLayout()
+        form.setSpacing(11)
+        form.addRow("Stock en el sistema", QLabel(str(self.stock_actual)))
+        form.addRow("Stock real contado *", self.contado)
+        form.addRow("Ajuste", self.diferencia)
+
+        layout = layout_de_dialogo(self)
+        layout.addLayout(form)
+        layout.addWidget(botonera(self))
+        self.contado.setFocus()
+        self.contado.selectAll()
+
+    def _mostrar_diferencia(self) -> None:
+        diferencia = self.contado.value() - self.stock_actual
+        self.diferencia.setText(f"{diferencia:+d}" if diferencia else "sin cambios")
+
+    def accept(self) -> None:
+        if not Sesion.activa():
+            QMessageBox.critical(self, "Error", "No hay sesión activa.")
+            return
+        diferencia = self.contado.value() - self.stock_actual
+        if diferencia == 0:
+            QMessageBox.information(self, "Sin cambios", "El recuento coincide con el sistema.")
+            return
+        # Solo el movimiento: el trigger mueve el stock y calcula el saldo.
+        with SessionLocal() as db:
+            db.add(KardexMovimiento(
+                producto_id=self.producto_id, usuario_id=Sesion.usuario_id,
+                tipo_movimiento="AJUSTE_MANUAL", cantidad_movida=diferencia,
+            ))
+            try:
+                db.commit()
+            except IntegrityError as e:
+                db.rollback()
+                QMessageBox.warning(
+                    self, "No se pudo ajustar",
+                    f"La base de datos rechazó el ajuste:\n\n{e.orig}",
+                )
+                return
+        super().accept()
+
+
 class InventarioWidget(QWidget):
-    """Listado de productos con búsqueda, alta y edición."""
+    """Listado de productos con búsqueda, alta y edición. Crear, editar,
+    ingresar mercadería, ajustar stock y ver el costo están reservados a
+    supervisores (permisos.py); el resto lo ve cualquiera."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -375,11 +459,28 @@ class InventarioWidget(QWidget):
 
         self.boton_ingreso = QPushButton("Ingresar Mercadería")
         self.boton_ingreso.clicked.connect(self.abrir_ingreso_mercaderia)
+        self.boton_ajuste = QPushButton("Ajustar stock")
+        self.boton_ajuste.setEnabled(False)
+        self.boton_ajuste.clicked.connect(self.ajustar_stock)
+        self.boton_excel = QPushButton("Cargar Excel")
+        self.boton_excel.clicked.connect(self.abrir_carga_excel)
+
+        # El rol manda: el botón nace apagado y lo dice, y el slot vuelve a
+        # preguntar. Editar y Ajustar además exigen una fila (recargar_kardex).
+        self.supervisa = puede("inventario")
+        boton_nuevo.setEnabled(self.supervisa)
+        self.boton_ingreso.setEnabled(self.supervisa)
+        self.boton_excel.setEnabled(self.supervisa)
+        if not self.supervisa:
+            for boton in (boton_nuevo, self.boton_editar, self.boton_ingreso,
+                          self.boton_ajuste, self.boton_excel):
+                boton.setToolTip("Reservado a supervisores y administradores")
 
         self.tabla = con_aviso_vacio(
             crear_tabla(COLUMNAS_PRODUCTO, ancha=0, orden=0, numericas=(4, 5, 6, 7)),
             "No hay productos registrados.",
         )  # ordena por Nombre
+        self.tabla.setColumnHidden(6, not self.supervisa)  # el costo lo ven supervisores
         self.tabla.doubleClicked.connect(self.editar)
         self.tabla.itemSelectionChanged.connect(self.recargar_kardex)
 
@@ -397,7 +498,8 @@ class InventarioWidget(QWidget):
 
         barra_superior = barra(
             self.busqueda, self.solo_criticos, self.boton_vender,
-            self.boton_ingreso, boton_nuevo, self.boton_editar, estira=0,
+            self.boton_ingreso, self.boton_excel, self.boton_ajuste, boton_nuevo,
+            self.boton_editar, estira=0,
         )
 
         arriba = QWidget()
@@ -501,7 +603,8 @@ class InventarioWidget(QWidget):
         producto_id = self._id_seleccionado()
         hay_seleccion = producto_id is not None
         self.boton_vender.setEnabled(hay_seleccion)
-        self.boton_editar.setEnabled(hay_seleccion)
+        self.boton_editar.setEnabled(hay_seleccion and self.supervisa)
+        self.boton_ajuste.setEnabled(hay_seleccion and self.supervisa)
 
         if not hay_seleccion:
             self.titulo_kardex.setText("Movimientos")
@@ -554,6 +657,8 @@ class InventarioWidget(QWidget):
         return self.tabla.item(fila, 0).data(Qt.UserRole)
 
     def nuevo(self) -> None:
+        if not exigir_permiso("inventario", self):
+            return
         if FormularioProducto(self).exec():
             self.recargar()
 
@@ -561,7 +666,16 @@ class InventarioWidget(QWidget):
         producto_id = self._id_seleccionado()
         if producto_id is None:
             return  # el botón está apagado; solo queda el doble click al vacío
+        if not exigir_permiso("inventario", self):
+            return
         if FormularioProducto(self, producto_id).exec():
+            self.recargar()
+
+    def ajustar_stock(self) -> None:
+        producto_id = self._id_seleccionado()
+        if producto_id is None or not exigir_permiso("inventario", self):
+            return
+        if AjusteStockDialog(self, producto_id).exec():
             self.recargar()
 
     def generar_venta(self) -> None:
@@ -571,7 +685,15 @@ class InventarioWidget(QWidget):
             return
         self.window().iniciar_venta_con_producto(producto_id)
 
+    def abrir_carga_excel(self) -> None:
+        if not exigir_permiso("inventario", self):
+            return
+        if CargaExcelDialog(self).exec():
+            self.recargar()
+
     def abrir_ingreso_mercaderia(self) -> None:
+        if not exigir_permiso("inventario", self):
+            return
         dialogo = IngresoMercaderiaDialog(self)
         if dialogo.exec():
             # Si el usuario confirma, recargamos la tabla principal para ver los nuevos números

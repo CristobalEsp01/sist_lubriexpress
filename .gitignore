@@ -24,3 +24,10 @@ test_db.py
 # puede leer.
 docs/desarrollo.md
 
+
+# Datos reales del taller: nunca al repositorio (es público).
+data/
+
+# PyInstaller
+build/
+dist/
