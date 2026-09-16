@@ -52,6 +52,9 @@ NEUTRAL_TEXTO = "#475569"
 APAGADO = "#94A3B8"
 
 ALTO_FILA = 36
+# Tope para una columna ajustada a su contenido: una marca de 30 caracteres
+# no puede empujar el stock y el precio fuera de la pantalla.
+ANCHO_MAX_COLUMNA = 280
 CUERPO_PT = 10
 
 # El espaciado también es del tema: estaba copiado a mano en cinco pantallas y
@@ -261,6 +264,10 @@ QLabel[clase="seccion"] {{
     font-weight: 600;
     font-size: 13px;
     padding: 4px 2px;
+}}
+QLabel[clase="error"] {{
+    color: {ALERTA};
+    font-size: 12px;
 }}
 QLabel[clase="titulo"] {{
     color: {TINTA};

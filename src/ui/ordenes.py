@@ -901,7 +901,9 @@ class DialogoDetalleOrden(QDialog):
         # Tabla de productos
         tabla = con_aviso_vacio(
             crear_tabla(COLUMNAS_DETALLE, ancha=0, orden=0, numericas=(1, 2, 3)),
-            "Esta orden quedó guardada sin insumos cargados.",
+            "Orden migrada del sistema antiguo: sin detalle de insumos."
+            if notas_guardadas.startswith("Migrada del sistema antiguo")
+            else "Esta orden quedó guardada sin insumos cargados.",
         )
         tabla.setRowCount(len(lineas))
         for fila, (nombre, cantidad, precio) in enumerate(lineas):

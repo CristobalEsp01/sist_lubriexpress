@@ -11,7 +11,7 @@ from .comunes import ItemNumerico, clp
 from .inventario import FormularioProducto, InventarioWidget
 from .login import LoginDialog
 from .ordenes import OrdenesWidget
-from .usuarios import FormularioUsuario, UsuariosWidget
+from .usuarios import ETIQUETAS_ROL, FormularioUsuario, UsuariosWidget
 from .ventas import VentasWidget
 
 __all__ = [
@@ -46,7 +46,9 @@ class VentanaPrincipal(QMainWindow):
         self.setCentralWidget(self.pestanias)
 
         if Sesion.activa():
-            self.statusBar().showMessage(f"Conectado como {Sesion.nombre} ({Sesion.rol})")
+            self.statusBar().showMessage(
+                f"Conectado como {Sesion.nombre} · {ETIQUETAS_ROL.get(Sesion.rol, Sesion.rol)}"
+            )
 
     def iniciar_venta_con_producto(self, producto_id: int) -> None:
         """Acceso directo desde Inventario: botón 'Generar Venta' (Propuesta 3.3)."""

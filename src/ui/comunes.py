@@ -17,7 +17,8 @@ from ..precios import clp, iva_de  # noqa: F401  (clp se re-exporta desde acá)
 from ..texto import normalizar
 from .tema import (
     ACENTO_FONDO, ACENTO_OSCURO, ALERTA, ALERTA_FONDO, ALTERNA, ALTO_FILA,
-    ESPACIO_BARRA, ESPACIO_DIALOGO, ESPACIO_PANTALLA, EXITO, EXITO_FONDO, INSIGNIA_PT,
+    ANCHO_MAX_COLUMNA, ESPACIO_BARRA, ESPACIO_DIALOGO, ESPACIO_PANTALLA, EXITO, EXITO_FONDO,
+    INSIGNIA_PT,
     INFO, INFO_FONDO, MARGEN_DIALOGO, MARGEN_PANTALLA, NEUTRAL_FONDO,
     NEUTRAL_TEXTO, SUPERFICIE, fuente_tabular,
 )
@@ -145,8 +146,15 @@ def ajustar_columnas(tabla: QTableWidget) -> None:
     nadie va a buscar. En singular respeta el modo de cada sección, que es
     exactamente lo que hace falta.
     """
+    cabecera = tabla.horizontalHeader()
     for columna in range(tabla.columnCount()):
+        # La que estira no se toca: Qt le daría ancho de contenido y dejaría
+        # de absorber el sobrante. Las demás, a su contenido pero con tope.
+        if cabecera.sectionResizeMode(columna) == QHeaderView.Stretch:
+            continue
         tabla.resizeColumnToContents(columna)
+        if tabla.columnWidth(columna) > ANCHO_MAX_COLUMNA:
+            tabla.setColumnWidth(columna, ANCHO_MAX_COLUMNA)
 
 
 def reordenar(tabla: QTableWidget) -> None:

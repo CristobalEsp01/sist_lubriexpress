@@ -6,7 +6,7 @@ todo pasa por acá.
 """
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QDialog, QFormLayout, QLineEdit, QMessageBox,
+    QCheckBox, QComboBox, QDialog, QFormLayout, QLabel, QLineEdit, QMessageBox,
     QPushButton, QTableWidgetItem, QWidget,
 )
 from sqlalchemy import select
@@ -142,8 +142,12 @@ class UsuariosWidget(QWidget):
             lambda: self.boton_editar.setEnabled(self.tabla.selectionModel().hasSelection())
         )
 
+        # El rótulo absorbe el ancho: si lo hiciera el botón, "Nuevo usuario"
+        # ocuparía la pantalla entera.
+        rotulo = QLabel("Quién entra al sistema y con qué rol. Las contraseñas se cambian editando.")
+        rotulo.setProperty("clase", "resumen")
         layout = layout_de_pantalla(self)
-        layout.addLayout(barra(boton_nuevo, self.boton_editar, estira=0))
+        layout.addLayout(barra(rotulo, boton_nuevo, self.boton_editar, estira=0))
         layout.addWidget(self.tabla)
         self.recargar()
 

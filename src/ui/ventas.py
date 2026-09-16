@@ -29,7 +29,9 @@ from .comunes import (
 )
 from .tema import ALERTA, CANAL_PANEL, ESPACIO_PANTALLA
 
-COLUMNAS_CATALOGO = ["Nombre", "Marca", "Categoría", "Stock", "Precio neto"]
+# Sin categoría: se busca por ella igual, y en el mesón lo que se mira es
+# nombre, marca, cuánto queda y a cuánto.
+COLUMNAS_CATALOGO = ["Nombre", "Marca", "Stock", "Precio neto"]
 COLUMNAS_CARRITO = ["Producto", "Cantidad", "Precio Unit.", "Subtotal"]
 COLUMNAS_DETALLE = ["Producto", "Cantidad", "Precio Unit.", "Subtotal"]
 COLUMNAS_HISTORIAL = ["Fecha", "Nº Boleta", "Cliente", "Vendedor", "Total"]
@@ -66,7 +68,7 @@ class PuntoVentaWidget(QWidget):
         self.busqueda.returnPressed.connect(self.agregar_desde_busqueda)
 
         self.tabla_catalogo = con_aviso_vacio(
-            crear_tabla(COLUMNAS_CATALOGO, ancha=0, orden=0, numericas=(3, 4)),
+            crear_tabla(COLUMNAS_CATALOGO, ancha=0, orden=0, numericas=(2, 3)),
             "No hay productos activos en el catálogo.",
         )
         self.tabla_catalogo.itemSelectionChanged.connect(self._actualizar_boton_agregar)
@@ -150,7 +152,7 @@ class PuntoVentaWidget(QWidget):
         division.setHandleWidth(1)
         division.addWidget(panel_catalogo)
         division.addWidget(panel_carrito)
-        division.setSizes([540, 430])
+        division.setSizes([680, 420])  # el catálogo necesita más que el carrito
 
         layout = layout_de_pantalla(self)
         layout.addWidget(division)
@@ -177,7 +179,7 @@ class PuntoVentaWidget(QWidget):
         self.tabla_catalogo.setSortingEnabled(False)
         self.tabla_catalogo.setRowCount(len(filas))
         for fila, (pid, nombre, marca, categoria, stock, precio) in enumerate(filas):
-            for columna, valor in enumerate([nombre, marca, categoria]):
+            for columna, valor in enumerate([nombre, marca]):
                 item = QTableWidgetItem(valor)
                 if columna == 0:
                     item.setData(Qt.UserRole, pid)
@@ -185,8 +187,8 @@ class PuntoVentaWidget(QWidget):
             celda_stock = ItemNumerico(str(stock), stock)
             if stock <= 0:
                 celda_stock.setForeground(QColor(ALERTA))
-            self.tabla_catalogo.setItem(fila, 3, celda_stock)
-            self.tabla_catalogo.setItem(fila, 4, ItemNumerico(clp(precio), precio))
+            self.tabla_catalogo.setItem(fila, 2, celda_stock)
+            self.tabla_catalogo.setItem(fila, 3, ItemNumerico(clp(precio), precio))
         reordenar(self.tabla_catalogo)
         self.resumen.setText(f"{len(filas)} producto(s) a la venta")
         if self.busqueda.text().strip():

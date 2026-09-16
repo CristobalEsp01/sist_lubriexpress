@@ -1,8 +1,6 @@
 """Pantalla de inicio de sesión. Se muestra una vez, antes de abrir la
 ventana principal (ver main.py)."""
-from PySide6.QtWidgets import (
-    QDialog, QFormLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
-)
+from PySide6.QtWidgets import QDialog, QFormLayout, QLabel, QLineEdit, QPushButton
 from sqlalchemy import select
 
 from ..auth import Sesion, verificar_password
@@ -40,6 +38,12 @@ class LoginDialog(QDialog):
         form.addRow("Usuario", self.username)
         form.addRow("Contraseña", self.password)
 
+        # El error va bajo los campos, no en un modal que hay que cerrar para
+        # volver a intentar.
+        self.aviso = QLabel()
+        self.aviso.setProperty("clase", "error")
+        self.aviso.setWordWrap(True)
+
         boton_entrar = QPushButton("Ingresar")
         boton_entrar.setProperty("clase", "primario")
         boton_entrar.clicked.connect(self._intentar)
@@ -49,6 +53,7 @@ class LoginDialog(QDialog):
         layout.addWidget(subtitulo)
         layout.addSpacing(ESPACIO_FORMULARIO)
         layout.addLayout(form)
+        layout.addWidget(self.aviso)
         layout.addWidget(boton_entrar)
 
         self.username.setFocus()
@@ -57,23 +62,20 @@ class LoginDialog(QDialog):
         username = self.username.text().strip()
         password = self.password.text()
         if not username or not password:
-            QMessageBox.warning(self, "Datos incompletos", "Ingresa usuario y contraseña.")
+            self.aviso.setText("Ingresa usuario y contraseña.")
             return
 
         with SessionLocal() as db:
             usuario = db.scalar(select(Usuario).where(Usuario.username == username))
 
         if usuario is None or not verificar_password(password, usuario.password_hash):
-            QMessageBox.warning(self, "No se pudo ingresar", "Usuario o contraseña incorrectos.")
+            self.aviso.setText("Usuario o contraseña incorrectos.")
             self.password.clear()
             self.password.setFocus()
             return
 
         if not usuario.activo:
-            QMessageBox.warning(
-                self, "Usuario deshabilitado",
-                "Esta cuenta está desactivada. Habla con un administrador.",
-            )
+            self.aviso.setText("Esta cuenta está desactivada. Habla con un administrador.")
             return
 
         Sesion.iniciar(usuario)
