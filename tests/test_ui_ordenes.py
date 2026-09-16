@@ -15,10 +15,11 @@ from conftest import patente_de_prueba, rut_de_prueba
 from src.auth import Sesion
 from src.database import SessionLocal
 from src.models import (
-    Cliente, DetalleOrden, KardexMovimiento, Orden, Producto, Usuario, Vehiculo,
+    Cliente, DetalleOrden, KardexMovimiento, Orden, Producto, Servicio, Usuario, Vehiculo,
 )
 
 NOMBRE_PRODUCTO = "QA Aceite de motor 10W40"
+NOMBRE_SERVICIO = "QA Cambio de aceite"
 NOMBRE_CLIENTE = "QA Dueño del taller"
 
 
@@ -39,6 +40,7 @@ def limpiar():
         if producto:
             db.query(KardexMovimiento).filter_by(producto_id=producto.id).delete()
             db.delete(producto)
+        db.query(Servicio).filter_by(nombre=NOMBRE_SERVICIO).delete()
         for usuario in db.scalars(select(Usuario).where(Usuario.username.like("qa_mecanico_%"))):
             db.delete(usuario)
         db.commit()
@@ -46,7 +48,8 @@ def limpiar():
 
 @pytest.fixture
 def taller(limpiar):
-    """Mecánico con sesión iniciada, un producto con 10 unidades y un vehículo."""
+    """Mecánico con sesión iniciada, un producto con 10 unidades, un servicio
+    y un vehículo."""
     with SessionLocal() as db:
         usuario = Usuario(
             nombre="Mecánico QA", username=f"qa_mecanico_{rut_de_prueba()}",
@@ -56,13 +59,15 @@ def taller(limpiar):
             nombre=NOMBRE_PRODUCTO, marca="Castrol", precio_costo=6000,
             precio_venta=12900, stock_actual=10, stock_minimo=2,
         )
+        servicio = Servicio(nombre=NOMBRE_SERVICIO, precio_venta=15000)
         cliente = Cliente(rut=rut_de_prueba(), nombre_completo=NOMBRE_CLIENTE)
         vehiculo = Vehiculo(cliente=cliente, patente=patente_de_prueba(),
                             marca="Toyota", modelo="Yaris")
-        db.add_all([usuario, producto, vehiculo])
+        db.add_all([usuario, producto, servicio, vehiculo])
         db.commit()
         datos = SimpleNamespace(
-            usuario_id=usuario.id, producto_id=producto.id, vehiculo_id=vehiculo.id,
+            usuario_id=usuario.id, producto_id=producto.id, servicio_id=servicio.id,
+            vehiculo_id=vehiculo.id,
         )
         Sesion.iniciar(SimpleNamespace(id=usuario.id, nombre=usuario.nombre, rol=usuario.rol))
 
@@ -123,7 +128,8 @@ def test_lo_que_queda_en_el_carrito_es_lo_que_se_guarda(app, taller, sin_modales
     `stock_actual` de por medio.
 
     Quitar va en la misma prueba porque es el mismo sujeto: lo que la tabla
-    tiene al apretar Guardar es lo que termina en la base.
+    tiene al apretar Guardar es lo que termina en la base. Y el servicio
+    también: se cobra en la misma orden, pero no toca el stock ni el Kardex.
     """
     from src.ui import ordenes
 
@@ -141,7 +147,12 @@ def test_lo_que_queda_en_el_carrito_es_lo_que_se_guarda(app, taller, sin_modales
     assert widget.boton_quitar.isEnabled()
     widget.quitar_del_carrito()
     assert widget.tabla_carrito.rowCount() == 1
-    assert widget.total.text() == "$38.700"           # 3 x 12.900, no 5
+    assert widget.totales.neto.text() == "$38.700"    # 3 x 12.900, no 5
+    assert widget.total.text() == "$46.053"           # con el 19 % de IVA
+
+    widget.agregar_servicio_al_carrito(taller.servicio_id)
+    assert widget.tabla_carrito.rowCount() == 2
+    assert widget.totales.neto.text() == "$53.700"    # + 15.000 de mano de obra
 
     # Soltar la selección apaga el botón. Qt conserva la celda actual, así que
     # preguntar por currentRow() lo dejaba encendido sobre una fila que ya no
@@ -166,14 +177,21 @@ def test_lo_que_queda_en_el_carrito_es_lo_que_se_guarda(app, taller, sin_modales
         orden = db.scalar(select(Orden).where(Orden.vehiculo_id == taller.vehiculo_id))
         assert orden.usuario_id == taller.usuario_id
         assert orden.kilometraje_ingreso == 120000
-        assert int(orden.total_final) == 3 * 12900
+        # El IVA se calcula al cobrar y queda en la orden, no se re-deriva.
+        assert (int(orden.subtotal), int(orden.impuesto), int(orden.total_final)) == (
+            53700, 10203, 63903
+        )
 
-        detalles = db.scalars(select(DetalleOrden).where(DetalleOrden.orden_id == orden.id)).all()
-        assert len(detalles) == 1
-        assert (detalles[0].producto_id, detalles[0].cantidad) == (taller.producto_id, 3)
+        detalles = db.scalars(
+            select(DetalleOrden).where(DetalleOrden.orden_id == orden.id).order_by(DetalleOrden.id)
+        ).all()
+        assert [(d.producto_id, d.servicio_id, d.cantidad) for d in detalles] == [
+            (taller.producto_id, None, 3), (None, taller.servicio_id, 1),
+        ]
 
         assert db.get(Producto, taller.producto_id).stock_actual == 7  # 10 - 3
 
+        # Un solo movimiento: el del producto. El servicio no deja rastro en el Kardex.
         mov = db.scalar(select(KardexMovimiento).where(KardexMovimiento.orden_id == orden.id))
         assert (mov.tipo_movimiento, mov.cantidad_movida, mov.stock_resultante) == (
             "SALIDA_ORDEN", -3, 7

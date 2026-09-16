@@ -19,7 +19,7 @@ from sqlalchemy.exc import IntegrityError
 
 from ..auth import Sesion
 from ..database import SessionLocal
-from ..models import Cliente, DetalleOrden, Orden, Producto, Usuario, Vehiculo
+from ..models import Cliente, DetalleOrden, Orden, Producto, Servicio, Usuario, Vehiculo
 from ..texto import filtro_busqueda
 from .clientes import FormularioCliente, FormularioVehiculo
 from .comunes import (
@@ -28,8 +28,8 @@ from .comunes import (
 )
 from .tema import CANAL_PANEL, ESPACIO_PANTALLA, fuente_tabular
 
-COLUMNAS_CARRITO = ["Producto", "Cant.", "Precio Unit.", "Subtotal"]
-COLUMNAS_DETALLE = ["Producto", "Cant.", "Precio Unit.", "Subtotal"]
+COLUMNAS_CARRITO = ["Ítem", "Cant.", "Precio Unit.", "Subtotal"]
+COLUMNAS_DETALLE = ["Ítem", "Cant.", "Precio Unit.", "Subtotal"]
 COLUMNAS_HISTORIAL = ["ID OT", "Fecha", "Cliente", "Patente", "Vehículo", "Mecánico", "Total"]
 NIVELES_COMBUSTIBLE = ["No registrado", "Reserva", "1/4", "Medio", "3/4", "Lleno"]
 
@@ -222,6 +222,18 @@ class OrdenesWidget(QTabWidget):
         # deliberado, igual que confirmar el ingreso de mercadería.
         self.boton_agregar.setDefault(True)
 
+        # Los servicios (mano de obra) van en su propio combo: no tienen stock
+        # y viven en otra tabla, así que no se mezclan en la lista de insumos.
+        self.combo_servicios = hacer_buscable(QComboBox())
+        self.combo_servicios.lineEdit().setPlaceholderText("Buscar servicio…")
+        self.boton_agregar_servicio = QPushButton("Agregar")
+        self.boton_agregar_servicio.setAutoDefault(False)
+        self.boton_agregar_servicio.setEnabled(False)
+        self.boton_agregar_servicio.clicked.connect(self.agregar_servicio_desde_el_combo)
+        self.combo_servicios.currentIndexChanged.connect(
+            lambda indice: self.boton_agregar_servicio.setEnabled(indice >= 0)
+        )
+
         self.tabla_carrito = con_aviso_vacio(
             crear_tabla(COLUMNAS_CARRITO, ancha=0, orden=0, numericas=(1, 2, 3)),
             "Elige un insumo y una cantidad, y agrégalo a la orden.",
@@ -253,6 +265,9 @@ class OrdenesWidget(QTabWidget):
             QLabel("Cantidad"), self.spin_cantidad, self.boton_agregar,
             self.boton_quitar, estira=1,
         ))
+        layout_izq.addLayout(barra(
+            QLabel("Servicio"), self.combo_servicios, self.boton_agregar_servicio, estira=1,
+        ))
         layout_izq.addWidget(self.tabla_carrito, 1)
 
         # --- Lado derecho: lo que se anota del vehículo al recibirlo ---
@@ -278,7 +293,8 @@ class OrdenesWidget(QTabWidget):
         # queda una caja vacía de 700 px donde caben ocho líneas de texto.
         self.texto_observaciones.setMaximumHeight(240)
 
-        marco_total, self.total = bloque_total()
+        marco_total, self.totales = bloque_total()
+        self.total = self.totales.total
 
         self.boton_cancelar = QPushButton("Cancelar")
         self.boton_cancelar.setAutoDefault(False)
@@ -418,6 +434,7 @@ class OrdenesWidget(QTabWidget):
 
         self._vaciar_formulario()
         self._cargar_productos()
+        self._cargar_servicios()
 
         # Desbloquear el panel de trabajo y bloquear el botón de nueva orden
         self.panel_trabajo.setEnabled(True)
@@ -459,11 +476,25 @@ class OrdenesWidget(QTabWidget):
                 self.combo_productos.addItem(p.nombre, {"id": p.id, "nombre": p.nombre})
         self.combo_productos.setCurrentIndex(-1)
 
+    def _cargar_servicios(self) -> None:
+        self.combo_servicios.clear()
+        with SessionLocal() as db:
+            for s in db.scalars(
+                select(Servicio).where(Servicio.activo.is_(True)).order_by(Servicio.nombre)
+            ):
+                self.combo_servicios.addItem(s.nombre, {"id": s.id, "nombre": s.nombre})
+        self.combo_servicios.setCurrentIndex(-1)
+
     def agregar_desde_el_combo(self) -> None:
         datos = self.combo_productos.currentData()
         if not datos:
             return
         self.agregar_al_carrito(datos["id"], self.spin_cantidad.value())
+
+    def agregar_servicio_desde_el_combo(self) -> None:
+        datos = self.combo_servicios.currentData()
+        if datos:
+            self.agregar_servicio_al_carrito(datos["id"])
 
     def agregar_al_carrito(self, producto_id: int, cantidad: int = 1) -> None:
         with SessionLocal() as db:
@@ -482,25 +513,37 @@ class OrdenesWidget(QTabWidget):
 
             nombre, precio = producto.nombre, int(producto.precio_venta)
 
+        self._insertar_en_carrito({"producto_id": producto_id}, nombre, precio, cantidad)
+        self.spin_cantidad.setValue(1)
+
+    def agregar_servicio_al_carrito(self, servicio_id: int, cantidad: int = 1) -> None:
+        with SessionLocal() as db:
+            servicio = db.get(Servicio, servicio_id)
+            if not servicio:
+                return
+            nombre, precio = servicio.nombre, int(servicio.precio_venta)
+        self._insertar_en_carrito({"servicio_id": servicio_id}, nombre, precio, cantidad)
+
+    def _insertar_en_carrito(self, item: dict, nombre: str, precio: int, cantidad: int) -> None:
         subtotal = precio * cantidad
 
         self.tabla_carrito.setSortingEnabled(False)
         fila = self.tabla_carrito.rowCount()
         self.tabla_carrito.insertRow(fila)
 
-        # El id, la cantidad y los precios viajan en Qt.UserRole: la tabla es la
-        # que guarda la orden en curso, y guardar_orden la lee de vuelta.
+        # El ítem ({"producto_id": n} o {"servicio_id": n}), la cantidad y los
+        # precios viajan en Qt.UserRole: la tabla es la que guarda la orden en
+        # curso, y guardar_orden la lee de vuelta.
         celda_nombre = QTableWidgetItem(nombre)
         celdas = (celda_nombre, ItemNumerico(str(cantidad), cantidad),
                   ItemNumerico(clp(precio), precio), ItemNumerico(clp(subtotal), subtotal))
         for columna, (celda, valor) in enumerate(
-            zip(celdas, (producto_id, cantidad, precio, subtotal))
+            zip(celdas, (item, cantidad, precio, subtotal))
         ):
             celda.setData(Qt.UserRole, valor)
             self.tabla_carrito.setItem(fila, columna, celda)
 
         reordenar(self.tabla_carrito)
-        self.spin_cantidad.setValue(1)
         self.recalcular_total()
 
     def quitar_del_carrito(self) -> None:
@@ -519,7 +562,7 @@ class OrdenesWidget(QTabWidget):
             self.tabla_carrito.item(fila, 3).data(Qt.UserRole)
             for fila in range(self.tabla_carrito.rowCount())
         )
-        self.total.setText(clp(suma_total))
+        self.totales.calcular(suma_total)
         self._actualizar_boton_guardar()
 
     def _actualizar_boton_guardar(self) -> None:
@@ -551,7 +594,7 @@ class OrdenesWidget(QTabWidget):
         # Capturar totales y empaquetar detalles
         detalles = [
             {
-                "producto_id": self.tabla_carrito.item(fila, 0).data(Qt.UserRole),
+                "item": self.tabla_carrito.item(fila, 0).data(Qt.UserRole),
                 "cantidad": self.tabla_carrito.item(fila, 1).data(Qt.UserRole),
                 "precio": self.tabla_carrito.item(fila, 2).data(Qt.UserRole),
                 "subtotal": self.tabla_carrito.item(fila, 3).data(Qt.UserRole),
@@ -559,6 +602,7 @@ class OrdenesWidget(QTabWidget):
             for fila in range(self.tabla_carrito.rowCount())
         ]
         suma_total = sum(d["subtotal"] for d in detalles)
+        impuesto, total_final = self.totales.calcular(suma_total)
 
         # Armar las notas incluyendo el nivel de combustible
         notas_finales = f"Nivel de Combustible: {self.combo_combustible.currentText()}"
@@ -572,7 +616,8 @@ class OrdenesWidget(QTabWidget):
                 usuario_id=Sesion.usuario_id,  # Extraído de tu clase auth
                 kilometraje_ingreso=self.spin_kilometraje.value(),
                 subtotal=suma_total,
-                total_final=suma_total,
+                impuesto=impuesto,
+                total_final=total_final,
                 notas=notas_finales,
             )
             db.add(nueva_orden)
@@ -581,9 +626,9 @@ class OrdenesWidget(QTabWidget):
                 for det in detalles:
                     db.add(DetalleOrden(
                         orden_id=nueva_orden.id,
-                        producto_id=det["producto_id"],
                         cantidad=det["cantidad"],
                         precio_unitario_cobrado=det["precio"],
+                        **det["item"],
                     ))
                 # Al confirmar, los triggers descuentan el stock y escriben el
                 # kardex. No queda ningún Producto vivo en esta sesión al que
@@ -665,18 +710,20 @@ class DialogoDetalleOrden(QDialog):
                 f"<b>Cliente:</b> {cliente.nombre_completo}<br>"
                 f"<b>Vehículo:</b> {vehiculo.marca or ''} {vehiculo.modelo or ''} "
                 f"({vehiculo.patente})<br>"
-                f"<b>Kilometraje:</b> {orden.kilometraje_ingreso} km<br>"
+                f"<b>Kilometraje:</b> "
+                f"{'sin registrar' if orden.kilometraje_ingreso is None else f'{orden.kilometraje_ingreso} km'}<br>"
                 f"<b>Mecánico:</b> {usuario.nombre} | "
                 f"<b>Fecha:</b> {orden.fecha_creacion.strftime('%d-%m-%Y %H:%M')}"
             )
             # La relación 'orden.detalles' nos permite acceder a los productos
             # sin hacer joins manuales.
             lineas = [
-                (det.producto.nombre, det.cantidad, int(det.precio_unitario_cobrado))
+                ((det.producto or det.servicio).nombre, det.cantidad,
+                 int(det.precio_unitario_cobrado))
                 for det in orden.detalles
             ]
             notas_guardadas = orden.notas or "Sin observaciones registradas."
-            total_guardado = int(orden.total_final)
+            cifras = (orden.subtotal, orden.descuento_monto, orden.impuesto, orden.total_final)
 
         # Tabla de productos
         tabla = con_aviso_vacio(
@@ -698,8 +745,8 @@ class DialogoDetalleOrden(QDialog):
         notas.setPlainText(notas_guardadas)
         notas.setMaximumHeight(80)
 
-        marco_total, cifra_total = bloque_total("Total final", menor=True)
-        cifra_total.setText(clp(total_guardado))
+        marco_total, totales = bloque_total("Total final", menor=True)
+        totales.fijar(*cifras)
 
         titulo_insumos = QLabel("Insumos y Servicios")
         titulo_insumos.setProperty("clase", "seccion")

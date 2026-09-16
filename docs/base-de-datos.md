@@ -27,7 +27,8 @@ consola de psql abierta.
 | `vehiculos` | Cuelgan de un cliente. Patente única |
 | `ubicaciones` | Dónde está guardado físicamente un producto |
 | `productos` | Inventario. `stock_actual` lo manejan los triggers |
-| `ordenes` / `detalle_ordenes` | Órdenes de trabajo del taller |
+| `servicios` | Mano de obra (cambio de aceite, scanner). Se cobra en una orden; no tiene stock ni Kardex |
+| `ordenes` / `detalle_ordenes` | Órdenes de trabajo del taller. Cada línea del detalle es un producto o un servicio |
 | `ventas` / `detalle_ventas` | Ventas de mostrador |
 | `kardex_movimientos` | Historial de inventario. Solo se agrega, nunca se edita |
 
@@ -35,7 +36,7 @@ consola de psql abierta.
 
 | Trigger | Cuándo | Qué hace |
 |---|---|---|
-| `trg_detalle_ordenes_descuento` | `INSERT` en `detalle_ordenes` | Descuenta stock y escribe `SALIDA_ORDEN` en el Kardex |
+| `trg_detalle_ordenes_descuento` | `INSERT` en `detalle_ordenes` con `producto_id` | Descuenta stock y escribe `SALIDA_ORDEN` en el Kardex. Las líneas de servicio no lo disparan (`WHEN`) |
 | `trg_detalle_ventas_descuento` | `INSERT` en `detalle_ventas` | Descuenta stock y escribe `SALIDA_VENTA` en el Kardex |
 | `trg_kardex_movimiento_manual` | `INSERT` en `kardex_movimientos` de tipo `ENTRADA` o `AJUSTE_MANUAL` | Mueve el stock y calcula `stock_resultante` |
 | `trg_*_updated_at` | `UPDATE` en `usuarios`, `clientes`, `vehiculos`, `productos` | Refresca `updated_at` |
@@ -66,6 +67,7 @@ No se pasa `stock_resultante` ni se toca `productos`: el trigger completa ambas 
 |---|---|
 | `productos.stock_actual >= 0` | Vender o consumir más de lo que hay. La transacción completa se revierte |
 | `descuento_exclusivo_orden` | Aplicar porcentaje y monto fijo de descuento a la vez |
+| `detalle_orden_un_item` | Una línea de orden sin producto ni servicio, o con ambos |
 | `origen_movimiento_valido` | Un movimiento de Kardex que no calce con su origen (una `SALIDA_VENTA` sin venta, o con orden) |
 | `cantidad_movida <> 0` | Movimientos vacíos |
 | `UNIQUE` en `clientes.rut`, `vehiculos.patente`, `numero_boleta` | Duplicados |
@@ -96,6 +98,20 @@ ALTER TABLE "clientes" ADD CONSTRAINT "empresa_con_rut"
   CHECK ("tipo_cliente" <> 'EMPRESA' OR "rut" IS NOT NULL);
 ```
 
+## Precios e IVA
+
+Los precios del catálogo (`productos.precio_venta`, `servicios.precio_venta`)
+son **netos**. El IVA se calcula al cobrar con [`src/precios.py`](../src/precios.py)
+y queda guardado en el documento: `ordenes.impuesto` y `ventas.impuesto`. Así
+el historial no depende de la tasa vigente y una factura puede desglosarse sin
+recalcular nada.
+
+- `ordenes`: `total_final = subtotal − descuento + impuesto`, con `subtotal` neto.
+- `ventas`: `total_final = neto + impuesto`; el neto se obtiene restando.
+
+Es la misma convención del sistema antiguo, cuyos datos migrados traen las
+tres cifras por separado.
+
 ## Vistas
 
 `vw_stock_critico` lista los productos activos con `stock_actual <= stock_minimo`. La
@@ -113,3 +129,35 @@ docker rm -f lubriexpress-db && docker volume rm lubriexpress-pgdata
 
 Sirve mientras no haya datos reales. Antes de la puesta en producción hay que
 incorporar Alembic, o cada ajuste posterior obligará a migrar el inventario a mano.
+
+Bases creadas antes de servicios, IVA y las columnas extra del vehículo se
+ponen al día con:
+
+```sql
+ALTER TABLE "vehiculos"
+  ADD COLUMN "tipo" VARCHAR(30),
+  ADD COLUMN "version" VARCHAR(50),
+  ADD COLUMN "vin" VARCHAR(20),
+  ADD COLUMN "numero_motor" VARCHAR(30);
+CREATE TABLE "servicios" (
+  "id" SERIAL PRIMARY KEY,
+  "nombre" VARCHAR(100) NOT NULL,
+  "categoria" VARCHAR(50),
+  "precio_venta" DECIMAL(10,2) NOT NULL CHECK ("precio_venta" >= 0),
+  "activo" BOOLEAN NOT NULL DEFAULT TRUE
+);
+ALTER TABLE "ordenes" ADD COLUMN "impuesto" DECIMAL(10,2) NOT NULL DEFAULT 0 CHECK ("impuesto" >= 0);
+ALTER TABLE "ventas" ADD COLUMN "impuesto" DECIMAL(10,2) NOT NULL DEFAULT 0 CHECK ("impuesto" >= 0);
+ALTER TABLE "detalle_ordenes"
+  ALTER COLUMN "producto_id" DROP NOT NULL,
+  ADD COLUMN "servicio_id" INT REFERENCES "servicios"("id"),
+  ADD CONSTRAINT "detalle_orden_un_item" CHECK (("producto_id" IS NULL) <> ("servicio_id" IS NULL));
+CREATE INDEX idx_detalle_ordenes_servicio ON "detalle_ordenes"("servicio_id");
+ALTER TABLE "ordenes" ALTER COLUMN "kilometraje_ingreso" DROP NOT NULL;
+DROP TRIGGER trg_detalle_ordenes_descuento ON "detalle_ordenes";
+CREATE TRIGGER trg_detalle_ordenes_descuento
+  AFTER INSERT ON "detalle_ordenes"
+  FOR EACH ROW
+  WHEN (NEW."producto_id" IS NOT NULL)
+  EXECUTE FUNCTION fn_descontar_stock_orden();
+```

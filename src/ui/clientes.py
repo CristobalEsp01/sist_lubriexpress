@@ -1,6 +1,4 @@
 """Mantenedor de Clientes y sus vehículos."""
-import re
-
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QFormLayout, QHBoxLayout, QLabel,
@@ -12,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 
 from ..database import SessionLocal
 from ..models import Cliente, Vehiculo
+from ..patente import PATENTE, normalizar_patente
 from ..rut import es_valido, formatear
 from ..texto import columna_normalizada, filtro_busqueda
 from .comunes import (
@@ -27,7 +26,6 @@ COLUMNAS_VEHICULO = ["Patente", "Marca", "Modelo", "Año", "Combustible", "Trans
 COMBUSTIBLES = ["", "Bencina", "Diésel", "Eléctrico", "Híbrido", "GLP"]
 TRANSMISIONES = ["", "Manual", "Automática", "CVT"]
 TRACCIONES = ["", "4x2", "4x4", "AWD"]
-PATENTE = re.compile(r"^([A-Z]{2}\d{4}|[A-Z]{4}\d{2})$")
 
 
 class FormularioCliente(QDialog):
@@ -150,6 +148,10 @@ class FormularioVehiculo(QDialog):
         self.transmision = self._combo(TRANSMISIONES)
         self.traccion = self._combo(TRACCIONES)
         self.cilindrada = QLineEdit(placeholderText="Ej: 1.6, 2.0, 2.8 Turbo")
+        self.tipo = QLineEdit(placeholderText="Ej: Sedan, SUV, Camioneta")
+        self.version = QLineEdit(placeholderText="Ej: LX, GT Line")
+        self.vin = QLineEdit(placeholderText="17 caracteres, en el parabrisas o la puerta")
+        self.numero_motor = QLineEdit()
 
         form = QFormLayout()
         form.setSpacing(12)
@@ -162,6 +164,10 @@ class FormularioVehiculo(QDialog):
         form.addRow("Transmisión", self.transmision)
         form.addRow("Tracción", self.traccion)
         form.addRow("Cilindrada", self.cilindrada)
+        form.addRow("Tipo", self.tipo)
+        form.addRow("Versión", self.version)
+        form.addRow("VIN", self.vin)
+        form.addRow("N° motor", self.numero_motor)
 
         botones = botonera(self)
 
@@ -192,9 +198,13 @@ class FormularioVehiculo(QDialog):
             self.transmision.setCurrentText(v.transmision or "")
             self.traccion.setCurrentText(v.traccion or "")
             self.cilindrada.setText(v.cilindrada or "")
+            self.tipo.setText(v.tipo or "")
+            self.version.setText(v.version or "")
+            self.vin.setText(v.vin or "")
+            self.numero_motor.setText(v.numero_motor or "")
 
     def patente_normalizada(self) -> str:
-        return re.sub(r"[.\-\s]", "", self.patente.text()).upper()
+        return normalizar_patente(self.patente.text())
 
     def accept(self) -> None:
         patente = self.patente_normalizada()
@@ -224,6 +234,10 @@ class FormularioVehiculo(QDialog):
             vehiculo.transmision = self.transmision.currentText().strip() or None
             vehiculo.traccion = self.traccion.currentText().strip() or None
             vehiculo.cilindrada = self.cilindrada.text().strip() or None
+            vehiculo.tipo = self.tipo.text().strip() or None
+            vehiculo.version = self.version.text().strip() or None
+            vehiculo.vin = self.vin.text().strip().upper() or None
+            vehiculo.numero_motor = self.numero_motor.text().strip() or None
             if self.vehiculo_id is None:
                 db.add(vehiculo)
             try:

@@ -65,6 +65,7 @@ def test_el_formulario_crea_el_producto_y_no_deja_mover_el_stock_al_editar(app, 
     alta.ubicacion.setCurrentText("QA Repisa")  # no existe: debe crearse
     alta.precio_costo.setValue(20000)
     alta.precio_venta.setValue(35000)
+    assert alta.precio_con_iva.text() == "$41.650"  # el neto se teclea, el bruto se ve
     alta.stock_actual.setValue(12)
     alta.stock_minimo.setValue(5)
     alta.accept()

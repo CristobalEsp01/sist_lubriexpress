@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from ..auth import Sesion
 from ..database import SessionLocal
 from ..models import KardexMovimiento, Producto, Ubicacion, Usuario, Venta
+from ..precios import con_iva
 from ..texto import filtro_busqueda
 from .comunes import (
     BADGE_ACENTO, BADGE_ALERTA, BADGE_EXITO, BADGE_NEUTRAL, ROL_INSIGNIA,
@@ -20,7 +21,7 @@ from .comunes import (
 )
 from .tema import ALERTA, CANAL_PANEL, ESPACIO_BARRA, EXITO, TINTA_SUAVE, fuente_tabular
 
-COLUMNAS_PRODUCTO = ["Nombre", "Marca", "Categoría", "Ubicación", "Stock", "Mín.", "Costo", "Venta"]
+COLUMNAS_PRODUCTO = ["Nombre", "Marca", "Categoría", "Ubicación", "Stock", "Mín.", "Costo", "Venta neto"]
 COLUMNAS_KARDEX = ["Fecha", "Tipo", "Cantidad", "Saldo", "Usuario", "Origen"]
 COLUMNAS_INGRESO = ["Producto", "Stock Actual", "Ingreso", "Nuevo Stock"]
 MAX_CLP = 99_999_999
@@ -96,6 +97,11 @@ class FormularioProducto(QDialog):
         self.descripcion.setFixedHeight(65)
         self.precio_costo = self._campo_pesos()
         self.precio_venta = self._campo_pesos()
+        # El catálogo guarda netos; el precio que paga el cliente se ve al lado.
+        self.precio_con_iva = QLabel(clp(0))
+        self.precio_venta.valueChanged.connect(
+            lambda neto: self.precio_con_iva.setText(clp(con_iva(neto)))
+        )
         self.stock_actual = QSpinBox(maximum=999_999)
         self.stock_minimo = QSpinBox(maximum=999_999)
         self.activo = QCheckBox("Producto activo (disponible en ventas y órdenes)")
@@ -109,7 +115,8 @@ class FormularioProducto(QDialog):
         form.addRow("Ubicación", self.ubicacion)
         form.addRow("Descripción", self.descripcion)
         form.addRow("Precio costo *", self.precio_costo)
-        form.addRow("Precio venta *", self.precio_venta)
+        form.addRow("Precio venta neto *", self.precio_venta)
+        form.addRow("Con IVA (19 %)", self.precio_con_iva)
         form.addRow("Stock inicial", self.stock_actual)
         form.addRow("Stock mínimo", self.stock_minimo)
         form.addRow("", self.activo)

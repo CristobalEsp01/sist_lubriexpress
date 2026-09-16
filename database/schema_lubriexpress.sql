@@ -54,6 +54,12 @@ CREATE TABLE "vehiculos" (
   "cilindrada" VARCHAR(20),
   "traccion" VARCHAR(20),
   "combustible" VARCHAR(20),
+  -- Vienen del sistema antiguo y se guardan tal cual: "version" trae lo que
+  -- cada operador anotó ("1.6", "DIESEL", "LX"), no se interpreta.
+  "tipo" VARCHAR(30),
+  "version" VARCHAR(50),
+  "vin" VARCHAR(20),
+  "numero_motor" VARCHAR(30),
   "created_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "updated_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -77,12 +83,28 @@ CREATE TABLE "productos" (
   "categoria" VARCHAR(50),
   "descripcion" TEXT,
   "precio_costo" DECIMAL(10,2) NOT NULL CHECK ("precio_costo" >= 0),
+  -- Neto, sin IVA. El IVA (19 %) se calcula al cobrar y queda guardado en el
+  -- documento (ordenes.impuesto / ventas.impuesto), no en el catálogo.
   "precio_venta" DECIMAL(10,2) NOT NULL CHECK ("precio_venta" >= 0),
   "stock_actual" INT NOT NULL DEFAULT 0 CHECK ("stock_actual" >= 0),
   "stock_minimo" INT NOT NULL DEFAULT 0 CHECK ("stock_minimo" >= 0),
   "activo" BOOLEAN NOT NULL DEFAULT TRUE,
   "created_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "updated_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ---------------------------------------------------------------------
+-- Tabla de Servicios (mano de obra: cambio de aceite, scanner, revisión)
+-- ---------------------------------------------------------------------
+-- Se cobran en una orden igual que un producto, pero no tienen stock ni
+-- pasan por el Kardex. Por eso son una tabla aparte y no un producto con un
+-- flag: así el trigger de descuento no tiene que aprender a no disparar.
+CREATE TABLE "servicios" (
+  "id" SERIAL PRIMARY KEY,
+  "nombre" VARCHAR(100) NOT NULL,
+  "categoria" VARCHAR(50),
+  "precio_venta" DECIMAL(10,2) NOT NULL CHECK ("precio_venta" >= 0),
+  "activo" BOOLEAN NOT NULL DEFAULT TRUE
 );
 
 -- ---------------------------------------------------------------------
@@ -94,10 +116,14 @@ CREATE TABLE "ordenes" (
   "usuario_id" INT NOT NULL REFERENCES "usuarios"("id"),
   "folio_mercado_publico" VARCHAR(50),
   "fecha_creacion" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  "kilometraje_ingreso" INT NOT NULL CHECK ("kilometraje_ingreso" >= 0),
+  -- La pantalla lo exige (es con lo que se calcula el próximo servicio);
+  -- admite NULL solo por el historial migrado, que no siempre lo traía.
+  "kilometraje_ingreso" INT CHECK ("kilometraje_ingreso" >= 0),
   "descuento_porcentaje" DECIMAL(5,2) NOT NULL DEFAULT 0 CHECK ("descuento_porcentaje" >= 0),
   "descuento_monto" DECIMAL(10,2) NOT NULL DEFAULT 0 CHECK ("descuento_monto" >= 0),
+  -- subtotal es neto; total_final = subtotal - descuento + impuesto.
   "subtotal" DECIMAL(10,2) NOT NULL DEFAULT 0,
+  "impuesto" DECIMAL(10,2) NOT NULL DEFAULT 0 CHECK ("impuesto" >= 0),
   "total_final" DECIMAL(10,2) NOT NULL DEFAULT 0,
   "numero_boleta" VARCHAR(50) UNIQUE,
   "estado_pago" BOOLEAN NOT NULL DEFAULT FALSE,
@@ -107,14 +133,19 @@ CREATE TABLE "ordenes" (
 );
 
 -- ---------------------------------------------------------------------
--- Tabla Detalle de Órdenes (Productos por Orden)
+-- Tabla Detalle de Órdenes (Productos y Servicios por Orden)
 -- ---------------------------------------------------------------------
+-- Cada línea es un producto o un servicio, nunca ambos ni ninguno. Solo las
+-- líneas de producto descuentan stock (ver el WHEN del trigger).
 CREATE TABLE "detalle_ordenes" (
   "id" SERIAL PRIMARY KEY,
   "orden_id" INT NOT NULL REFERENCES "ordenes"("id"),
-  "producto_id" INT NOT NULL REFERENCES "productos"("id"),
+  "producto_id" INT REFERENCES "productos"("id"),
+  "servicio_id" INT REFERENCES "servicios"("id"),
   "cantidad" INT NOT NULL CHECK ("cantidad" > 0),
-  "precio_unitario_cobrado" DECIMAL(10,2) NOT NULL CHECK ("precio_unitario_cobrado" >= 0)
+  "precio_unitario_cobrado" DECIMAL(10,2) NOT NULL CHECK ("precio_unitario_cobrado" >= 0),
+  CONSTRAINT "detalle_orden_un_item"
+      CHECK (("producto_id" IS NULL) <> ("servicio_id" IS NULL))
 );
 
 -- ---------------------------------------------------------------------
@@ -126,6 +157,8 @@ CREATE TABLE "ventas" (
   "cliente_id" INT REFERENCES "clientes"("id"),
   "fecha_venta" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "numero_boleta" VARCHAR(50) UNIQUE,
+  -- total_final = neto + impuesto; el neto se obtiene restando.
+  "impuesto" DECIMAL(10,2) NOT NULL DEFAULT 0 CHECK ("impuesto" >= 0),
   "total_final" DECIMAL(10,2) NOT NULL CHECK ("total_final" >= 0)
 );
 
@@ -172,6 +205,7 @@ CREATE INDEX idx_ordenes_usuario ON "ordenes"("usuario_id");
 CREATE INDEX idx_ordenes_fecha ON "ordenes"("fecha_creacion");
 CREATE INDEX idx_detalle_ordenes_orden ON "detalle_ordenes"("orden_id");
 CREATE INDEX idx_detalle_ordenes_producto ON "detalle_ordenes"("producto_id");
+CREATE INDEX idx_detalle_ordenes_servicio ON "detalle_ordenes"("servicio_id");
 CREATE INDEX idx_ventas_usuario ON "ventas"("usuario_id");
 CREATE INDEX idx_ventas_fecha ON "ventas"("fecha_venta");
 CREATE INDEX idx_detalle_ventas_venta ON "detalle_ventas"("venta_id");
@@ -235,7 +269,9 @@ $$ LANGUAGE plpgsql;
 
 CREATE TRIGGER trg_detalle_ordenes_descuento
   AFTER INSERT ON "detalle_ordenes"
-  FOR EACH ROW EXECUTE FUNCTION fn_descontar_stock_orden();
+  FOR EACH ROW
+  WHEN (NEW."producto_id" IS NOT NULL)  -- las líneas de servicio no mueven stock
+  EXECUTE FUNCTION fn_descontar_stock_orden();
 
 -- --- Salida de stock por Venta de Mostrador ---
 CREATE OR REPLACE FUNCTION fn_descontar_stock_venta() RETURNS TRIGGER AS $$

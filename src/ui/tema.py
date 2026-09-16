@@ -303,6 +303,11 @@ QLabel[clase="total-cifra-menor"] {{
     font-weight: 700;
     color: {TINTA};
 }}
+QLabel[clase="total-cifra-desglose"] {{
+    font-family: {FAMILIAS_MONO};
+    font-size: 13px;
+    color: {TINTA_SUAVE};
+}}
 
 QSplitter::handle:vertical {{
     background: {BORDE};

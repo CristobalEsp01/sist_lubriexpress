@@ -137,7 +137,7 @@ def test_el_cobro_exige_boleta_registra_la_venta_y_no_la_duplica(
         venta = db.scalar(select(Venta).where(Venta.numero_boleta == "QA-0001"))
         assert venta.usuario_id == usuario_qa
         assert venta.cliente_id is None  # se cobró sin cliente, como se pidió
-        assert int(venta.total_final) == 3 * 6000
+        assert (int(venta.impuesto), int(venta.total_final)) == (3420, 21420)  # 18.000 + 19 %
 
         detalle = db.scalars(select(DetalleVenta).where(DetalleVenta.venta_id == venta.id)).all()
         assert len(detalle) == 1 and detalle[0].cantidad == 3

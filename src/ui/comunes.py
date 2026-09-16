@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 
 from shiboken6 import isValid
 
+from ..precios import iva_de
 from ..texto import normalizar
 from .tema import (
     ACENTO_FONDO, ACENTO_OSCURO, ALERTA, ALERTA_FONDO, ALTERNA, ALTO_FILA,
@@ -328,28 +329,71 @@ def con_aviso_vacio(tabla: QTableWidget, mensaje: str) -> QTableWidget:
     return tabla
 
 
-def bloque_total(rotulo: str = "Total", menor: bool = False) -> tuple[QFrame, QLabel]:
-    """El pie de una pantalla de cobro: rótulo a la izquierda, cifra a la derecha.
+class Totales:
+    """Las cifras del pie de una pantalla de cobro: neto, descuento, IVA y total.
+
+    La aritmética vive acá y no en cada pantalla para que órdenes y ventas
+    cobren igual. La fila de descuento solo se muestra cuando hay uno.
+    """
+
+    def __init__(self, neto: QLabel, descuento: QLabel, iva: QLabel, total: QLabel):
+        self.neto, self.descuento, self.iva, self.total = neto, descuento, iva, total
+        self.fila_descuento: list = []  # los widgets de la fila, para esconderla
+
+    def fijar(self, neto, descuento, impuesto, total) -> None:
+        """Muestra cifras ya guardadas, sin recalcular nada."""
+        self.neto.setText(clp(neto))
+        self.descuento.setText(f"- {clp(descuento)}")
+        for w in self.fila_descuento:
+            w.setVisible(int(descuento) > 0)
+        self.iva.setText(clp(impuesto))
+        self.total.setText(clp(total))
+
+    def calcular(self, neto: int, descuento: int = 0) -> tuple[int, int]:
+        """Calcula el IVA sobre lo que efectivamente se cobra y muestra todo.
+        Devuelve (impuesto, total), que es lo que se guarda en el documento."""
+        impuesto = iva_de(neto - descuento)
+        total = neto - descuento + impuesto
+        self.fijar(neto, descuento, impuesto, total)
+        return impuesto, total
+
+
+def bloque_total(rotulo: str = "Total", menor: bool = False) -> tuple[QFrame, Totales]:
+    """El pie de una pantalla de cobro: neto, IVA y total, rótulo a la
+    izquierda y cifra a la derecha.
 
     Va sobre su propia superficie y separado por una línea porque es el
     resultado de la pantalla, no un campo más del formulario. Devuelve el marco,
-    para meterlo en el layout, y la etiqueta de la cifra, que es la que cambia.
+    para meterlo en el layout, y las cifras (ver `Totales`).
     """
     marco = QFrame()
     marco.setProperty("clase", "total")
+    columna = QVBoxLayout(marco)
+    columna.setContentsMargins(2, 10, 2, 0)
+    columna.setSpacing(2)
 
-    etiqueta = QLabel(rotulo)
-    etiqueta.setProperty("clase", "total-rotulo")
-    cifra = QLabel(clp(0))
-    cifra.setProperty("clase", "total-cifra-menor" if menor else "total-cifra")
-    cifra.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+    def fila(rotulo: str, clase: str) -> tuple[QLabel, QLabel]:
+        etiqueta = QLabel(rotulo)
+        etiqueta.setProperty("clase", "total-rotulo")
+        cifra = QLabel(clp(0))
+        cifra.setProperty("clase", clase)
+        cifra.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        linea = QHBoxLayout()
+        linea.addWidget(etiqueta)
+        linea.addStretch()
+        linea.addWidget(cifra)
+        columna.addLayout(linea)
+        return etiqueta, cifra
 
-    fila = QHBoxLayout(marco)
-    fila.setContentsMargins(2, 10, 2, 0)
-    fila.addWidget(etiqueta)
-    fila.addStretch()
-    fila.addWidget(cifra)
-    return marco, cifra
+    _, neto = fila("Neto", "total-cifra-desglose")
+    rotulo_descuento, descuento = fila("Descuento", "total-cifra-desglose")
+    _, iva = fila("IVA 19 %", "total-cifra-desglose")
+    _, total = fila(rotulo, "total-cifra-menor" if menor else "total-cifra")
+
+    totales = Totales(neto, descuento, iva, total)
+    totales.fila_descuento = [rotulo_descuento, descuento]
+    totales.fijar(0, 0, 0, 0)
+    return marco, totales
 
 
 def botonera(dialogo: QDialog) -> QDialogButtonBox:
