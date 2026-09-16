@@ -8,7 +8,10 @@
 - `src/patente.py` — patente chilena, con el mismo criterio que `rut.py`.
 - `src/precios.py` — el IVA. Los precios del catálogo son netos; el impuesto se calcula al cobrar y se guarda en el documento.
 - `src/permisos.py` — qué puede hacer cada rol, una acción por entrada. La sesión sigue en `src/auth.py`.
-- `scripts/migrar_sistema_antiguo.py` — las cinco planillas del sistema viejo. Lee `.xlsx` con la biblioteca estándar; las planillas viven fuera del repo.
+- `src/xlsx.py` — leer y escribir `.xlsx` con la biblioteca estándar. Lo usan la migración y la carga masiva; no se suma pandas ni openpyxl por esto.
+- `src/carga_excel.py` — carga masiva de inventario por plantilla, sin UI. Todo o nada: una fila rechazada no deja escribir ninguna.
+- `scripts/migrar_sistema_antiguo.py` — las cinco planillas del sistema viejo; las planillas viven fuera del repo.
+- `lubriexpress.spec` — el empaquetado con PyInstaller para el PC del taller. El `.exe` se construye en Windows.
 - `src/ui/` — un módulo por mantenedor. `comunes.py` tiene lo que comparten y `tema.py` la identidad visual.
 - `main.py` — solo arranca la aplicación y avisa si la base no responde.
 
