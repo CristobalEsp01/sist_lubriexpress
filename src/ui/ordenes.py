@@ -25,11 +25,10 @@ from ..models import Cliente, DetalleOrden, Orden, Producto, Servicio, Usuario, 
 from ..texto import filtro_busqueda
 from .clientes import FormularioCliente, FormularioVehiculo
 from .comunes import (
-    BADGE_ALERTA, BADGE_EXITO, ROL_INSIGNIA, ItemNumerico, barra, bloque_total, clp,
-    con_aviso_vacio, crear_tabla, hacer_buscable, layout_de_dialogo, layout_de_pantalla,
-    reordenar,
+    BADGE_ALERTA, BADGE_EXITO, ROL_INSIGNIA, ItemNumerico, barra, bloque_total,
+    carpeta_de_documentos, clp, con_aviso_vacio, crear_tabla, hacer_buscable,
+    layout_de_dialogo, layout_de_pantalla, reordenar,
 )
-from .comunes import carpeta_de_documentos
 from .tema import CANAL_PANEL, ESPACIO_PANTALLA, fuente_tabular
 
 COLUMNAS_CARRITO = ["Ítem", "Cant.", "Precio Unit.", "Subtotal"]
@@ -362,6 +361,9 @@ class OrdenesWidget(QTabWidget):
         # Crece con la ventana, pero hasta ahí: sin tope, en pantalla completa
         # queda una caja vacía de 700 px donde caben ocho líneas de texto.
         self.texto_observaciones.setMaximumHeight(240)
+        # Y puede achicarse por debajo de lo que Qt pide de suyo: es el campo
+        # que cede alto cuando la ventana está en su tamaño mínimo.
+        self.texto_observaciones.setMinimumHeight(40)
 
         self.tipo_descuento = QComboBox()
         self.tipo_descuento.addItems(TIPOS_DESCUENTO)

@@ -534,8 +534,9 @@ class InventarioWidget(QWidget):
         self.busqueda.setFocus()
 
     def recargar(self) -> None:
-        # Carga la tabla completa en memoria. Con miles de SKU conviene
-        # pasar a QAbstractTableModel con paginación; para un lubricentro alcanza.
+        # ponytail: carga la tabla completa en memoria. Sirve para un
+        # lubricentro (2.372 productos); con decenas de miles de SKU la salida es
+        # QAbstractTableModel con paginación.
         consulta = filtro_busqueda(
             select(Producto).order_by(Producto.nombre),
             self.busqueda.text(),

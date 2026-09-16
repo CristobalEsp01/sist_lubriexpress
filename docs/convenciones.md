@@ -207,8 +207,7 @@ Para listarlos:
 grep -rn "ponytail:" src/
 ```
 
-Hoy hay tres: el listado de inventario carga la tabla completa en memoria (sirve para
-un lubricentro, no para miles de SKU), el recordatorio de `db.refresh()` tras los
-triggers de stock, y la idempotencia de la migración, que es un guardián global y no
-un upsert por fila.
+Hoy hay tres: la normalización de tildes que `texto.py` escribe a mano en SQL, el
+listado de inventario que carga la tabla completa en memoria, y la idempotencia de la
+migración, que es un guardián global y no un upsert por fila.
 

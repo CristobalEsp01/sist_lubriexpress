@@ -27,7 +27,9 @@ class VentanaPrincipal(QMainWindow):
         super().__init__()
         self.setWindowTitle("Lubri-Express — Gestión de Taller")
         self.resize(1050, 640)
-        self.setMinimumSize(960, 580)
+        # 640 de alto es lo que necesita la pantalla más densa —la orden de
+        # trabajo, con sus cinco bloques y el total— para no cortar la cifra.
+        self.setMinimumSize(960, 640)
 
         self.inventario = InventarioWidget(self)
         self.ventas = VentasWidget(self)
