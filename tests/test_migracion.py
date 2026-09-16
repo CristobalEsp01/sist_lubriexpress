@@ -11,9 +11,10 @@ from conftest import patente_de_prueba, rut_de_prueba
 from sqlalchemy import select
 
 from scripts.migrar_sistema_antiguo import (
-    USUARIO_MIGRACION, PATENTE_ORDEN, cuadre, fecha_excel, leer_xlsx, migrar,
+    USUARIO_MIGRACION, PATENTE_ORDEN, cuadre, fecha_excel, migrar,
 )
 from src.models import KardexMovimiento, Orden, Producto, Servicio, Usuario, Vehiculo
+from src.xlsx import leer_xlsx
 
 SUFIJO = rut_de_prueba()  # nombres distintos en cada corrida, como manda conftest
 

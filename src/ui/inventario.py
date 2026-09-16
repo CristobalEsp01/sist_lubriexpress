@@ -20,6 +20,7 @@ from .comunes import (
     ItemNumerico, ajustar_columnas, barra, botonera, clp, con_aviso_vacio, crear_tabla,
     exigir_permiso, hacer_buscable, layout_de_dialogo, layout_de_pantalla, reordenar,
 )
+from .carga_excel import CargaExcelDialog
 from .tema import ALERTA, CANAL_PANEL, ESPACIO_BARRA, EXITO, TINTA_SUAVE, fuente_tabular
 
 COLUMNAS_PRODUCTO = ["Nombre", "Marca", "Categoría", "Ubicación", "Stock", "Mín.", "Costo", "Venta neto"]
@@ -461,14 +462,18 @@ class InventarioWidget(QWidget):
         self.boton_ajuste = QPushButton("Ajustar stock")
         self.boton_ajuste.setEnabled(False)
         self.boton_ajuste.clicked.connect(self.ajustar_stock)
+        self.boton_excel = QPushButton("Cargar Excel")
+        self.boton_excel.clicked.connect(self.abrir_carga_excel)
 
         # El rol manda: el botón nace apagado y lo dice, y el slot vuelve a
         # preguntar. Editar y Ajustar además exigen una fila (recargar_kardex).
         self.supervisa = puede("inventario")
         boton_nuevo.setEnabled(self.supervisa)
         self.boton_ingreso.setEnabled(self.supervisa)
+        self.boton_excel.setEnabled(self.supervisa)
         if not self.supervisa:
-            for boton in (boton_nuevo, self.boton_editar, self.boton_ingreso, self.boton_ajuste):
+            for boton in (boton_nuevo, self.boton_editar, self.boton_ingreso,
+                          self.boton_ajuste, self.boton_excel):
                 boton.setToolTip("Reservado a supervisores y administradores")
 
         self.tabla = con_aviso_vacio(
@@ -493,7 +498,8 @@ class InventarioWidget(QWidget):
 
         barra_superior = barra(
             self.busqueda, self.solo_criticos, self.boton_vender,
-            self.boton_ingreso, self.boton_ajuste, boton_nuevo, self.boton_editar, estira=0,
+            self.boton_ingreso, self.boton_excel, self.boton_ajuste, boton_nuevo,
+            self.boton_editar, estira=0,
         )
 
         arriba = QWidget()
@@ -678,6 +684,12 @@ class InventarioWidget(QWidget):
         if producto_id is None:
             return
         self.window().iniciar_venta_con_producto(producto_id)
+
+    def abrir_carga_excel(self) -> None:
+        if not exigir_permiso("inventario", self):
+            return
+        if CargaExcelDialog(self).exec():
+            self.recargar()
 
     def abrir_ingreso_mercaderia(self) -> None:
         if not exigir_permiso("inventario", self):

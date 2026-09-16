@@ -34,11 +34,8 @@ Reglas, en orden de importancia:
   utilizable hasta que un administrador se la ponga. Las órdenes sin técnico
   cuelgan de `sistema_antiguo`, también inactivo.
 """
-import re
 import secrets
 import sys
-import xml.etree.ElementTree as ET
-import zipfile
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
@@ -55,6 +52,7 @@ from src.models import (  # noqa: E402
 )
 from src.patente import PATENTE, normalizar_patente  # noqa: E402
 from src.texto import normalizar, sin_tildes  # noqa: E402
+from src.xlsx import leer_xlsx  # noqa: E402
 
 PLANILLAS = {
     "clientes": "tabla clientes.xlsx",
@@ -67,58 +65,6 @@ USUARIO_MIGRACION = "sistema_antiguo"
 MARCA_NOTAS = "Migrada del sistema antiguo"
 ESTADOS_PAGADOS = {"Entregado", "Finalizado"}
 PATENTE_ORDEN = "Vehiculos_presup_SEGUNPATENTE::patente"
-
-# ---------------------------------------------------------------------------
-# Lectura de .xlsx con la biblioteca estándar
-# ---------------------------------------------------------------------------
-# Un .xlsx es un zip con XML adentro. Para leer cinco planillas una vez no
-# vale la pena sumar pandas y openpyxl al proyecto.
-NS = {"m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
-T = f"{{{NS['m']}}}t"
-
-
-def _columna(referencia: str) -> int:
-    """'AB12' -> 27 (base 0)."""
-    n = 0
-    for letra in re.match(r"[A-Z]+", referencia).group():
-        n = n * 26 + ord(letra) - 64
-    return n - 1
-
-
-def leer_xlsx(ruta) -> list[dict]:
-    """Filas de la primera hoja como dicts {encabezado: texto | None}.
-
-    Los valores vienen como texto tal cual los guarda Excel: los números con
-    su coma flotante ("8319.2999999999993") y las fechas como serial ("46272").
-    Convertirlos es problema de quien sabe qué columna es.
-    """
-    with zipfile.ZipFile(ruta) as z:
-        compartidas = []
-        if "xl/sharedStrings.xml" in z.namelist():
-            for si in ET.fromstring(z.read("xl/sharedStrings.xml")).findall("m:si", NS):
-                compartidas.append("".join(t.text or "" for t in si.iter(T)))
-        hoja = ET.fromstring(z.read("xl/worksheets/sheet1.xml"))
-
-    filas = []
-    for fila in hoja.iter(f"{{{NS['m']}}}row"):
-        celdas = {}
-        for c in fila.findall("m:c", NS):
-            v = c.find("m:v", NS)
-            tipo = c.get("t")
-            if tipo == "s":
-                valor = compartidas[int(v.text)]
-            elif tipo == "inlineStr":
-                valor = "".join(t.text or "" for t in c.iter(T))
-            else:
-                valor = v.text if v is not None else None
-            celdas[_columna(c.get("r"))] = valor
-        filas.append(celdas)
-    if not filas:
-        return []
-    ancho = max(filas[0]) + 1
-    nombres = [filas[0].get(i) or f"col{i}" for i in range(ancho)]
-    return [{nombres[i]: f.get(i) for i in range(ancho)} for f in filas[1:]]
-
 
 def fecha_excel(serial) -> datetime | None:
     """Excel cuenta días desde el 30-12-1899; la fracción es la hora."""
