@@ -58,7 +58,10 @@ def enlace_whatsapp(telefono: str | None, mensaje: str | None = None) -> str | N
     # apaga en vez de prometer un aviso que el cliente nunca va a recibir.
     elif len(digitos) == 9 and digitos.startswith("9"):
         numero = f"56{digitos}"
-    elif len(digitos) == 8:
+    # Ocho dígitos es la anotación vieja, de antes de que se antepusiera el 9:
+    # los celulares de entonces partían en 7, 8 o 9. "2 233 3444" es el fijo de
+    # Santiago de esa época y prefijarlo inventa un celular que no existe.
+    elif len(digitos) == 8 and digitos[0] in "789":
         numero = f"569{digitos}"
     else:
         return None
