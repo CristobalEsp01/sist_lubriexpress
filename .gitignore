@@ -31,3 +31,6 @@ data/
 # PyInstaller
 build/
 dist/
+
+# Respaldos locales de la base (scripts/respaldar.py)
+respaldos/
