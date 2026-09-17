@@ -61,7 +61,7 @@ def test_el_formulario_crea_el_producto_y_no_deja_mover_el_stock_al_editar(app, 
     alta = FormularioProducto()
     alta.nombre.setText(NOMBRE)
     alta.marca.setText("Mobil")
-    alta.categoria.setText("Aceite Motor")
+    alta.categoria.setCurrentText("Aceite Motor")
     alta.ubicacion.setCurrentText("QA Repisa")  # no existe: debe crearse
     alta.precio_costo.setValue(20000)
     alta.precio_venta.setValue(35000)
@@ -342,3 +342,26 @@ def test_el_resumen_valoriza_a_costo_lo_que_muestra_la_tabla(app, limpiar, bodeg
     assert mecanico.tabla.rowCount() == 1
     assert "a precio costo" not in mecanico.resumen.text()
     assert mecanico.tabla.isColumnHidden(6)   # la columna de costo, tampoco
+
+
+def test_la_categoria_se_elige_de_las_que_ya_existen(app, limpiar, bodeguero_qa):
+    """Tecleada libre, la categoría se fragmenta: así el sistema antiguo llegó a
+    tener cuatro repisas distintas para el filtro de aire."""
+    from src.ui import FormularioProducto
+
+    with SessionLocal() as db:
+        db.add(Producto(nombre=NOMBRE, categoria="QA Filtro aire", precio_costo=1000,
+                        precio_venta=2000, stock_actual=1, stock_minimo=1))
+        db.commit()
+
+    alta = FormularioProducto()
+    opciones = [alta.categoria.itemText(i) for i in range(alta.categoria.count())]
+    assert "QA Filtro aire" in opciones
+
+    # Escrita de otra forma, gana la que ya existe: no nacen dos repisas.
+    alta.categoria.setCurrentText("qa  FILTRO AIRE")
+    assert alta._categoria_elegida() == "QA Filtro aire"
+
+    # Y una categoría nueva sigue siendo posible: el combo no es una cárcel.
+    alta.categoria.setCurrentText("QA Ampolletas")
+    assert alta._categoria_elegida() == "QA Ampolletas"

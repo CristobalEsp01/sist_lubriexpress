@@ -14,7 +14,7 @@ from ..database import SessionLocal
 from ..models import KardexMovimiento, Producto, Ubicacion, Usuario, Venta
 from ..permisos import puede
 from ..precios import con_iva
-from ..texto import filtro_busqueda
+from ..texto import filtro_busqueda, normalizar
 from .comunes import (
     BADGE_ACENTO, BADGE_ALERTA, BADGE_EXITO, BADGE_NEUTRAL, ROL_INSIGNIA,
     ItemNumerico, ajustar_columnas, barra, botonera, clp, con_aviso_vacio, crear_tabla,
@@ -87,8 +87,12 @@ class FormularioProducto(QDialog):
         self.nombre.setPlaceholderText("Ej: Aceite 5W30 Sintético 4L")
         self.marca = QLineEdit()
         self.marca.setPlaceholderText("Ej: Mobil, Castrol, Mann")
-        self.categoria = QLineEdit()
-        self.categoria.setPlaceholderText("Ej: Aceite Motor, Filtro de Aire")
+        # Combo y no caja de texto: escribir la categoría a mano es como el
+        # sistema antiguo llegó a tener "Filtro aire", "Filtro Aire",
+        # "FILTRO AIRE" y "Filtr Aire" como cuatro repisas distintas. Acá se
+        # elige de las que ya hay, y escribir una nueva sigue siendo posible.
+        self.categoria = hacer_buscable(QComboBox(), libre=True)
+        self.categoria.lineEdit().setPlaceholderText("Ej: Aceite Motor, Filtro de Aire")
         self.ubicacion = hacer_buscable(QComboBox(), libre=True)
         # En el lineEdit y no en el combo: Qt ignora setPlaceholderText()
         # apenas el combo es editable, y Ubicación quedaba como el único
@@ -130,6 +134,7 @@ class FormularioProducto(QDialog):
         layout.addWidget(botones)
 
         self._cargar_ubicaciones()
+        self._cargar_categorias()
         if producto_id is not None:
             self._cargar_producto()
             # El stock solo se mueve por el kardex; editarlo aquí sería un descuadre sin rastro.
@@ -155,12 +160,30 @@ class FormularioProducto(QDialog):
             ).all()
         self.ubicacion.addItems([""] + list(self._ubicaciones))
 
+    def _cargar_categorias(self) -> None:
+        with SessionLocal() as db:
+            self._categorias = db.scalars(
+                select(Producto.categoria).where(Producto.categoria.is_not(None))
+                .distinct().order_by(Producto.categoria)
+            ).all()
+        self.categoria.addItems([""] + list(self._categorias))
+
+    def _categoria_elegida(self) -> str | None:
+        """Lo tecleado, salvo que ya exista escrito de otra forma: ahí vale la
+        que existe. Es lo que evita que "filtro aire" nazca al lado de "Filtro
+        aire" la primera vez que alguien no mira el desplegable."""
+        escrito = self.categoria.currentText().strip()
+        for existente in self._categorias:
+            if normalizar(existente) == normalizar(escrito):
+                return existente
+        return escrito or None
+
     def _cargar_producto(self) -> None:
         with SessionLocal() as db:
             p = db.get(Producto, self.producto_id)
             self.nombre.setText(p.nombre)
             self.marca.setText(p.marca or "")
-            self.categoria.setText(p.categoria or "")
+            self.categoria.setCurrentText(p.categoria or "")
             self.ubicacion.setCurrentText(p.ubicacion.descripcion if p.ubicacion else "")
             self.descripcion.setPlainText(p.descripcion or "")
             self.precio_costo.setValue(int(p.precio_costo))
@@ -188,7 +211,7 @@ class FormularioProducto(QDialog):
             producto = db.get(Producto, self.producto_id) if self.producto_id else Producto()
             producto.nombre = self.nombre.text().strip()
             producto.marca = self.marca.text().strip() or None
-            producto.categoria = self.categoria.text().strip() or None
+            producto.categoria = self._categoria_elegida()
             producto.descripcion = self.descripcion.toPlainText().strip() or None
             producto.precio_costo = self.precio_costo.value()
             producto.precio_venta = self.precio_venta.value()
