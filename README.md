@@ -14,9 +14,10 @@ Lubri-Express. Corre localmente sobre PostgreSQL.
 | Ingreso de mercadería y ajuste de stock por recuento | Funcionando |
 | Carga masiva de inventario desde Excel | Funcionando (plantilla que genera el propio sistema) |
 | Stock mínimo por categoría | Funcionando (acción masiva; cada producto puede sobrescribirlo) |
-| Mantenedor de Clientes y Vehículos | Funcionando (con enlace a WhatsApp) |
+| Mantenedor de Clientes y Vehículos | Funcionando |
 | Ventas de mostrador | Funcionando |
 | Órdenes de trabajo: insumos, servicios, descuentos, folio y estado de pago | Funcionando |
+| Aviso al cliente por WhatsApp desde la orden abierta | Funcionando |
 | Exportación de la orden a PDF | Funcionando |
 | Reportería (ingresos, productos, usuarios, reabastecimiento) | Funcionando (con gráficos y exportación a Excel) |
 | Migración del sistema antiguo | Funcionando (`scripts/migrar_sistema_antiguo.py`) |
@@ -164,6 +165,7 @@ sist_lubriexpress/
 │   ├── xlsx.py                      # Leer y escribir .xlsx con la biblioteca estándar
 │   ├── carga_excel.py               # Carga masiva de inventario por plantilla
 │   ├── documentos.py                # La orden de trabajo como documento para el cliente
+│   ├── whatsapp.py                  # Enlace wa.me y plantillas del aviso al cliente
 │   ├── reportes.py                  # Los cuatro reportes, sin interfaz
 │   └── ui/
 │       ├── __init__.py              # Ventana principal con pestañas
@@ -172,9 +174,9 @@ sist_lubriexpress/
 │       ├── login.py                 # Ventana modal para el inicio de sesión
 │       ├── inventario.py            # Inventario, Kardex, ingreso y ajuste de stock
 │       ├── carga_excel.py           # Diálogo de la carga masiva
-│       ├── clientes.py              # Clientes y vehículos, con enlace a WhatsApp
+│       ├── clientes.py              # Clientes y vehículos
 │       ├── ventas.py                # Punto de venta, carrito e historial
-│       ├── ordenes.py               # Órdenes de trabajo y exportación a PDF
+│       ├── ordenes.py               # Órdenes de trabajo, aviso por WhatsApp y PDF
 │       ├── reportes.py              # Pestaña de reportes con gráficos
 │       └── usuarios.py              # Alta de usuarios y asignación de roles
 ├── database/

@@ -92,12 +92,9 @@ def test_el_rut_se_guarda_con_formato_unico_y_no_se_repite(app, limpiar_cliente,
 
 
 def test_el_vehiculo_cuelga_del_cliente_y_los_botones_siguen_la_seleccion(
-    app, limpiar_cliente, monkeypatch
+    app, limpiar_cliente
 ):
-    from PySide6.QtGui import QDesktopServices
-
     from src.ui import ClientesWidget, FormularioCliente, FormularioVehiculo
-    from src.ui.clientes import enlace_whatsapp
 
     cliente = FormularioCliente()
     cliente.rut.setText(RUT_QA)
@@ -136,16 +133,10 @@ def test_el_vehiculo_cuelga_del_cliente_y_los_botones_siguen_la_seleccion(
 
     widget.tabla_vehiculos.selectRow(0)
     assert widget.boton_editar_vehiculo.isEnabled()
-
-    # WhatsApp: se enciende con un teléfono que parezca celular chileno y abre wa.me.
-    abiertos = []
-    monkeypatch.setattr(QDesktopServices, "openUrl", staticmethod(lambda url: abiertos.append(url.toString())))
-    assert widget.boton_whatsapp.isEnabled()
-    widget.abrir_whatsapp()
-    assert abiertos == ["https://wa.me/56956667509"]
-    assert enlace_whatsapp("+56 9 8220 0997") == "https://wa.me/56982200997"
-    assert enlace_whatsapp("82200997") == "https://wa.me/56982200997"   # sin el 9 de antes
-    assert enlace_whatsapp("") is None and enlace_whatsapp("123") is None
+    # El aviso por WhatsApp se mudó a la orden abierta (ver test_ui_ordenes):
+    # se le escribe al cliente por el vehículo que está en el taller, y desde
+    # el mantenedor no hay ninguno en curso del cual hablar.
+    assert not hasattr(widget, "boton_whatsapp")
 
 
 @pytest.mark.parametrize("tecleado, encuentra", [

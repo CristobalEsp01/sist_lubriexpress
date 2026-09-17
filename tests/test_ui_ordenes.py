@@ -286,3 +286,81 @@ def test_la_cifra_del_total_no_se_corta_en_la_ventana_mas_chica(app, taller):
     cifra = ventana.ordenes.totales.total
     assert cifra.height() >= cifra.sizeHint().height()
     ventana.close()
+
+
+def _fijar_telefono(vehiculo_id: int, telefono: str | None) -> None:
+    with SessionLocal() as db:
+        vehiculo = db.get(Vehiculo, vehiculo_id)
+        db.get(Cliente, vehiculo.cliente_id).telefono = telefono
+        db.commit()
+
+
+def test_el_aviso_por_whatsapp_sale_de_la_orden_abierta(app, taller, monkeypatch):
+    """El botón se mudó del mantenedor de Clientes a la orden en curso.
+
+    Acá el mensaje puede decir de qué vehículo se habla, que es lo que el
+    cliente necesita saber; en el mantenedor solo se sabía a quién escribirle.
+    """
+    from PySide6.QtCore import QUrl, QUrlQuery
+    from PySide6.QtGui import QDesktopServices
+
+    from src.ui import ordenes
+
+    _fijar_telefono(taller.vehiculo_id, "9 5666 7509")
+
+    widget = ordenes.OrdenesWidget()
+    # En reposo no hay a quién escribirle: no hay orden abierta.
+    assert not widget.boton_whatsapp.isEnabled()
+
+    widget._iniciar_nueva_orden(taller.vehiculo_id)
+    assert widget.boton_whatsapp.isEnabled()
+
+    abiertos = []
+    # Se guarda el QUrl tal cual, no su .toString(): Qt "embellece" la
+    # representación en texto al convertirla —decodifica %20 pero deja %2C—,
+    # así que comparar contra un string armado a mano queda a merced de un
+    # detalle interno de QUrl que no tiene que ver con si el enlace es correcto.
+    monkeypatch.setattr(
+        QDesktopServices, "openUrl", staticmethod(lambda url: abiertos.append(url)),
+    )
+
+    dialogo = ordenes.DialogoWhatsApp(parent=widget, **widget.contacto_whatsapp)
+    # El borrador ya viene escrito con el cliente y su vehículo.
+    borrador = dialogo.texto.toPlainText()
+    assert NOMBRE_CLIENTE in borrador and "Toyota Yaris" in borrador
+    assert "listo para ser retirado" in borrador
+    # Todavía no está guardada, así que no puede citar un número de OT.
+    assert "Orden de trabajo" not in borrador
+
+    # Editable antes de enviar: lo que se manda es lo que quedó en la caja.
+    dialogo.texto.setPlainText("Su auto quedó listo, lo esperamos.")
+    dialogo.abrir_whatsapp()
+    assert len(abiertos) == 1
+    url = abiertos[0]
+    assert url.toString().startswith("https://wa.me/56956667509?text=")
+    # Lo que importa es que el mensaje llegue completo al decodificarlo, no la
+    # forma exacta en que Qt eligió representar los caracteres especiales.
+    assert QUrlQuery(url).queryItemValue("text", QUrl.FullyDecoded) == (
+        "Su auto quedó listo, lo esperamos."
+    )
+
+    # Cerrada la orden, no queda a quién escribirle.
+    widget._volver_al_reposo()
+    assert not widget.boton_whatsapp.isEnabled()
+    assert widget.contacto_whatsapp is None
+
+
+def test_sin_celular_registrado_el_boton_de_whatsapp_queda_apagado(app, taller):
+    """Un cliente con solo teléfono fijo —o sin teléfono— no puede recibir el
+    aviso: el botón se apaga en vez de abrir un chat que no existe."""
+    from src.ui import ordenes
+
+    _fijar_telefono(taller.vehiculo_id, "63 222 2333")  # fijo de Valdivia
+    widget = ordenes.OrdenesWidget()
+    widget._iniciar_nueva_orden(taller.vehiculo_id)
+    assert not widget.boton_whatsapp.isEnabled()
+    assert "no tiene registrado un celular" in widget.boton_whatsapp.toolTip()
+
+    _fijar_telefono(taller.vehiculo_id, None)
+    widget._iniciar_nueva_orden(taller.vehiculo_id)
+    assert not widget.boton_whatsapp.isEnabled()

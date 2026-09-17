@@ -9,7 +9,7 @@ triggers de Postgres los que descuentan el stock y dejan el rastro en el Kardex:
 este módulo nunca toca "stock_actual" (ver database/schema_lubriexpress.sql).
 """
 from PySide6.QtCore import Qt, QUrl
-from PySide6.QtGui import QImage, QPageSize, QPdfWriter, QTextDocument
+from PySide6.QtGui import QDesktopServices, QImage, QPageSize, QPdfWriter, QTextDocument
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
     QMessageBox, QPushButton, QSpinBox, QSplitter, QStackedWidget, QTabWidget,
@@ -23,6 +23,7 @@ from ..database import SessionLocal
 from ..documentos import html_de_orden
 from ..models import Cliente, DetalleOrden, Orden, Producto, Servicio, Usuario, Vehiculo
 from ..texto import filtro_busqueda
+from ..whatsapp import PLANTILLAS, describir_vehiculo, enlace_whatsapp, redactar
 from .clientes import FormularioCliente, FormularioVehiculo
 from .comunes import (
     BADGE_ALERTA, BADGE_EXITO, ROL_INSIGNIA, ItemNumerico, barra, bloque_total,
@@ -220,6 +221,80 @@ class AsistenteNuevaOrden(QDialog):
         self.accept()
 
 
+class DialogoWhatsApp(QDialog):
+    """Avisarle al cliente cómo va su vehículo, desde la orden abierta.
+
+    Una plantilla arriba y el texto abajo, editable: el borrador es para no
+    escribir lo mismo veinte veces al día, no para mandarlo a ciegas. Al
+    aceptar se abre WhatsApp con el mensaje ya puesto en la conversación y el
+    envío lo hace el operador, que es quien sabe si el auto está listo.
+    """
+
+    def __init__(self, *, telefono: str, cliente: str, vehiculo: str,
+                 orden_id: int | None = None, parent=None):
+        super().__init__(parent)
+        self.telefono = telefono
+        self.cliente = cliente
+        self.vehiculo = vehiculo
+        self.orden_id = orden_id
+
+        self.setWindowTitle("Avisar al cliente por WhatsApp")
+        self.setMinimumWidth(520)
+
+        self.destinatario = QLabel(f"Para: {cliente} · {telefono}")
+        self.destinatario.setProperty("clase", "tarjeta-texto")
+
+        self.combo_plantilla = QComboBox()
+        self.combo_plantilla.addItems(PLANTILLAS)
+        self.combo_plantilla.currentTextChanged.connect(self._poner_plantilla)
+
+        self.texto = QTextEdit()
+        self.texto.setMinimumHeight(180)
+
+        self.boton_cancelar = QPushButton("Cancelar")
+        self.boton_cancelar.setAutoDefault(False)
+        self.boton_cancelar.clicked.connect(self.reject)
+        # No dice "Enviar" porque no envía: deja el mensaje escrito en WhatsApp
+        # y el operador decide. Prometer el envío sería mentirle al rótulo.
+        self.boton_abrir = QPushButton("Abrir en WhatsApp")
+        self.boton_abrir.setProperty("clase", "primario")
+        self.boton_abrir.setAutoDefault(False)
+        self.boton_abrir.clicked.connect(self.abrir_whatsapp)
+
+        layout = layout_de_dialogo(self)
+        layout.addWidget(self.destinatario)
+        layout.addWidget(QLabel("Mensaje"))
+        layout.addWidget(self.combo_plantilla)
+        layout.addWidget(self.texto, 1)
+        layout.addLayout(barra(self.boton_cancelar, self.boton_abrir, estira=1))
+
+        self._poner_plantilla(self.combo_plantilla.currentText())
+
+    def _poner_plantilla(self, plantilla: str) -> None:
+        """Cambiar de plantilla reescribe el borrador, ediciones incluidas: son
+        cuatro avisos distintos, no cuatro variantes del mismo."""
+        self.texto.setPlainText(redactar(
+            plantilla, cliente=self.cliente, vehiculo=self.vehiculo, orden_id=self.orden_id,
+        ))
+
+    def abrir_whatsapp(self) -> None:
+        mensaje = self.texto.toPlainText().strip()
+        if not mensaje:
+            QMessageBox.warning(self, "Mensaje vacío", "Escribe el mensaje antes de enviarlo.")
+            return
+        enlace = enlace_whatsapp(self.telefono, mensaje)
+        if enlace is None:
+            # El botón que abre este diálogo ya lo valida, así que llegar acá
+            # significa que el teléfono cambió en la base mientras tanto.
+            QMessageBox.warning(
+                self, "Teléfono no válido",
+                "El teléfono del cliente no parece un celular chileno.",
+            )
+            return
+        QDesktopServices.openUrl(QUrl(enlace))
+        self.accept()
+
+
 class OrdenesWidget(QTabWidget):
     """Pestaña Órdenes: la orden en curso y el historial, una al lado de la otra."""
 
@@ -266,13 +341,25 @@ class OrdenesWidget(QTabWidget):
         columna.addWidget(self.label_vehiculo)
         columna.addWidget(self.label_cliente)
         columna.addWidget(self.label_servicio)
+        # Avisarle al cliente cómo va su vehículo mientras la orden está
+        # abierta. Va en la tarjeta y no en la barra de arriba porque el
+        # destinatario es el dueño del auto que la tarjeta muestra; apagado si
+        # no tiene un teléfono que parezca celular chileno.
+        self.boton_whatsapp = QPushButton("Avisar por WhatsApp")
+        self.boton_whatsapp.setAutoDefault(False)
+        self.boton_whatsapp.setEnabled(False)
+        self.boton_whatsapp.clicked.connect(self.avisar_por_whatsapp)
+
         fila_tarjeta = QHBoxLayout(self.tarjeta)
         fila_tarjeta.setContentsMargins(14, 10, 14, 10)
         fila_tarjeta.setSpacing(16)
         fila_tarjeta.addWidget(self.label_patente)
         fila_tarjeta.addLayout(columna, 1)
+        fila_tarjeta.addWidget(self.boton_whatsapp)
         self.tarjeta.hide()
         self.ultimo_km: int | None = None
+        # Lo que necesita el aviso por WhatsApp, tomado al abrir la orden.
+        self.contacto_whatsapp: dict | None = None
 
         self.panel_trabajo = QWidget()
         self.panel_trabajo.setEnabled(False)  # Bloqueado al inicio
@@ -547,6 +634,16 @@ class OrdenesWidget(QTabWidget):
             self.label_cliente.setText(" · ".join(filter(None, (
                 cliente.nombre_completo, cliente.telefono, vehiculo.color,
             ))))
+            # Se copia acá adentro: fuera del `with` los objetos del ORM quedan
+            # desprendidos de la sesión y leerles un atributo vuelve a la base.
+            self.contacto_whatsapp = {
+                "telefono": cliente.telefono or "",
+                "cliente": cliente.nombre_completo,
+                "vehiculo": describir_vehiculo(
+                    vehiculo.patente, vehiculo.marca, vehiculo.modelo,
+                    vehiculo.anio_fabricacion,
+                ),
+            }
             self.ultimo_km = ultima.kilometraje_ingreso if ultima else None
             if ultima is None:
                 self.label_servicio.setText("Primer servicio registrado en el sistema.")
@@ -556,6 +653,12 @@ class OrdenesWidget(QTabWidget):
                     + (f", con {km(self.ultimo_km)}" if self.ultimo_km is not None else "")
                 )
         self.tarjeta.show()
+        tiene_whatsapp = enlace_whatsapp(self.contacto_whatsapp["telefono"]) is not None
+        self.boton_whatsapp.setEnabled(tiene_whatsapp)
+        self.boton_whatsapp.setToolTip(
+            "" if tiene_whatsapp
+            else "El cliente no tiene registrado un celular al que escribirle."
+        )
         self.spin_kilometraje.setToolTip(
             f"Último registrado: {km(self.ultimo_km)}" if self.ultimo_km is not None else ""
         )
@@ -612,10 +715,19 @@ class OrdenesWidget(QTabWidget):
             return 0, valor, min(valor, neto)
         return 0, 0, 0
 
+    def avisar_por_whatsapp(self) -> None:
+        """El aviso se manda sobre la orden abierta, así que sale con los datos
+        del vehículo que está en la tarjeta, no con los de una fila elegida."""
+        if not self.contacto_whatsapp:
+            return
+        DialogoWhatsApp(parent=self, **self.contacto_whatsapp).exec()
+
     def _volver_al_reposo(self) -> None:
         self._vaciar_formulario()
         self.vehiculo_actual_id = None
         self.ultimo_km = None
+        self.contacto_whatsapp = None
+        self.boton_whatsapp.setEnabled(False)
         self.tarjeta.hide()
         self.panel_trabajo.setEnabled(False)
         self.boton_nueva_orden.setEnabled(True)
