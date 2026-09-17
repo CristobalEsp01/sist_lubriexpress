@@ -8,8 +8,8 @@ Igual que en ventas, la orden se escribe en una sola transacción y son los
 triggers de Postgres los que descuentan el stock y dejan el rastro en el Kardex:
 este módulo nunca toca "stock_actual" (ver database/schema_lubriexpress.sql).
 """
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QPageSize, QPdfWriter, QTextDocument
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtGui import QImage, QPageSize, QPdfWriter, QTextDocument
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
     QMessageBox, QPushButton, QSpinBox, QSplitter, QStackedWidget, QTabWidget,
@@ -29,7 +29,7 @@ from .comunes import (
     carpeta_de_documentos, clp, con_aviso_vacio, crear_tabla, hacer_buscable,
     layout_de_dialogo, layout_de_pantalla, reordenar,
 )
-from .tema import CANAL_PANEL, ESPACIO_PANTALLA, fuente_tabular
+from .tema import CANAL_PANEL, ESPACIO_PANTALLA, LOGO, fuente_tabular
 
 COLUMNAS_CARRITO = ["Ítem", "Cant.", "Precio Unit.", "Subtotal"]
 COLUMNAS_DETALLE = ["Ítem", "Cant.", "Precio Unit.", "Subtotal"]
@@ -73,6 +73,8 @@ def guardar_pdf_de_orden(orden_id: int, ruta) -> None:
             "pagada": orden.estado_pago, "folio": orden.folio_mercado_publico, "notas": orden.notas,
         }
     documento = QTextDocument()
+    if LOGO.is_file():
+        documento.addResource(QTextDocument.ImageResource, QUrl("logo"), QImage(str(LOGO)))
     documento.setHtml(html_de_orden(datos))
     escritor = QPdfWriter(str(ruta))
     escritor.setPageSize(QPageSize(QPageSize.A4))

@@ -1,7 +1,7 @@
 # Sistema de Gestión — Lubri-Express
 
 Aplicación de escritorio para la gestión de taller, inventario (Kardex) y ventas de
-Lubri-Express (Inversiones Tres Puntos SpA). Corre localmente sobre PostgreSQL.
+Lubri-Express. Corre localmente sobre PostgreSQL.
 
 ## Estado actual
 

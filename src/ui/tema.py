@@ -1,25 +1,30 @@
 """Identidad visual de la aplicación.
 
-Ámbar de aceite sobre grafito. El acento sale del material con el que trabaja
-el negocio y se reserva para donde el sistema está diciendo algo —la pestaña
-activa, el campo con foco, la fila seleccionada, el stock bajo mínimo—; todo
-lo demás es escala de grises. Un color que aparece en todas partes no señala
-nada.
+Azul sobre pizarra, con la paleta de Tailwind CSS: tonos ya medidos y usados
+en miles de aplicaciones, en vez de una escala inventada acá. El acento se
+reserva para donde el sistema está diciendo algo —la pestaña activa, el campo
+con foco, la fila seleccionada, el botón principal—; todo lo demás es escala
+de grises. Un color que aparece en todas partes no señala nada. El ámbar del
+logo queda para el logo, que es donde identifica al taller.
 
 Los colores y medidas viven solo acá: ningún widget escribe un hex a mano.
 """
+from pathlib import Path
+
 from PySide6.QtCore import QLibraryInfo, QLocale, QTranslator
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QIcon
 from PySide6.QtWidgets import QApplication
+
+LOGO = Path(__file__).resolve().parent / "recursos" / "logo.jpeg"
 
 # Cada par texto/fondo de esta paleta está medido contra WCAG 2.1 AA: 4.5:1 para
 # texto y 3:1 para bordes de control. Los tonos oscuros de cada color existen
 # porque el tono medio no llegaba: ámbar 600 sobre el fondo da 3.02, y el mismo
 # ámbar relleno con texto blanco da 3.19. Hay una prueba que mide los 26 pares.
-FONDO = "#F8F9FA"
+FONDO = "#F8FAFC"          # slate 50
 SUPERFICIE = "#FFFFFF"
-TINTA = "#1E232A"
-TINTA_SUAVE = "#64748B"
+TINTA = "#0F172A"          # slate 900
+TINTA_SUAVE = "#64748B"    # slate 500
 
 # Dos bordes con dos trabajos. El decorativo separa; el de campo delimita un
 # control y por eso tiene que ser perceptible: un input blanco sobre un fondo
@@ -28,20 +33,22 @@ BORDE = "#E2E8F0"
 BORDE_CAMPO = "#7D8DA5"
 BORDE_SUAVE = "#F1F5F9"
 
-# Ámbar de aceite. El claro señala (borde con foco, subrayado de pestaña); el
+# Azul Tailwind. El claro señala (borde con foco, subrayado de pestaña); el
 # oscuro es el que se puede leer como texto y rellenar con blanco encima.
-ACENTO = "#D97706"
-ACENTO_OSCURO = "#B45309"
-ACENTO_PROFUNDO = "#92400E"
-ACENTO_FONDO = "#FEF3C7"
+ACENTO = "#2563EB"         # blue 600
+ACENTO_OSCURO = "#1D4ED8"  # blue 700
+ACENTO_PROFUNDO = "#1E40AF"  # blue 800
+ACENTO_FONDO = "#DBEAFE"   # blue 100
 
 ALERTA = "#B91C1C"
 ALERTA_FONDO = "#FEE2E2"
 EXITO = "#15803D"
 EXITO_FONDO = "#DCFCE7"
-INFO = "#1D4ED8"
-INFO_FONDO = "#DBEAFE"
-ALTERNA = "#FAFAFA"
+# Teal y no azul: el azul es el acento, y dos insignias del mismo color no
+# distinguen nada.
+INFO = "#0F766E"           # teal 700
+INFO_FONDO = "#CCFBF1"     # teal 100
+ALTERNA = "#F8FAFC"
 NEUTRAL_FONDO = "#F1F5F9"
 NEUTRAL_TEXTO = "#475569"
 
@@ -435,6 +442,9 @@ def aplicar(app: QApplication) -> None:
     aplicación se ve distinta en el Arch de desarrollo que en el Windows del
     taller.
     """
+    if LOGO.is_file():
+        app.setWindowIcon(QIcon(str(LOGO)))
+
     # Chile usa punto para los miles: sin esto los QSpinBox muestran $ 20,000.
     QLocale.setDefault(QLocale(QLocale.Spanish, QLocale.Chile))
 

@@ -15,11 +15,15 @@ ORDEN = {
 
 def test_el_html_muestra_lo_cobrado_y_escapa_el_texto():
     html = html_de_orden(ORDEN)
-    for esperado in ("Orden de Trabajo N° 42", "16-09-2026 10:30", "Ana &lt;Soto&gt;", "912345678",
+    for esperado in ("ORDEN DE TRABAJO", "N° 42", "16-09-2026 10:30", "Ana &lt;Soto&gt;", "912345678",
                      "JFFG56", "145.035 km", "Cambio de aceite", "$38.700", "$53.700",
                      "- $5.370", "$9.183", "$57.513", "Pagada", "MP-2026-001",
-                     "Raya en la puerta<br>Revisar frenos"):
+                     "Raya en la puerta<br>Revisar frenos",
+                     # El membrete y el pie del informe que el taller ya usaba.
+                     "LUBRI-EXPRESS", "Rene Schneider 3631", "www.lubri-express.cl",
+                     '<img src="logo"'):
         assert esperado in html, esperado
+    assert "Tres Puntos" not in html
 
     sin_extras = dict(ORDEN, descuento=0, folio=None, kilometraje=None, lineas=[], notas=None)
     html = html_de_orden(sin_extras)

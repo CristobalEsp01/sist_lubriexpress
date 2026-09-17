@@ -79,10 +79,12 @@ imprime por `sys.excepthook` sin que pytest se entere.
 Todos los colores y medidas están en `src/ui/tema.py`. Ningún widget escribe un
 hex a mano: si un color hace falta en dos lugares, se agrega ahí como constante.
 
-El acento ámbar se reserva para donde el sistema está diciendo algo —pestaña
-activa, campo con foco, fila seleccionada, botón de acción principal— y el rojo
-óxido solo para stock bajo mínimo y cantidades negativas. Un color que aparece en
-todas partes deja de señalar nada.
+La paleta es la de Tailwind CSS —azul sobre pizarra—, para no inventar una
+escala propia. El acento se reserva para donde el sistema está diciendo algo
+—pestaña activa, campo con foco, fila seleccionada, botón de acción principal—
+y el rojo solo para stock bajo mínimo y cantidades negativas. Un color que
+aparece en todas partes deja de señalar nada. El ámbar del logo no se usa en la
+interfaz: identifica al taller, no a un estado del sistema.
 
 Las columnas numéricas van en monoespaciada (`fuente_tabular()`), incluidos RUT y
 patentes: son identificadores de dígitos y alineados se escanean de un vistazo.
