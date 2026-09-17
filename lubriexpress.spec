@@ -21,7 +21,8 @@ traducciones = Path(QLibraryInfo.path(QLibraryInfo.TranslationsPath))
 a = Analysis(
     ["main.py"],
     datas=[(str(traducciones / "qtbase_es.qm"), "PySide6/Qt/translations"),
-           ("src/ui/recursos/logo.jpeg", "src/ui/recursos")],
+           ("src/ui/recursos/logo.jpeg", "src/ui/recursos"),
+           ("src/ui/recursos/logo.ico", "src/ui/recursos")],
     # Solo los módulos de Qt que se usan: cada uno que sobra son megas.
     excludes=["PySide6.QtNetwork", "PySide6.QtQml", "PySide6.QtQuick", "PySide6.QtWebEngineCore",
               "PySide6.QtMultimedia", "PySide6.QtOpenGL", "PySide6.Qt3DCore"],  # QtCharts sí: Reportes
@@ -29,6 +30,6 @@ a = Analysis(
 pyz = PYZ(a.pure)
 exe = EXE(
     pyz, a.scripts, exclude_binaries=True,
-    name="lubriexpress", console=False, icon="src/ui/recursos/logo.jpeg",
+    name="lubriexpress", console=False, icon="src/ui/recursos/logo.ico",
 )
 coll = COLLECT(exe, a.binaries, a.datas, name="lubriexpress")

@@ -15,7 +15,12 @@ from PySide6.QtCore import QLibraryInfo, QLocale, QTranslator
 from PySide6.QtGui import QFont, QIcon
 from PySide6.QtWidgets import QApplication
 
-LOGO = Path(__file__).resolve().parent / "recursos" / "logo.jpeg"
+RECURSOS = Path(__file__).resolve().parent / "recursos"
+LOGO = RECURSOS / "logo.jpeg"   # para el membrete del PDF
+# El ícono va en .ico y recortado al círculo: Windows lo pide cuadrado para la
+# barra de tareas, y el .jpeg del logo es más alto que ancho. Se genera con
+#   ffmpeg -i logo.jpeg -vf "crop=1080:1080:0:34,scale=256:256" -pix_fmt bgra logo.ico
+ICONO = RECURSOS / "logo.ico"
 
 # Cada par texto/fondo de esta paleta está medido contra WCAG 2.1 AA: 4.5:1 para
 # texto y 3:1 para bordes de control. Los tonos oscuros de cada color existen
@@ -442,8 +447,8 @@ def aplicar(app: QApplication) -> None:
     aplicación se ve distinta en el Arch de desarrollo que en el Windows del
     taller.
     """
-    if LOGO.is_file():
-        app.setWindowIcon(QIcon(str(LOGO)))
+    if ICONO.is_file():
+        app.setWindowIcon(QIcon(str(ICONO)))
 
     # Chile usa punto para los miles: sin esto los QSpinBox muestran $ 20,000.
     QLocale.setDefault(QLocale(QLocale.Spanish, QLocale.Chile))
