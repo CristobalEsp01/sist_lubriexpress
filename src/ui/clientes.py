@@ -28,7 +28,6 @@ TRANSMISIONES = ["", "Manual", "Automática", "CVT"]
 TRACCIONES = ["", "4x2", "4x4", "AWD"]
 
 
-
 class FormularioCliente(QDialog):
     """Alta y edición de un cliente."""
 

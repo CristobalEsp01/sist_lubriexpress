@@ -9,8 +9,18 @@ ORDEN = {
     "kilometraje": 145035, "tecnico": "Alex Núñez Uribe",
     "lineas": [("Aceite 10W40", 3, 12900), ("Cambio de aceite", 1, 15000)],
     "subtotal": 53700, "descuento": 5370, "impuesto": 9183, "total": 57513,
-    "pagada": True, "folio": "MP-2026-001", "notas": "Raya en la puerta\nRevisar frenos",
+    "pagada": True, "pagado": 57513, "folio": "MP-2026-001", "notas": "Raya en la puerta\nRevisar frenos",
 }
+
+
+def test_la_orden_a_medio_pagar_muestra_el_abono_y_el_saldo():
+    """Lo que el cliente se lleva en la mano tiene que decirle cuánto debe."""
+    html = html_de_orden(dict(ORDEN, pagada=False, pagado=20000))
+    assert "Abonada $20.000 · saldo $37.513" in html
+    assert "- $20.000" in html and "<b>$37.513</b>" in html
+
+    sin_pagar = html_de_orden(dict(ORDEN, pagada=False, pagado=0))
+    assert "No pagada" in sin_pagar and "Abonado" not in sin_pagar
 
 
 def test_el_html_muestra_lo_cobrado_y_escapa_el_texto():
@@ -24,6 +34,8 @@ def test_el_html_muestra_lo_cobrado_y_escapa_el_texto():
                      '<img src="logo"'):
         assert esperado in html, esperado
     assert "Tres Puntos" not in html
+    # Pagada al contado: el abono y el saldo serían dos filas para decir cero.
+    assert "Abonado" not in html and "Saldo" not in html
 
     sin_extras = dict(ORDEN, descuento=0, folio=None, kilometraje=None, lineas=[], notas=None)
     html = html_de_orden(sin_extras)

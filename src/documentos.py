@@ -16,12 +16,27 @@ TELEFONO = "+56920489399"
 SITIO = "www.lubri-express.cl"
 CORREO = "contacto@lubri-express.cl"
 PIE = f"{DIRECCION} | {TELEFONO} | {CORREO} | {SITIO}"
+# Las dos cifras que el cliente busca con el dedo: lo que salió y lo que debe.
+DESTACADOS = ("Total", "Saldo")
+
+
+def estado_de_pago(pagada: bool, pagado: int, total: int) -> str:
+    """Cómo se nombra el pago de una orden, en el PDF y en pantalla.
+
+    Una orden a medio pagar no es "No pagada": el cliente que abonó la mitad
+    y lee eso en su copia vuelve al mesón a reclamar, con razón.
+    """
+    if pagada:
+        return "Pagada"
+    if pagado:
+        return f"Abonada {clp(pagado)} · saldo {clp(total - pagado)}"
+    return "No pagada"
 
 
 def html_de_orden(o: dict) -> str:
     """`o` trae: numero, fecha, cliente, rut, telefono, patente, vehiculo,
     kilometraje, tecnico, lineas [(nombre, cantidad, precio_unitario)],
-    subtotal, descuento, impuesto, total, pagada, folio, notas."""
+    subtotal, descuento, impuesto, total, pagada, pagado, folio, notas."""
     e = escape
     filas = "".join(
         f"<tr><td>{e(nombre)}</td><td align='right'>{cantidad}</td>"
@@ -32,13 +47,19 @@ def html_de_orden(o: dict) -> str:
     if o["descuento"]:
         totales.append(("Descuento", f"- {clp(o['descuento'])}"))
     totales += [("IVA 19 %", clp(o["impuesto"])), ("Total", clp(o["total"]))]
+    # Lo abonado y el saldo solo salen cuando la orden quedó a medio pagar: al
+    # contado serían dos filas para decir cero.
+    if o["pagado"] and not o["pagada"]:
+        totales += [("Abonado", f"- {clp(o['pagado'])}"),
+                    ("Saldo", clp(int(o["total"]) - o["pagado"]))]
     filas_totales = "".join(
         f"<tr><td align='right'><b>{rotulo}</b></td><td align='right'>"
-        f"{'<b>' if rotulo == 'Total' else ''}{cifra}{'</b>' if rotulo == 'Total' else ''}</td></tr>"
+        f"{'<b>' if rotulo in DESTACADOS else ''}{cifra}"
+        f"{'</b>' if rotulo in DESTACADOS else ''}</td></tr>"
         for rotulo, cifra in totales
     )
     km = f"{o['kilometraje']:,} km".replace(",", ".") if o["kilometraje"] is not None else "sin registrar"
-    estado = "Pagada" if o["pagada"] else "No pagada"
+    estado = estado_de_pago(o["pagada"], o["pagado"], int(o["total"]))
     folio = f"<br><b>Folio Mercado Público:</b> {e(o['folio'])}" if o["folio"] else ""
     contacto = " · ".join(filter(None, (o.get("rut"), o.get("telefono"))))
     # El logo va como recurso del documento (ver guardar_pdf_de_orden); si no se

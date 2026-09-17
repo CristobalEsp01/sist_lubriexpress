@@ -29,6 +29,7 @@ consola de psql abierta.
 | `productos` | Inventario. `stock_actual` lo manejan los triggers |
 | `servicios` | Mano de obra (cambio de aceite, scanner). Se cobra en una orden; no tiene stock ni Kardex |
 | `ordenes` / `detalle_ordenes` | Órdenes de trabajo del taller. Cada línea del detalle es un producto o un servicio |
+| `pagos_orden` | Abonos de una orden. Solo se agrega: lo pagado es la suma, y el estado de la orden sale de ahí |
 | `ventas` / `detalle_ventas` | Ventas de mostrador |
 | `kardex_movimientos` | Historial de inventario. Solo se agrega, nunca se edita |
 
@@ -39,7 +40,14 @@ consola de psql abierta.
 | `trg_detalle_ordenes_descuento` | `INSERT` en `detalle_ordenes` con `producto_id` | Descuenta stock y escribe `SALIDA_ORDEN` en el Kardex. Las líneas de servicio no lo disparan (`WHEN`) |
 | `trg_detalle_ventas_descuento` | `INSERT` en `detalle_ventas` | Descuenta stock y escribe `SALIDA_VENTA` en el Kardex |
 | `trg_kardex_movimiento_manual` | `INSERT` en `kardex_movimientos` de tipo `ENTRADA` o `AJUSTE_MANUAL` | Mueve el stock y calcula `stock_resultante` |
+| `trg_pagos_orden_estado` | `INSERT` en `pagos_orden` | Recalcula `ordenes.estado_pago` con la suma de los abonos |
 | `trg_*_updated_at` | `UPDATE` en `usuarios`, `clientes`, `vehiculos`, `productos` | Refresca `updated_at` |
+
+`trg_pagos_orden_estado` sigue la misma idea que los de stock: la pantalla registra
+el hecho (un abono) y la base mantiene el saldo derivado. `estado_pago` no se escribe
+a mano en una orden ya guardada; si lo hiciera la pantalla, la insignia del historial
+y la caja podrían decir cosas distintas. Las órdenes migradas son la excepción: vienen
+marcadas como pagadas sin abonos detrás, porque el sistema antiguo no los guardaba.
 
 Los dos primeros van en sentido aplicación → Kardex: se registra la venta y el
 movimiento aparece solo. El tercero va al revés: se registra el movimiento y el stock

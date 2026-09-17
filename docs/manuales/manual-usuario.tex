@@ -76,6 +76,13 @@ superior: sirve el nombre, la marca o la categoría, sin importar tildes ni
 mayúsculas. La casilla \textbf{Solo stock crítico} deja a la vista los productos
 que están en su mínimo o por debajo.
 
+Al pie de la pantalla, el resumen dice cuántos productos hay a la vista y
+cuántos están bajo su mínimo. Para el supervisor y el administrador dice además
+\textbf{cuánto vale a precio costo lo que está listado}: sin filtro es la bodega
+entera y, con una búsqueda puesta, lo que vale esa marca o esa categoría. Va a
+costo porque es la plata que está inmovilizada en la repisa, no lo que se va a
+facturar por ella.
+
 Al elegir un producto, abajo aparece su \textbf{Kardex}: cada entrada, cada
 salida por venta o por orden, con la fecha, la cantidad, el saldo que quedó y
 quién lo hizo. Ese historial no se puede editar —es el registro auditable del
@@ -181,12 +188,6 @@ Cada vehículo cuelga de un cliente y se identifica por su patente, que es únic
 en todo el sistema. Además de marca, modelo y año, la ficha guarda el tipo, la
 versión, el VIN y el número de motor, que es lo que traía el sistema anterior.
 
-\subsection{Escribir por WhatsApp}
-
-Con un cliente elegido, el botón \textbf{WhatsApp} abre la conversación con su
-teléfono, para avisarle que el auto está listo. El botón está apagado si el
-cliente no tiene un número que parezca un celular chileno.
-
 \section{Órdenes de trabajo}
 
 \pantalla{orden}{Orden en proceso. La tarjeta superior dice de qué vehículo se
@@ -224,7 +225,13 @@ calcula sobre lo que efectivamente se cobra, ya descontado.
 
 El \textbf{folio de Mercado Público} se llena solo en las órdenes
 institucionales; es lo que después permite separarlas de los clientes normales
-en el historial. La casilla \textbf{Pagada} deja constancia del pago.
+en el historial.
+
+El pago se anota al cerrar la orden. Si el cliente paga todo, se marca la
+casilla \textbf{Pagada}. Si paga una parte —un abono al dejar el auto y el resto
+al retirarlo— se escribe lo que dejó en \textbf{Abono}, que no acepta más que el
+total de la orden. El saldo se cobra después, desde el detalle de la orden en el
+historial; no hay que anotarlo en ninguna parte ni llevar la cuenta a mano.
 
 \subsection{Historial y PDF para el cliente}
 
@@ -235,11 +242,44 @@ El historial se busca por número de orden, patente o cliente, y el filtro de la
 derecha separa \emph{Mercado Público} de \emph{Clientes}. Con doble clic se abre
 el detalle de la orden.
 
+La columna \textbf{Estado} dice cómo va el cobro: \emph{Pagada},
+\emph{No pagada}, o \emph{Abonada} cuando quedó a medio pagar —poniendo el
+cursor encima aparece cuánto abonó y cuánto debe.
+
 \dialogo{dialogo_detalle_orden}{Detalle de una orden guardada.}
 
 Desde ahí, \textbf{Exportar PDF} genera el documento para el cliente, con el
 desglose de insumos y servicios, el descuento, el IVA y el total. Se guarda en
 \texttt{Documentos\textbackslash Lubri-Express\textbackslash Órdenes}.
+
+\textbf{Registrar pago} anota lo que el cliente paga ahora. Viene propuesto el
+saldo completo, que es el caso de todos los días —viene a buscar el auto y paga
+lo que debe—, y se puede escribir menos si deja otro abono. Los pagos se suman y
+no se corrigen: la orden pasa a \emph{Pagada} sola, cuando lo abonado alcanza el
+total. Mientras quede saldo, el PDF del cliente muestra lo abonado y lo que
+falta.
+
+\subsection{Avisar al cliente por WhatsApp}
+
+El botón \textbf{Avisar por WhatsApp} está en dos lugares, y los dos son la
+orden: en la tarjeta del vehículo mientras la orden está abierta, para contar
+cómo va el trabajo, y en el detalle de una orden guardada, que es desde donde se
+avisa que el auto está listo —ahí el mensaje sale citando el número de la OT.
+
+Se elige una de las cuatro plantillas —\emph{Listo para retiro}, \emph{Trabajo
+en curso}, \emph{Requiere su autorización}, \emph{Esperando repuesto}— y el
+mensaje aparece redactado, con el nombre del cliente y su vehículo.
+\textbf{Se puede editar antes de mandarlo}: la plantilla está para no escribir lo
+mismo veinte veces al día, no para mandarla a ciegas.
+
+\textbf{Abrir en WhatsApp} abre WhatsApp —el de escritorio si está instalado, o
+WhatsApp Web— con el mensaje ya escrito en la conversación. \emph{No lo envía}:
+el último clic lo da quien atiende, que es quien sabe si el auto está listo de
+verdad.
+
+El botón está apagado si el cliente no tiene registrado un celular chileno; un
+teléfono fijo no sirve, WhatsApp abriría una conversación que no existe. El
+número se corrige en la ficha del cliente, en \textbf{Clientes}.
 
 \section{Reportes}
 
@@ -293,7 +333,8 @@ por categoría (sección 2.4).
 
 \subsection*{Me equivoqué en una orden ya guardada}
 Las órdenes no se editan: son el registro de lo que se hizo. Si hay que corregir
-el inventario, se hace con un ajuste por recuento, que deja constancia.
+el inventario, se hace con un ajuste por recuento, que deja constancia. Lo único
+que se le agrega a una orden guardada es un pago.
 
 \subsection*{El sistema dice que no se pudo conectar a la base de datos}
 Es un problema de instalación, no de uso. Está en el Manual técnico.

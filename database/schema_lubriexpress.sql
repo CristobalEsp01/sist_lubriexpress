@@ -149,6 +149,21 @@ CREATE TABLE "detalle_ordenes" (
 );
 
 -- ---------------------------------------------------------------------
+-- Tabla de Pagos de una Orden (abonos) — append-only
+-- ---------------------------------------------------------------------
+-- Una orden se paga por partes: un abono al dejar el auto y el saldo al
+-- retirarlo. Cada abono es una fila y nadie las edita; lo pagado es la suma.
+-- "ordenes.estado_pago" no se escribe a mano desde la pantalla: lo recalcula
+-- el trigger de más abajo, igual que el stock lo mueven los suyos.
+CREATE TABLE "pagos_orden" (
+  "id" SERIAL PRIMARY KEY,
+  "orden_id" INT NOT NULL REFERENCES "ordenes"("id"),
+  "usuario_id" INT NOT NULL REFERENCES "usuarios"("id"),
+  "monto" DECIMAL(10,2) NOT NULL CHECK ("monto" > 0),
+  "fecha_pago" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ---------------------------------------------------------------------
 -- Tabla de Ventas (Mostrador)
 -- ---------------------------------------------------------------------
 CREATE TABLE "ventas" (
@@ -210,6 +225,7 @@ CREATE INDEX idx_ventas_usuario ON "ventas"("usuario_id");
 CREATE INDEX idx_ventas_fecha ON "ventas"("fecha_venta");
 CREATE INDEX idx_detalle_ventas_venta ON "detalle_ventas"("venta_id");
 CREATE INDEX idx_detalle_ventas_producto ON "detalle_ventas"("producto_id");
+CREATE INDEX idx_pagos_orden_orden ON "pagos_orden"("orden_id");
 CREATE INDEX idx_kardex_producto ON "kardex_movimientos"("producto_id");
 CREATE INDEX idx_kardex_fecha ON "kardex_movimientos"("fecha_movimiento");
 
@@ -330,6 +346,32 @@ CREATE TRIGGER trg_kardex_movimiento_manual
   FOR EACH ROW
   WHEN (NEW."tipo_movimiento" IN ('ENTRADA', 'AJUSTE_MANUAL'))
   EXECUTE FUNCTION fn_aplicar_movimiento_manual();
+
+-- =====================================================================
+-- Trigger: el estado de pago de una orden lo deciden sus abonos
+-- =====================================================================
+-- Un solo lugar decide si una orden está pagada. Sin esto habría dos —la
+-- pantalla y la suma de los abonos— y tarde o temprano la insignia del
+-- historial diría una cosa y la caja otra.
+--
+-- ponytail: solo AFTER INSERT, porque los abonos no se borran ni se editan.
+-- Si algún día se anula un pago, el trigger va también en DELETE y UPDATE.
+CREATE OR REPLACE FUNCTION fn_actualizar_estado_pago() RETURNS TRIGGER AS $$
+BEGIN
+  UPDATE "ordenes" o
+     SET "estado_pago" = (
+           SELECT COALESCE(SUM(p."monto"), 0) >= o."total_final"
+             FROM "pagos_orden" p
+            WHERE p."orden_id" = o."id"
+         )
+   WHERE o."id" = NEW."orden_id";
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_pagos_orden_estado
+  AFTER INSERT ON "pagos_orden"
+  FOR EACH ROW EXECUTE FUNCTION fn_actualizar_estado_pago();
 
 -- =====================================================================
 -- Vista de alerta de stock crítico (para el módulo de reportería)

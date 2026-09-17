@@ -19,6 +19,7 @@ def test_arma_el_numero_como_sea_que_este_escrito(telefono, esperado):
 @pytest.mark.parametrize("telefono", [
     "", None, "123",
     "223334444",   # fijo de Santiago: nueve dígitos, pero parte en 2
+    "22333444",    # el mismo fijo como se anotaba antes: ocho dígitos
     "632222333",   # fijo de Valdivia
     "9566675091",  # diez dígitos: un celular con un dígito de más
 ])

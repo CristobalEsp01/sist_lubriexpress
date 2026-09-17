@@ -31,7 +31,7 @@ for nombre in ("warning", "critical", "information"):
 from src.auth import Sesion, hash_password  # noqa: E402
 from src.database import SessionLocal  # noqa: E402
 from src.models import (  # noqa: E402
-    Cliente, DetalleOrden, DetalleVenta, KardexMovimiento, Orden, Producto,
+    Cliente, DetalleOrden, DetalleVenta, KardexMovimiento, Orden, PagoOrden, Producto,
     Servicio, Ubicacion, Usuario, Vehiculo, Venta,
 )
 from src.ui.tema import aplicar  # noqa: E402
@@ -113,7 +113,7 @@ def sembrar() -> dict:
                               fecha_creacion=ahora - timedelta(days=12 * (i + 1) + j * 40),
                               kilometraje_ingreso=45000 + i * 12000 + j * 8000,
                               subtotal=neto, impuesto=iva, total_final=neto + iva,
-                              estado_pago=True, notas="Nivel de Combustible: Medio")
+                              notas="Nivel de Combustible: Medio")
                 db.add(orden); db.flush()
                 db.add_all([
                     DetalleOrden(orden=orden, producto=productos[j], cantidad=1,
@@ -121,6 +121,13 @@ def sembrar() -> dict:
                     DetalleOrden(orden=orden, servicio=servicios[j], cantidad=1,
                                  precio_unitario_cobrado=servicios[j].precio_venta),
                 ])
+                # El estado de pago no se escribe: sale de los abonos. Casi
+                # todas se pagan al retirar el auto; una queda abonada y otra
+                # sin pagar, que es lo que el manual muestra en el historial y
+                # en el detalle de la orden.
+                pagado = {(0, 0): neto + iva - 18000, (1, 0): 0}.get((i, j), neto + iva)
+                if pagado:
+                    db.add(PagoOrden(orden=orden, usuario=orden.usuario, monto=pagado))
         for n in range(3):
             neto = 9900 * (n + 1)
             venta = Venta(usuario=mesero, cliente=vehiculos[n].cliente,
@@ -175,7 +182,7 @@ def capturar(datos: dict) -> None:
 
     v.pestanias.setCurrentWidget(v.reportes)
     guardar(v, "reportes")
-    v.reportes.pestanas.setCurrentIndex(3)
+    v.reportes.lista.setCurrentRow(3)   # Reabastecimiento
     guardar(v, "reabastecimiento")
     v.pestanias.setCurrentWidget(v.usuarios); v.usuarios.tabla.selectRow(0)
     guardar(v, "usuarios")

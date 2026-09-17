@@ -311,3 +311,34 @@ def test_el_minimo_por_categoria_alcanza_solo_a_su_categoria(app, bodeguero_qa):
         for p in db.scalars(select(Producto).where(Producto.nombre.like(f"{NOMBRE_INGRESO}%"))):
             db.delete(p)
         db.commit()
+
+
+def test_el_resumen_valoriza_a_costo_lo_que_muestra_la_tabla(app, limpiar, bodeguero_qa):
+    """La cifra sigue el filtro: con uno puesto dice cuánto vale eso que quedó
+    listado, y sin filtro, la bodega entera.
+
+    Va a precio costo —plata inmovilizada, no venta futura— así que la ve quien
+    ve la columna de costo: el mecánico, no.
+    """
+    from src.auth import Sesion
+    from src.ui import InventarioWidget
+
+    with SessionLocal() as db:
+        db.add(Producto(nombre=NOMBRE, precio_costo=1000, precio_venta=2000,
+                        stock_actual=3, stock_minimo=1))
+        db.commit()
+
+    widget = InventarioWidget()
+    widget.busqueda.setText(NOMBRE)
+    assert widget.tabla.rowCount() == 1
+    assert "$3.000 a precio costo" in widget.resumen.text()   # 3 x 1.000
+
+    widget.busqueda.setText("zzz producto que no existe zzz")
+    assert "$0 a precio costo" in widget.resumen.text()
+
+    Sesion.iniciar(SimpleNamespace(id=bodeguero_qa, nombre="Mecánico QA", rol="USUARIO_NORMAL"))
+    mecanico = InventarioWidget()
+    mecanico.busqueda.setText(NOMBRE)
+    assert mecanico.tabla.rowCount() == 1
+    assert "a precio costo" not in mecanico.resumen.text()
+    assert mecanico.tabla.isColumnHidden(6)   # la columna de costo, tampoco

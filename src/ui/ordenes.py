@@ -11,22 +11,24 @@ este módulo nunca toca "stock_actual" (ver database/schema_lubriexpress.sql).
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices, QImage, QPageSize, QPdfWriter, QTextDocument
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
-    QMessageBox, QPushButton, QSpinBox, QSplitter, QStackedWidget, QTabWidget,
+    QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QInputDialog, QLabel,
+    QLineEdit, QMessageBox, QPushButton, QSpinBox, QSplitter, QStackedWidget, QTabWidget,
     QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
 )
-from sqlalchemy import String, cast, select
+from sqlalchemy import String, cast, func, select
 from sqlalchemy.exc import IntegrityError
 
 from ..auth import Sesion
 from ..database import SessionLocal
-from ..documentos import html_de_orden
-from ..models import Cliente, DetalleOrden, Orden, Producto, Servicio, Usuario, Vehiculo
+from ..documentos import estado_de_pago, html_de_orden
+from ..models import (
+    Cliente, DetalleOrden, Orden, PagoOrden, Producto, Servicio, Usuario, Vehiculo,
+)
 from ..texto import filtro_busqueda
 from ..whatsapp import PLANTILLAS, describir_vehiculo, enlace_whatsapp, redactar
 from .clientes import FormularioCliente, FormularioVehiculo
 from .comunes import (
-    BADGE_ALERTA, BADGE_EXITO, ROL_INSIGNIA, ItemNumerico, barra, bloque_total,
+    BADGE_ALERTA, BADGE_EXITO, BADGE_INFO, ROL_INSIGNIA, ItemNumerico, barra, bloque_total,
     carpeta_de_documentos, clp, con_aviso_vacio, crear_tabla, hacer_buscable,
     layout_de_dialogo, layout_de_pantalla, reordenar,
 )
@@ -71,7 +73,8 @@ def guardar_pdf_de_orden(orden_id: int, ruta) -> None:
                        for d in orden.detalles],
             "subtotal": orden.subtotal, "descuento": orden.descuento_aplicado,
             "impuesto": orden.impuesto, "total": orden.total_final,
-            "pagada": orden.estado_pago, "folio": orden.folio_mercado_publico, "notas": orden.notas,
+            "pagada": orden.estado_pago, "pagado": orden.monto_pagado,
+            "folio": orden.folio_mercado_publico, "notas": orden.notas,
         }
     documento = QTextDocument()
     if LOGO.is_file():
@@ -461,8 +464,20 @@ class OrdenesWidget(QTabWidget):
         self.tipo_descuento.currentIndexChanged.connect(self._cambiar_tipo_descuento)
         self.valor_descuento.valueChanged.connect(self.recalcular_total)
 
-        self.folio = QLineEdit(placeholderText="Folio Mercado Público (solo institucionales)")
+        self.folio = QLineEdit(placeholderText="Folio Mercado Público")
+        self.folio.setToolTip("Solo en las órdenes institucionales.")
         self.pagada = QCheckBox("Pagada")
+        self.pagada.toggled.connect(self._cambiar_pago)
+        # El taller cobra por partes: un abono al dejar el auto y el saldo al
+        # retirarlo. Acá se anota lo que el cliente paga al cerrar la orden; el
+        # resto se registra después, desde el historial.
+        self.abono = QSpinBox()
+        self.abono.setPrefix("$ ")
+        self.abono.setGroupSeparatorShown(True)
+        self.abono.setButtonSymbols(QSpinBox.NoButtons)
+        self.abono.setSpecialValueText("Sin abono")
+        self.abono.setToolTip("Lo que el cliente paga al cerrar la orden; el saldo se "
+                              "cobra después, desde el historial.")
 
         marco_total, self.totales = bloque_total()
         self.total = self.totales.total
@@ -489,7 +504,9 @@ class OrdenesWidget(QTabWidget):
         layout_der.addWidget(self.texto_observaciones, 1)
         layout_der.addWidget(QLabel("5. Descuento, folio y pago"))
         layout_der.addLayout(barra(self.tipo_descuento, self.valor_descuento, estira=1))
-        layout_der.addLayout(barra(self.folio, self.pagada, estira=0))
+        # Los tres en una fila y no en dos: el lateral no da para otra, y la
+        # que sobraba empujaba el bloque del total fuera de la ventana chica.
+        layout_der.addLayout(barra(self.folio, self.pagada, self.abono, estira=0))
         layout_der.addStretch()
         layout_der.addWidget(marco_total)
         layout_der.addLayout(barra(self.boton_cancelar, self.boton_guardar, estira=1))
@@ -542,9 +559,16 @@ class OrdenesWidget(QTabWidget):
             self.cargar_historial()
 
     def cargar_historial(self) -> None:
+        # Lo abonado por orden, en la misma consulta: traerlo después, fila por
+        # fila, son 200 consultas para pintar una tabla de 200 órdenes.
+        pagado_de_la_orden = (
+            select(func.coalesce(func.sum(PagoOrden.monto), 0))
+            .where(PagoOrden.orden_id == Orden.id)
+            .scalar_subquery()
+        )
         consulta = filtro_busqueda(
             # Unimos las 4 tablas relacionadas
-            select(Orden, Cliente, Vehiculo, Usuario)
+            select(Orden, Cliente, Vehiculo, Usuario, pagado_de_la_orden)
             .join(Vehiculo, Orden.vehiculo_id == Vehiculo.id)
             .join(Cliente, Vehiculo.cliente_id == Cliente.id)
             .join(Usuario, Orden.usuario_id == Usuario.id)
@@ -565,8 +589,8 @@ class OrdenesWidget(QTabWidget):
                 (orden.id, orden.fecha_creacion, cliente.nombre_completo, vehiculo.patente,
                  f"{vehiculo.marca or ''} {vehiculo.modelo or ''}".strip() or "S/D",
                  usuario.nombre, orden.folio_mercado_publico or "", orden.estado_pago,
-                 orden.total_final)
-                for orden, cliente, vehiculo, usuario in db.execute(consulta).all()
+                 int(pagado), orden.total_final)
+                for orden, cliente, vehiculo, usuario, pagado in db.execute(consulta).all()
             ]
 
         # Apagamos el ordenamiento para insertar rápido
@@ -574,7 +598,7 @@ class OrdenesWidget(QTabWidget):
         self.tabla_historial.setRowCount(len(filas))
 
         for fila, (oid, fecha, cliente, patente, vehiculo, mecanico, folio, pagada,
-                   total) in enumerate(filas):
+                   pagado, total) in enumerate(filas):
             celda_id = ItemNumerico(str(oid), oid)
             celda_id.setData(Qt.UserRole, oid)
             # Ordenable por el instante real: como texto, "%d-%m-%Y" ordena por
@@ -594,8 +618,17 @@ class OrdenesWidget(QTabWidget):
             celda_folio = QTableWidgetItem(folio)
             celda_folio.setFont(fuente_tabular())
             self.tabla_historial.setItem(fila, 6, celda_folio)
-            estado = QTableWidgetItem("Pagada" if pagada else "No pagada")
-            estado.setData(ROL_INSIGNIA, BADGE_EXITO if pagada else BADGE_ALERTA)
+            # Una orden abonada no es "No pagada": el mesón tiene que ver de
+            # un vistazo cuáles quedaron a medio cobrar.
+            rotulo, insignia = (
+                ("Pagada", BADGE_EXITO) if pagada
+                else ("Abonada", BADGE_INFO) if pagado
+                else ("No pagada", BADGE_ALERTA)
+            )
+            estado = QTableWidgetItem(rotulo)
+            estado.setData(ROL_INSIGNIA, insignia)
+            if rotulo == "Abonada":
+                estado.setToolTip(estado_de_pago(pagada, pagado, int(total)))
             self.tabla_historial.setItem(fila, 7, estado)
             self.tabla_historial.setItem(fila, 8, ItemNumerico(clp(total), total))
 
@@ -687,7 +720,14 @@ class OrdenesWidget(QTabWidget):
         self.tipo_descuento.setCurrentIndex(0)
         self.folio.clear()
         self.pagada.setChecked(False)
+        self.abono.setValue(0)
         self.recalcular_total()
+
+    def _cambiar_pago(self, pagada: bool) -> None:
+        """Marcar 'Pagada' es pagar el total, así que el abono sobra."""
+        self.abono.setEnabled(not pagada)
+        if pagada:
+            self.abono.setValue(0)
 
     def _cambiar_tipo_descuento(self, indice: int) -> None:
         """El campo cambia de forma con el tipo: tope 100 y sufijo % para el
@@ -833,7 +873,10 @@ class OrdenesWidget(QTabWidget):
             self.tabla_carrito.item(fila, 3).data(Qt.UserRole)
             for fila in range(self.tabla_carrito.rowCount())
         )
-        self.totales.calcular(suma_total, self._descuento(suma_total)[2])
+        _, total = self.totales.calcular(suma_total, self._descuento(suma_total)[2])
+        # Nadie abona más de lo que vale la orden, y la orden cambia mientras
+        # se arma: el tope se mueve con ella.
+        self.abono.setMaximum(total)
         self._actualizar_boton_guardar()
 
     def _actualizar_boton_guardar(self) -> None:
@@ -917,6 +960,13 @@ class OrdenesWidget(QTabWidget):
                         precio_unitario_cobrado=det["precio"],
                         **det["item"],
                     ))
+                # Lo pagado al cerrar la orden es un abono más. Quien decide si
+                # con eso queda pagada es el trigger, no esta pantalla.
+                pagado = total_final if self.pagada.isChecked() else self.abono.value()
+                if pagado:
+                    db.add(PagoOrden(
+                        orden_id=nueva_orden.id, usuario_id=Sesion.usuario_id, monto=pagado,
+                    ))
                 # Al confirmar, los triggers descuentan el stock y escriben el
                 # kardex. No queda ningún Producto vivo en esta sesión al que
                 # refrescarle el saldo: la pantalla relee el catálogo entero al
@@ -961,6 +1011,8 @@ class OrdenesWidget(QTabWidget):
 
         orden_id = self.tabla_historial.item(fila, 0).data(Qt.UserRole)
         DialogoDetalleOrden(orden_id, self).exec()
+        # Adentro se pueden registrar pagos: la insignia de la fila quedaría vieja.
+        self.cargar_historial()
 
     def cancelar_orden(self) -> None:
         # Solo pedir confirmación si el carrito ya tiene insumos
@@ -985,6 +1037,7 @@ class DialogoDetalleOrden(QDialog):
         self.setWindowTitle(f"Detalle de Orden N° {orden_id}")
         self.resize(650, 500)
         self.setModal(True)
+        self.orden_id = orden_id
 
         with SessionLocal() as db:
             orden = db.get(Orden, orden_id)
@@ -992,8 +1045,9 @@ class DialogoDetalleOrden(QDialog):
             cliente = db.get(Cliente, vehiculo.cliente_id)
             usuario = db.get(Usuario, orden.usuario_id)
 
-            # Cabecera de contexto
-            info_html = (
+            # Cabecera de contexto. El estado de pago se arma aparte porque
+            # cambia sin cerrar el diálogo: acá adentro se registran los abonos.
+            self._cabecera = (
                 f"<b>Cliente:</b> {cliente.nombre_completo}<br>"
                 f"<b>Vehículo:</b> {vehiculo.marca or ''} {vehiculo.modelo or ''} "
                 f"({vehiculo.patente})<br>"
@@ -1001,10 +1055,21 @@ class DialogoDetalleOrden(QDialog):
                 f"{'sin registrar' if orden.kilometraje_ingreso is None else f'{orden.kilometraje_ingreso} km'}<br>"
                 f"<b>Mecánico:</b> {usuario.nombre} | "
                 f"<b>Fecha:</b> {orden.fecha_creacion.strftime('%d-%m-%Y %H:%M')}<br>"
-                f"<b>Estado:</b> {'Pagada' if orden.estado_pago else 'No pagada'}"
-                + (f" | <b>Folio MP:</b> {orden.folio_mercado_publico}"
-                   if orden.folio_mercado_publico else "")
+                f"<b>Estado:</b> "
             )
+            self._folio = (f" | <b>Folio MP:</b> {orden.folio_mercado_publico}"
+                           if orden.folio_mercado_publico else "")
+            # El aviso por WhatsApp sale de acá con el número de OT: esta orden
+            # ya está guardada, a diferencia de la que se está armando al lado.
+            self._contacto = {
+                "telefono": cliente.telefono or "",
+                "cliente": cliente.nombre_completo,
+                "vehiculo": describir_vehiculo(
+                    vehiculo.patente, vehiculo.marca, vehiculo.modelo,
+                    vehiculo.anio_fabricacion,
+                ),
+            }
+            self.total = int(orden.total_final)
             # La relación 'orden.detalles' nos permite acceder a los productos
             # sin hacer joins manuales.
             lineas = [
@@ -1044,21 +1109,74 @@ class DialogoDetalleOrden(QDialog):
         boton_pdf.setAutoDefault(False)
         boton_pdf.clicked.connect(self.exportar_pdf)
 
+        hay_celular = enlace_whatsapp(self._contacto["telefono"]) is not None
+        self.boton_whatsapp = QPushButton("Avisar por WhatsApp")
+        self.boton_whatsapp.setAutoDefault(False)
+        self.boton_whatsapp.setEnabled(hay_celular)
+        self.boton_whatsapp.setToolTip(
+            "" if hay_celular
+            else "El cliente no tiene registrado un celular al que escribirle."
+        )
+        self.boton_whatsapp.clicked.connect(self.avisar_por_whatsapp)
+
+        self.boton_pago = QPushButton("Registrar pago")
+        self.boton_pago.setProperty("clase", "primario")
+        self.boton_pago.setAutoDefault(False)
+        self.boton_pago.clicked.connect(self.registrar_pago)
+
         titulo_insumos = QLabel("Insumos y Servicios")
         titulo_insumos.setProperty("clase", "seccion")
         titulo_notas = QLabel("Notas y Combustible")
         titulo_notas.setProperty("clase", "seccion")
 
         # Ensamble
+        self.info = QLabel()
         layout = layout_de_dialogo(self)
-        layout.addWidget(QLabel(info_html))
+        layout.addWidget(self.info)
         layout.addWidget(titulo_insumos)
         layout.addWidget(tabla)
         layout.addWidget(titulo_notas)
         layout.addWidget(notas)
         layout.addWidget(marco_total)
-        layout.addLayout(barra(boton_pdf, estira=0))
-        self.orden_id = orden_id
+        layout.addLayout(barra(boton_pdf, self.boton_whatsapp, self.boton_pago, estira=0))
+        self._refrescar_pago()
+
+    def _refrescar_pago(self) -> None:
+        """Relee el pago desde la base.
+
+        Quien decide si la orden quedó pagada es el trigger, así que después de
+        un abono hay que preguntárselo a él y no calcularlo acá.
+        """
+        with SessionLocal() as db:
+            orden = db.get(Orden, self.orden_id)
+            texto = estado_de_pago(orden.estado_pago, orden.monto_pagado, self.total)
+            self.saldo = orden.saldo
+        self.info.setText(self._cabecera + texto + self._folio)
+        self.boton_pago.setEnabled(self.saldo > 0)
+        self.boton_pago.setToolTip("" if self.saldo > 0 else "No queda saldo por cobrar.")
+
+    def registrar_pago(self) -> None:
+        """Un abono se suma a lo ya pagado, no corrige nada: por eso el tope es
+        el saldo y no el total."""
+        if self.saldo <= 0:
+            return  # el botón está apagado; queda el atajo y las pruebas
+        monto, confirmado = QInputDialog.getInt(
+            self, "Registrar pago",
+            f"Saldo pendiente: {clp(self.saldo)}\n\nMonto que paga el cliente:",
+            self.saldo, 1, self.saldo,
+        )
+        if not confirmado:
+            return
+        with SessionLocal() as db:
+            db.add(PagoOrden(
+                orden_id=self.orden_id, usuario_id=Sesion.usuario_id, monto=monto,
+            ))
+            db.commit()
+        self._refrescar_pago()
+
+    def avisar_por_whatsapp(self) -> None:
+        """Desde una orden guardada el aviso puede citar el número de OT."""
+        DialogoWhatsApp(parent=self, orden_id=self.orden_id, **self._contacto).exec()
 
     def exportar_pdf(self) -> None:
         ruta, _ = QFileDialog.getSaveFileName(

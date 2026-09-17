@@ -10,7 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from src.models import (
-    Cliente, DetalleOrden, DetalleVenta, KardexMovimiento, Orden, Producto,
+    Cliente, DetalleOrden, DetalleVenta, KardexMovimiento, Orden, PagoOrden, Producto,
     Servicio, Ubicacion, Usuario, Vehiculo, Venta,
 )
 
@@ -147,3 +147,31 @@ def test_la_vista_de_stock_critico_detecta_el_umbral(db, datos):
     producto.stock_actual = 5
     db.flush()
     assert en_vista()
+
+
+def test_el_estado_de_pago_lo_deciden_los_abonos(db, datos):
+    """Una orden se paga por partes y nadie escribe "pagada" a mano.
+
+    Si la pantalla pudiera marcarla, habría dos fuentes para el mismo dato —la
+    casilla y la suma de los abonos— y tarde o temprano la insignia del
+    historial diría una cosa y la caja otra.
+    """
+    usuario, _, _, vehiculo = datos
+    orden = Orden(vehiculo_id=vehiculo.id, usuario_id=usuario.id,
+                  subtotal=10000, impuesto=1900, total_final=11900)
+    db.add(orden)
+    db.flush()
+    assert not orden.estado_pago and orden.saldo == 11900
+
+    db.add(PagoOrden(orden_id=orden.id, usuario_id=usuario.id, monto=5000))
+    db.flush()
+    # El trigger escribe la orden por fuera de la sesión, como los de stock.
+    db.refresh(orden)
+    assert not orden.estado_pago
+    assert (orden.monto_pagado, orden.saldo) == (5000, 6900)
+
+    db.add(PagoOrden(orden_id=orden.id, usuario_id=usuario.id, monto=6900))
+    db.flush()
+    db.refresh(orden)
+    assert orden.estado_pago
+    assert (orden.monto_pagado, orden.saldo) == (11900, 0)

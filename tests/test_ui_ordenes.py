@@ -15,7 +15,8 @@ from conftest import patente_de_prueba, rut_de_prueba
 from src.auth import Sesion
 from src.database import SessionLocal
 from src.models import (
-    Cliente, DetalleOrden, KardexMovimiento, Orden, Producto, Servicio, Usuario, Vehiculo,
+    Cliente, DetalleOrden, KardexMovimiento, Orden, PagoOrden, Producto, Servicio, Usuario,
+    Vehiculo,
 )
 from src.ui.ordenes import COLUMNAS_HISTORIAL
 
@@ -34,6 +35,7 @@ def limpiar():
                 for orden in db.scalars(select(Orden).where(Orden.vehiculo_id == vehiculo.id)):
                     db.query(KardexMovimiento).filter_by(orden_id=orden.id).delete()
                     db.query(DetalleOrden).filter_by(orden_id=orden.id).delete()
+                    db.query(PagoOrden).filter_by(orden_id=orden.id).delete()
                     db.delete(orden)
                 db.delete(vehiculo)
             db.delete(cliente)
@@ -364,3 +366,85 @@ def test_sin_celular_registrado_el_boton_de_whatsapp_queda_apagado(app, taller):
     _fijar_telefono(taller.vehiculo_id, None)
     widget._iniciar_nueva_orden(taller.vehiculo_id)
     assert not widget.boton_whatsapp.isEnabled()
+
+
+def test_la_orden_se_cierra_con_un_abono_y_el_saldo_se_cobra_despues(app, taller, sin_modales,
+                                                                    monkeypatch):
+    """El cliente deja un abono al cerrar la orden y paga el resto al retirar.
+
+    Las dos mitades viven en pantallas distintas a propósito: el abono en el
+    formulario, mientras la orden se arma, y el saldo en el detalle del
+    historial, que es donde se busca una orden que ya se guardó.
+    """
+    from PySide6.QtWidgets import QInputDialog
+
+    from src.ui import ordenes
+
+    widget = ordenes.OrdenesWidget()
+    widget._iniciar_nueva_orden(taller.vehiculo_id)
+    widget.agregar_al_carrito(taller.producto_id, 1)   # 12.900 + IVA
+    widget.spin_kilometraje.setValue(120000)
+    # Nadie abona más de lo que vale la orden, y la orden cambia mientras se arma.
+    assert widget.abono.maximum() == 15351
+    widget.abono.setValue(10000)
+    widget.guardar_orden()
+
+    with SessionLocal() as db:
+        orden = db.scalar(select(Orden).where(Orden.vehiculo_id == taller.vehiculo_id))
+        # Lo decide el trigger con la suma de los abonos, no la pantalla.
+        assert not orden.estado_pago
+        assert (orden.monto_pagado, orden.saldo) == (10000, 5351)
+        orden_id = orden.id
+
+    # En el historial no es ni "Pagada" ni "No pagada": el mesón tiene que ver
+    # cuáles quedaron a medio cobrar.
+    widget.setCurrentIndex(1)
+    estado = widget.tabla_historial.item(0, 7)
+    assert estado.text() == "Abonada"
+    assert "saldo $5.351" in estado.toolTip()
+
+    dialogo = ordenes.DialogoDetalleOrden(orden_id, widget)
+    assert dialogo.saldo == 5351 and dialogo.boton_pago.isEnabled()
+    assert "Abonada $10.000 · saldo $5.351" in dialogo.info.text()
+
+    # El tope del abono es el saldo, no el total: un pago se suma, no corrige.
+    argumentos = {}
+    monkeypatch.setattr(QInputDialog, "getInt", staticmethod(
+        lambda *a, **k: argumentos.update(valor=a[3], minimo=a[4], maximo=a[5]) or (5351, True),
+    ))
+    dialogo.registrar_pago()
+    assert (argumentos["valor"], argumentos["minimo"], argumentos["maximo"]) == (5351, 1, 5351)
+    assert dialogo.saldo == 0 and not dialogo.boton_pago.isEnabled()
+    assert "Pagada" in dialogo.info.text()
+
+    with SessionLocal() as db:
+        orden = db.get(Orden, orden_id)
+        assert orden.estado_pago and orden.monto_pagado == 15351
+
+
+def test_desde_el_historial_el_aviso_por_whatsapp_cita_el_numero_de_la_orden(app, taller,
+                                                                            monkeypatch):
+    """"Listo para retiro" se manda con el auto terminado, o sea con la orden ya
+    guardada: es el único momento en que hay un número de OT que citar."""
+    from src.ui import ordenes
+
+    _fijar_telefono(taller.vehiculo_id, "9 5666 7509")
+    with SessionLocal() as db:
+        orden = Orden(vehiculo_id=taller.vehiculo_id, usuario_id=taller.usuario_id,
+                      kilometraje_ingreso=98000, subtotal=0, total_final=0)
+        db.add(orden)
+        db.commit()
+        orden_id = orden.id
+
+    avisos = []
+    monkeypatch.setattr(ordenes.DialogoWhatsApp, "exec", lambda self: avisos.append(self) or 0)
+
+    dialogo = ordenes.DialogoDetalleOrden(orden_id, None)
+    assert dialogo.boton_whatsapp.isEnabled()
+    dialogo.avisar_por_whatsapp()
+    borrador = avisos[0].texto.toPlainText()
+    assert f"Orden de trabajo N° {orden_id}." in borrador
+    assert "Toyota Yaris" in borrador
+
+    _fijar_telefono(taller.vehiculo_id, None)
+    assert not ordenes.DialogoDetalleOrden(orden_id, None).boton_whatsapp.isEnabled()

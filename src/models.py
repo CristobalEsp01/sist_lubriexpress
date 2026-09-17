@@ -131,6 +131,7 @@ class Orden(Base):
     vehiculo = relationship("Vehiculo", back_populates="ordenes")
     usuario = relationship("Usuario")
     detalles = relationship("DetalleOrden", back_populates="orden")
+    pagos = relationship("PagoOrden", back_populates="orden")
 
     @property
     def descuento_aplicado(self) -> int:
@@ -138,6 +139,20 @@ class Orden(Base):
         if self.descuento_monto:
             return int(self.descuento_monto)
         return int(round(self.subtotal * self.descuento_porcentaje / 100))
+
+    @property
+    def monto_pagado(self) -> int:
+        return int(sum(p.monto for p in self.pagos))
+
+    @property
+    def saldo(self) -> int:
+        """Lo que falta por cobrar.
+
+        Las 3.021 órdenes migradas vienen marcadas como pagadas y sin ningún
+        abono detrás: para ellas la resta daría el total entero. `estado_pago`
+        manda, y es el trigger quien lo pone al día cuando entra un abono.
+        """
+        return 0 if self.estado_pago else int(self.total_final) - self.monto_pagado
 
 
 class DetalleOrden(Base):
@@ -155,6 +170,21 @@ class DetalleOrden(Base):
     orden = relationship("Orden", back_populates="detalles")
     producto = relationship("Producto")
     servicio = relationship("Servicio")
+
+
+class PagoOrden(Base):
+    """Un abono de una orden. Append-only: los pagos se suman, no se corrigen."""
+
+    __tablename__ = "pagos_orden"
+
+    id = Column(Integer, primary_key=True, index=True)
+    orden_id = Column(Integer, ForeignKey("ordenes.id"), nullable=False)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
+    monto = Column(Numeric(10, 2), nullable=False)
+    fecha_pago = Column(DateTime, server_default=func.now(), nullable=False)
+
+    orden = relationship("Orden", back_populates="pagos")
+    usuario = relationship("Usuario")
 
 
 class Venta(Base):

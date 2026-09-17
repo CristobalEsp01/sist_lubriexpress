@@ -643,6 +643,7 @@ class InventarioWidget(QWidget):
         self.tabla.setSortingEnabled(False)
         self.tabla.setRowCount(len(filas))
         criticos = 0
+        valorizado = 0
         for fila, (pid, nombre, marca, categoria, ubicacion, stock, minimo, costo, venta,
                    critico, activo) in enumerate(filas):
             for columna, texto in enumerate([nombre, marca, categoria, ubicacion]):
@@ -663,6 +664,7 @@ class InventarioWidget(QWidget):
                     celda.setForeground(QColor(TINTA_SUAVE))
                     celda.setToolTip("Producto inactivo: no aparece en ventas ni en órdenes")
 
+            valorizado += stock * int(costo)
             if critico:
                 criticos += 1
                 celda = self.tabla.item(fila, 4)
@@ -679,6 +681,12 @@ class InventarioWidget(QWidget):
             self.tabla.aviso.setText("No hay productos registrados.")
 
         aviso = f" — {criticos} bajo stock mínimo" if criticos else ""
+        # A precio costo: es la plata que está inmovilizada en la bodega, no lo
+        # que se va a vender. Sigue lo que muestra la tabla, así que con un
+        # filtro puesto dice cuánto vale esa categoría. Lo ven los mismos que
+        # ven la columna de costo.
+        if self.supervisa:
+            aviso += f" — {clp(valorizado)} a precio costo"
         self.resumen.setText(f"{len(filas)} producto(s){aviso}")
         self.recargar_kardex()
 
