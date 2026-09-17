@@ -8,19 +8,30 @@ Lubri-Express (Inversiones Tres Puntos SpA). Corre localmente sobre PostgreSQL.
 | Módulo | Estado |
 |---|---|
 | Esquema de base de datos y triggers de Kardex | Funcionando |
+| Login y control de acceso por rol | Funcionando (tres roles; pestaña Usuarios para el administrador) |
 | Mantenedor de Inventario | Funcionando |
-| Mantenedor de Clientes y Vehículos | Funcionando |
 | Historial de Kardex por producto | Funcionando (solo lectura) |
-| Login y control de acceso por rol | Funcionando (correr script de creacion de usuario) |
+| Ingreso de mercadería y ajuste de stock por recuento | Funcionando |
+| Carga masiva de inventario desde Excel | Funcionando (plantilla que genera el propio sistema) |
+| Stock mínimo por categoría | Funcionando (acción masiva; cada producto puede sobrescribirlo) |
+| Mantenedor de Clientes y Vehículos | Funcionando (con enlace a WhatsApp) |
 | Ventas de mostrador | Funcionando |
-| Órdenes de trabajo | Funcionando (falta el botón de WhatsApp) |
-| Carga masiva desde Excel | Pendiente |
-| Exportación a PDF y reportería | Pendiente |
+| Órdenes de trabajo: insumos, servicios, descuentos, folio y estado de pago | Funcionando |
+| Exportación de la orden a PDF | Funcionando |
+| Reportería (ingresos, productos, usuarios, reabastecimiento) | Funcionando (con gráficos y exportación a Excel) |
+| Migración del sistema antiguo | Funcionando (`scripts/migrar_sistema_antiguo.py`) |
+| Respaldo automatizado local y a OneDrive | Funcionando (`scripts/respaldar.py`, con restauración probada) |
+| Aplicación empaquetada para Windows | Especificación lista (`lubriexpress.spec`); el `.exe` se construye en Windows |
+| Manuales de usuario y técnico | En preparación |
 
-El historial de movimientos de cada producto se consulta desde el mantenedor de
-Inventario, y desde ahí también se registran las entradas de mercadería. Los ajustes
-manuales todavía no tienen pantalla. Todo movimiento exige una sesión iniciada: cada
-línea del Kardex queda firmada por quien la hizo.
+Los precios del catálogo son **netos**: el IVA (19 %) se calcula al cobrar y queda
+guardado en el documento, así el historial no depende de la tasa vigente. El
+historial de movimientos de cada producto se consulta desde el mantenedor de
+Inventario, y desde ahí se registran las entradas de mercadería y los ajustes por
+recuento. Todo movimiento exige una sesión iniciada: cada línea del Kardex queda
+firmada por quien la hizo.
+
+Los reportes y los PDF de las órdenes se guardan en `Documentos/Lubri-Express/`.
 
 ## Requisitos
 
@@ -85,17 +96,44 @@ DATABASE_URL=postgresql+psycopg2://postgres:lubriexpress@localhost:55432/lubriex
 `.env` está en `.gitignore` y no se sube nunca.
 
 ## Uso
-### 1. Ejecutar script de creación de usuarios
-`(Funcionalidad temporal mientras se implementa la ventana de administración)`
+
+### 1. Crear el primer administrador
+
 ```bash
 .venv/bin/python scripts/crear_usuario.py
 ```
-El script valida que la contraseña tenga al menos 6 caracteres.
+
+Solo hace falta una vez por instalación: de ahí en adelante los usuarios se
+administran desde la pestaña **Usuarios**, que ve únicamente el rol
+`ADMINISTRADOR`. La contraseña debe tener al menos 6 caracteres y se guarda
+hasheada con bcrypt.
+
 ### 2. Ejecutar el programa
 
 ```bash
 .venv/bin/python main.py
 ```
+
+### 3. Migrar los datos del sistema antiguo (opcional, una vez)
+
+```bash
+.venv/bin/python scripts/migrar_sistema_antiguo.py "/ruta/a/las/planillas" --detalle
+```
+
+Carga clientes, vehículos, productos, servicios y el historial de órdenes en una
+sola transacción, y se niega a correr dos veces. El informe final dice qué se
+descartó y por qué. **Las planillas del taller no van al repositorio**: son datos
+reales de clientes y este repositorio es público.
+
+### 4. Respaldar
+
+```bash
+.venv/bin/python scripts/respaldar.py            # deja un .sql.gz en respaldos/
+.venv/bin/python scripts/restaurar.py <archivo>  # lo pone de vuelta
+```
+
+Con `RESPALDO_ONEDRIVE` configurado en el `.env`, el respaldo se copia además a
+esa carpeta. En el PC del taller conviene dejarlo como tarea programada diaria.
 
 ## Pruebas
 
@@ -113,20 +151,32 @@ lo necesitan se saltan solas en vez de fallar.
 ```text
 sist_lubriexpress/
 ├── main.py                          # Punto de entrada
+├── lubriexpress.spec                # Empaquetado con PyInstaller (el .exe se arma en Windows)
 ├── src/
-│   ├── auth.py                      # Logica de autenticacion.
+│   ├── auth.py                      # Sesión en memoria y hash de contraseñas (bcrypt)
+│   ├── permisos.py                  # Qué puede hacer cada rol
 │   ├── database.py                  # Motor de conexión y fábrica de sesiones
 │   ├── models.py                    # Modelos ORM (SQLAlchemy)
 │   ├── rut.py                       # RUT chileno: validación módulo 11 y formato
+│   ├── patente.py                   # Patente chilena: formato y normalización
+│   ├── texto.py                     # Normalización para buscar (sin tildes ni puntuación)
+│   ├── precios.py                   # IVA: los precios del catálogo son netos
+│   ├── xlsx.py                      # Leer y escribir .xlsx con la biblioteca estándar
+│   ├── carga_excel.py               # Carga masiva de inventario por plantilla
+│   ├── documentos.py                # La orden de trabajo como documento para el cliente
+│   ├── reportes.py                  # Los cuatro reportes, sin interfaz
 │   └── ui/
 │       ├── __init__.py              # Ventana principal con pestañas
 │       ├── tema.py                  # Colores, tipografía y hoja de estilos
-│       ├── comunes.py               # Formato de moneda y tablas compartidas
-│       ├── inventario.py            # Mantenedor de Inventario
-│       ├── clientes.py              # Mantenedor de Clientes y Vehículos
-│       ├── ordenes.py               # Modulo de ordenes de trabajo (cambios de aceite).
-│       ├── ventas.py                # Modulo del punto de venta, carrito e historial.
-│       └── login.py                 # Ventana modal para el inicio de sesión.
+│       ├── comunes.py               # Tablas, combos buscables, totales y moneda
+│       ├── login.py                 # Ventana modal para el inicio de sesión
+│       ├── inventario.py            # Inventario, Kardex, ingreso y ajuste de stock
+│       ├── carga_excel.py           # Diálogo de la carga masiva
+│       ├── clientes.py              # Clientes y vehículos, con enlace a WhatsApp
+│       ├── ventas.py                # Punto de venta, carrito e historial
+│       ├── ordenes.py               # Órdenes de trabajo y exportación a PDF
+│       ├── reportes.py              # Pestaña de reportes con gráficos
+│       └── usuarios.py              # Alta de usuarios y asignación de roles
 ├── database/
 │   └── schema_lubriexpress.sql      # Tablas, restricciones, triggers y vistas
 ├── tests/
@@ -134,9 +184,12 @@ sist_lubriexpress/
 │   ├── convenciones.md              # Cómo se escribe en este proyecto: léelo antes de tocar src/
 │   └── base-de-datos.md             # Contrato del esquema: tablas, triggers e invariantes
 ├── scripts/
-│   └── crear_usuario.py             # Alta de usuarios por consola, con la contraseña hasheada
+│   ├── crear_usuario.py             # El primer administrador de una instalación
+│   ├── migrar_sistema_antiguo.py    # Las cinco planillas del sistema viejo
+│   ├── respaldar.py                 # Respaldo comprimido, con copia a OneDrive
+│   └── restaurar.py                 # Vuelve a poner un respaldo
 ├── requirements.txt                 # Dependencias de la aplicación
-├── requirements-dev.txt             # + herramientas de pruebas
+├── requirements-dev.txt             # + pruebas y empaquetado
 └── .env                             # Credenciales locales (no se sube)
 ```
 
