@@ -4,7 +4,7 @@ import re
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
-    QComboBox, QDialog, QFormLayout, QHBoxLayout, QLabel,
+    QComboBox, QDialog, QFormLayout, QLabel,
     QLineEdit, QMessageBox, QPushButton, QSpinBox, QSplitter, QTableWidgetItem,
     QVBoxLayout, QWidget,
 )

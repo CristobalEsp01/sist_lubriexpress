@@ -8,7 +8,8 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QAbstractItemView, QComboBox, QCompleter, QDialog, QDialogButtonBox, QFrame,
-    QHBoxLayout, QHeaderView, QLabel, QMessageBox, QStyle, QStyledItemDelegate,
+    QHBoxLayout, QHeaderView, QLabel, QLayout, QMessageBox, QSizePolicy, QStyle,
+    QStyledItemDelegate,
     QStyleOptionViewItem, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -374,7 +375,14 @@ def bloque_total(rotulo: str = "Total", menor: bool = False) -> tuple[QFrame, To
     """
     marco = QFrame()
     marco.setProperty("clase", "total")
+    # No se encoge nunca: en una ventana al mínimo, Qt le quitaba alto y la
+    # cifra —el resultado de la pantalla— quedaba cortada a la mitad.
+    marco.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
     columna = QVBoxLayout(marco)
+    # Las etiquetas aceptan que Qt las recorte, así que el mínimo del marco
+    # tiene que venir del layout: sin esto la cifra medía 7 px de los 35 que
+    # necesita cuando la ventana estaba en su tamaño mínimo.
+    columna.setSizeConstraint(QLayout.SetMinimumSize)
     columna.setContentsMargins(2, 10, 2, 0)
     columna.setSpacing(2)
 

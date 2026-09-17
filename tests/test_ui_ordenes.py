@@ -268,3 +268,21 @@ def test_la_ventana_recorre_sus_cuatro_pestanas_sin_reventar(app, taller, sin_mo
             tabla.selectRow(0)
 
     assert ventana.pestanias.count() == 5  # Reportes también, para todos
+
+
+def test_la_cifra_del_total_no_se_corta_en_la_ventana_mas_chica(app, taller):
+    """La orden es la pantalla más densa: al mínimo declarado de la ventana,
+    el total —el resultado de la pantalla— tiene que caber entero. Ya se cortó
+    a 13 px de los 35 que mide, y el bloque de totales cedía alto antes que el
+    campo de observaciones."""
+    from src.ui import VentanaPrincipal
+
+    ventana = VentanaPrincipal()
+    ventana.resize(ventana.minimumSize())
+    ventana.show()
+    ventana.pestanias.setCurrentWidget(ventana.ordenes)
+    ventana.ordenes._iniciar_nueva_orden(taller.vehiculo_id)
+
+    cifra = ventana.ordenes.totales.total
+    assert cifra.height() >= cifra.sizeHint().height()
+    ventana.close()

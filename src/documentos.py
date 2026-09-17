@@ -9,7 +9,13 @@ from html import escape
 
 from .precios import clp
 
-TALLER = "Lubri-Express — Inversiones Tres Puntos SpA"
+# El membrete y el pie del informe técnico que el taller ya usaba en papel.
+TALLER = "LUBRI-EXPRESS"
+DIRECCION = "Rene Schneider 3631"
+TELEFONO = "+56920489399"
+SITIO = "www.lubri-express.cl"
+CORREO = "contacto@lubri-express.cl"
+PIE = f"{DIRECCION} | {TELEFONO} | {CORREO} | {SITIO}"
 
 
 def html_de_orden(o: dict) -> str:
@@ -35,9 +41,19 @@ def html_de_orden(o: dict) -> str:
     estado = "Pagada" if o["pagada"] else "No pagada"
     folio = f"<br><b>Folio Mercado Público:</b> {e(o['folio'])}" if o["folio"] else ""
     contacto = " · ".join(filter(None, (o.get("rut"), o.get("telefono"))))
+    # El logo va como recurso del documento (ver guardar_pdf_de_orden); si no se
+    # cargó, la celda queda vacía y el resto del membrete no cambia.
     return f"""<html><body style="font-family: sans-serif; font-size: 10pt;">
-<h2 style="margin-bottom: 0;">Orden de Trabajo N° {o['numero']}</h2>
-<p style="color: gray; margin-top: 0;">{e(TALLER)}<br>{o['fecha']:%d-%m-%Y %H:%M}</p>
+<table width="100%" cellpadding="0">
+<tr>
+  <td valign="top"><h2 style="margin: 0;">ORDEN DE TRABAJO</h2>
+      <p style="margin: 2px 0 0 0;"><b>N° {o['numero']}</b> | {o['fecha']:%d-%m-%Y %H:%M}</p></td>
+  <td align="right" valign="top" style="font-size: 8pt; color: gray;">
+      {e(TALLER)}<br>{e(DIRECCION)}<br>{e(TELEFONO)}<br>{e(SITIO)}<br>{e(CORREO)}</td>
+  <td align="right" valign="top" width="90"><img src="logo" width="80"></td>
+</tr>
+</table>
+<hr>
 <table width="100%" cellpadding="4">
 <tr><td width="50%"><b>Cliente</b><br>{e(o['cliente'])}{('<br>' + e(contacto)) if contacto else ''}</td>
 <td><b>Vehículo</b><br>{e(o['vehiculo'])}<br>Patente <b>{e(o['patente'])}</b> · {km}</td></tr>
@@ -51,4 +67,6 @@ def html_de_orden(o: dict) -> str:
 <table width="100%" cellpadding="3">{filas_totales}</table>
 <h3>Notas</h3>
 <p>{e(o['notas'] or 'Sin observaciones.').replace(chr(10), '<br>')}</p>
+<hr>
+<p align="center" style="font-size: 8pt; color: gray;">{e(PIE)}</p>
 </body></html>"""

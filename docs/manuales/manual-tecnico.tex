@@ -1,0 +1,298 @@
+\documentclass[11pt,a4paper]{article}
+\input{estilo}
+\usepackage{listings}
+\lstset{basicstyle=\small\ttfamily,frame=single,framesep=5pt,breaklines=true,
+        columns=fullflexible,xleftmargin=0pt,literate={á}{{\'a}}1 {é}{{\'e}}1
+        {í}{{\'i}}1 {ó}{{\'o}}1 {ú}{{\'u}}1 {ñ}{{\~n}}1 {Á}{{\'A}}1 {É}{{\'E}}1
+        {Í}{{\'I}}1 {Ó}{{\'O}}1 {Ú}{{\'U}}1 {Ñ}{{\~N}}1 {°}{{\textdegree}}1}
+
+\title{\vspace{-1.5cm}\textbf{Manual técnico}\\[0.3cm]
+       \large Instalación, configuración y mantención}
+\author{Sistema de Gestión de Taller, Inventario y Ventas — Lubri-Express}
+\date{}
+
+\begin{document}
+\maketitle
+\thispagestyle{empty}
+
+\noindent Este manual es para quien instala y mantiene el sistema en el equipo
+del taller. El uso diario está en el \emph{Manual de usuario}.
+
+\tableofcontents
+\newpage
+
+\section{Qué es y qué necesita}
+
+Aplicación de escritorio en Python (PySide6) contra una base de datos
+PostgreSQL, ejecutándose \textbf{íntegramente en el equipo del taller}: no
+depende de internet y los datos no salen de ahí.
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Componente} & \textbf{Versión} \\
+\midrule
+Windows & 10 o superior (64 bits) \\
+PostgreSQL & 16 o superior \\
+Python & 3.10 o superior (solo si se corre desde el código fuente) \\
+Espacio en disco & 1 GB para la aplicación, más la base y los respaldos \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+El sistema se puede ejecutar de dos maneras: desde el \textbf{ejecutable}
+empaquetado (lo normal en el taller) o desde el \textbf{código fuente} (para
+desarrollo y para correr los scripts de migración y respaldo).
+
+\section{Instalación en el equipo del taller}
+
+\subsection{1. PostgreSQL}
+
+Instalar PostgreSQL 16 desde \url{https://www.postgresql.org/download/windows/}.
+Durante la instalación se pide una contraseña para el usuario
+\texttt{postgres}: hay que anotarla, porque va en el archivo de configuración.
+Dejar marcada la instalación de las \emph{Command Line Tools}: de ahí salen
+\texttt{pg\_dump} y \texttt{psql}, que usan los respaldos.
+
+Crear la base y cargar el esquema, desde el \emph{SQL Shell (psql)} o desde
+\texttt{cmd}:
+
+\begin{lstlisting}
+createdb -U postgres lubriexpress
+psql -U postgres -d lubriexpress -v ON_ERROR_STOP=1 -f schema_lubriexpress.sql
+\end{lstlisting}
+
+El archivo \texttt{schema\_lubriexpress.sql} está en \texttt{database/} del
+código fuente. Crea las tablas, las restricciones, los triggers de Kardex y la
+vista de stock crítico.
+
+\subsection{2. La aplicación}
+
+Copiar la carpeta \texttt{lubriexpress} (la que produce el empaquetado, sección
+\ref{sec:empaquetar}) al equipo, por ejemplo en
+\texttt{C:\textbackslash Lubri-Express}. Dentro va el ejecutable
+\texttt{lubriexpress.exe}.
+
+\subsection{3. El archivo .env}
+
+\textbf{Junto al ejecutable} debe quedar un archivo llamado \texttt{.env} con la
+dirección de la base:
+
+\begin{lstlisting}
+DATABASE_URL=postgresql+psycopg2://postgres:LA_CONTRASENA@localhost:5432/lubriexpress
+\end{lstlisting}
+
+Sin ese archivo la aplicación no arranca, y lo dice con un cartel. Es a
+propósito: más vale que no abra a que se conecte en silencio a una base que no
+es la que se creía.
+
+\subsection{4. El primer administrador}
+
+Los usuarios se administran desde la aplicación, pero el primero hay que
+crearlo por consola, desde el código fuente:
+
+\begin{lstlisting}
+.venv\Scripts\python scripts\crear_usuario.py
+\end{lstlisting}
+
+Pide nombre, usuario, rol y contraseña. Elegir rol \texttt{ADMINISTRADOR}. De
+ahí en adelante, todos los demás se crean desde la pestaña \textbf{Usuarios}.
+
+Si alguna vez se pierde la contraseña del administrador, el mismo script la
+reemplaza: al escribir un usuario que ya existe, lo actualiza.
+
+\section{Migrar los datos del sistema anterior}
+
+Se hace una sola vez, antes de empezar a operar.
+
+\begin{lstlisting}
+.venv\Scripts\python scripts\migrar_sistema_antiguo.py "C:\ruta\a\las\planillas" --detalle
+\end{lstlisting}
+
+La carpeta debe tener las cinco planillas: \texttt{tabla clientes.xlsx},
+\texttt{tabla vehiculo.xlsx}, \texttt{tabla productos.xlsx},
+\texttt{tabla servicios.xlsx} y \texttt{tabla ordenes.xlsx}.
+
+Todo entra en \textbf{una sola transacción}: o queda todo o no queda nada. El
+script se niega a correr dos veces (si ya existe el usuario
+\texttt{sistema\_antiguo}, no hace nada), así que no hay forma de duplicar los
+datos por error.
+
+\subsection{Cómo leer el informe}
+
+Al terminar imprime cuánto cargó y, agrupado por motivo, cuánto descartó. Lo que
+hay que mirar:
+
+\begin{itemize}
+  \item \textbf{Productos sin costo.} El sistema anterior tenía servicios
+        anotados como productos (``Mano Obra'', ``1/4 Hora taller'') con stock
+        ficticio de miles de unidades. No se cargan. Con \texttt{--detalle} sale
+        la lista: conviene revisarla y crear a mano los que sean servicios de
+        verdad.
+  \item \textbf{Stock negativo o fraccionario.} Se cargan con stock cero y hay
+        que contarlos en la repisa (ajuste por recuento).
+  \item \textbf{Patentes inválidas.} Autos extranjeros o datos mal escritos. Sus
+        órdenes tampoco entran: no se les inventa un vehículo.
+  \item \textbf{Homónimos fundidos.} El sistema anterior identificaba al cliente
+        solo por su nombre, así que dos clientes con el mismo nombre quedan como
+        uno. Si aparece uno, se separa a mano.
+\end{itemize}
+
+Al final verifica que el stock cuadre: lo que decían las planillas, lo que quedó
+en el Kardex y lo que quedó en los productos tienen que ser el mismo número. Si
+no cuadra, no confirma nada.
+
+\subsection{Después de migrar: fijar los mínimos}
+
+Los productos migrados quedan con stock mínimo cero, así que todo lo que esté en
+cero aparece como crítico. Se corrige en Inventario con \textbf{Mínimo por
+categoría}, una categoría a la vez.
+
+\section{Respaldos}
+
+\subsection{Respaldar}
+
+\begin{lstlisting}
+.venv\Scripts\python scripts\respaldar.py
+\end{lstlisting}
+
+Deja un archivo comprimido en \texttt{respaldos\textbackslash
+lubriexpress-AAAAMMDD-HHMM.sql.gz}, conserva los últimos 30 y borra los más
+viejos. Si en el \texttt{.env} está configurada la carpeta de OneDrive, deja
+además una copia ahí:
+
+\begin{lstlisting}
+RESPALDO_ONEDRIVE=C:\Users\TU_USUARIO\OneDrive\Respaldos Lubri-Express
+\end{lstlisting}
+
+El cliente de OneDrive sube solo lo que cae en su carpeta, así que con copiar el
+archivo basta. Si la carpeta no existe, el script avisa y el respaldo local
+igual queda hecho.
+
+\texttt{scripts\textbackslash respaldar.py --listar} muestra lo que hay guardado.
+
+\subsection{Restaurar}
+
+\begin{lstlisting}
+.venv\Scripts\python scripts\restaurar.py respaldos\lubriexpress-20260916-2030.sql.gz
+\end{lstlisting}
+
+\textbf{Pisa la base entera.} Por eso pide escribir el nombre de la base para
+confirmar. Conviene probar una restauración al menos una vez, contra una base de
+prueba, antes de necesitarla de verdad.
+
+\subsection{Dejarlo automático}
+
+En el Programador de tareas de Windows, o con este comando en \texttt{cmd} como
+administrador (ajustando las rutas):
+
+\begin{lstlisting}
+schtasks /create /tn "Respaldo Lubri-Express" /tr "C:\Lubri-Express\codigo\.venv\Scripts\python.exe C:\Lubri-Express\codigo\scripts\respaldar.py" /sc daily /st 20:00
+\end{lstlisting}
+
+A las 20:00, después del cierre. Conviene revisar cada tanto que los archivos
+estén apareciendo, tanto en \texttt{respaldos\textbackslash} como en OneDrive.
+
+\subsection{Una advertencia sobre las versiones}
+
+El respaldo lo hace \texttt{pg\_dump}, y \textbf{tiene que ser de la misma
+versión mayor que el servidor}: uno más nuevo escribe instrucciones que el
+servidor viejo no entiende al restaurar, y eso se descubre el peor día posible.
+El script lo verifica antes de escribir nada y se niega si no calzan. Si aparece
+ese mensaje, hay que instalar las herramientas cliente de la versión que
+corresponda.
+
+\section{Empaquetar la aplicación}
+\label{sec:empaquetar}
+
+El ejecutable \textbf{se construye en Windows}: PyInstaller no cruza de un
+sistema operativo a otro. Desde el código fuente, con el entorno virtual creado:
+
+\begin{lstlisting}
+.venv\Scripts\pyinstaller.exe --noconfirm lubriexpress.spec
+\end{lstlisting}
+
+Queda en \texttt{dist\textbackslash lubriexpress\textbackslash}. Esa carpeta
+completa es lo que se copia al equipo del taller; el \texttt{.env} va adentro,
+al lado del \texttt{.exe}.
+
+El archivo \texttt{lubriexpress.spec} incluye \texttt{qtbase\_es.qm}, que es lo
+que hace que los botones de los diálogos digan ``Guardar'' y ``Cancelar'' en vez
+de ``Save'' y ``Cancel''.
+
+\section{Correr desde el código fuente}
+
+Necesario para la migración, los respaldos y el empaquetado.
+
+\begin{lstlisting}
+git clone https://github.com/CristobalEsp01/sist_lubriexpress.git
+cd sist_lubriexpress
+python -m venv .venv
+.venv\Scripts\pip install -r requirements-dev.txt
+copy .env.example .env
+.venv\Scripts\python main.py
+\end{lstlisting}
+
+La batería de pruebas corre contra una base PostgreSQL real:
+
+\begin{lstlisting}
+.venv\Scripts\python -m pytest
+\end{lstlisting}
+
+Si la base no está levantada, las pruebas que la necesitan se saltan solas en
+vez de fallar.
+
+\section{Actualizar a una versión nueva}
+
+\begin{enumerate}
+  \item Respaldar primero (\texttt{scripts\textbackslash respaldar.py}).
+  \item Traer el código nuevo y volver a empaquetar.
+  \item Reemplazar la carpeta del ejecutable, \textbf{conservando el
+        \texttt{.env}}.
+  \item Si el esquema de la base cambió, la nota de cambios lo dice y trae el
+        bloque \texttt{ALTER} que hay que ejecutar; está en
+        \texttt{docs/base-de-datos.md}.
+\end{enumerate}
+
+\section{Problemas frecuentes}
+
+\subsection*{``No se pudo conectar usando DATABASE\_URL''}
+El servicio de PostgreSQL no está corriendo, o el \texttt{.env} no está junto al
+ejecutable, o la contraseña cambió. Verificar el servicio en
+\emph{Servicios de Windows} y probar la conexión con
+\texttt{psql -U postgres -d lubriexpress}.
+
+\subsection*{Los diálogos salen en inglés}
+Falta \texttt{qtbase\_es.qm} dentro de
+\texttt{\_internal\textbackslash PySide6\textbackslash Qt\textbackslash
+translations\textbackslash} en la carpeta empaquetada. Rehacer el empaquetado
+con el \texttt{.spec} del repositorio.
+
+\subsection*{Los reportes o los PDF no aparecen donde se esperaba}
+Se guardan en la carpeta \emph{Documentos} \textbf{del usuario que tiene la
+sesión de Windows abierta}, en \texttt{Documentos\textbackslash Lubri-Express}.
+Si hay varias cuentas en el equipo, cada una tiene la suya.
+
+\subsection*{El stock no cuadra con la repisa}
+Se corrige contando, con \textbf{Ajustar stock} (queda registrado en el Kardex).
+Nunca editando la base de datos a mano: el Kardex dejaría de explicar el stock,
+que es justamente lo que el sistema anterior no hacía.
+
+\section{Verificación después de instalar}
+
+\begin{enumerate}
+  \item El ejecutable abre y muestra la ventana de inicio de sesión.
+  \item Se entra con el administrador creado por consola.
+  \item Los botones de los diálogos están en español.
+  \item Las seis pestañas abren sin errores.
+  \item Una venta de prueba baja el stock y aparece en el Kardex.
+  \item Una orden de prueba se guarda y exporta su PDF.
+  \item \texttt{Documentos\textbackslash Lubri-Express\textbackslash} se crea al
+        exportar.
+  \item \texttt{scripts\textbackslash respaldar.py} deja un archivo y lo copia a
+        OneDrive.
+  \item La tarea programada aparece en el Programador de tareas.
+  \item Al día siguiente, hay un respaldo nuevo.
+\end{enumerate}
+
+\end{document}

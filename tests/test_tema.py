@@ -1,9 +1,9 @@
 """Contraste de la paleta: cada par texto/fondo contra WCAG 2.1 AA.
 
-No es un gusto: con el ámbar 600 original, la pestaña activa daba 3.02 y el
-botón primario con texto blanco 3.19, los dos bajo el 4.5 que exige el texto.
-Esta prueba existe para que un retoque de color no vuelva a bajar de ahí sin
-que nadie se entere.
+No es un gusto: con el ámbar 600 de la primera paleta, la pestaña activa daba
+3.02 y el botón primario con texto blanco 3.19, los dos bajo el 4.5 que exige
+el texto. Esta prueba existe para que un cambio de color —como el paso al azul
+de Tailwind— no vuelva a bajar de ahí sin que nadie se entere.
 """
 import pytest
 

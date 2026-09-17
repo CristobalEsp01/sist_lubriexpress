@@ -8,8 +8,8 @@ Igual que en ventas, la orden se escribe en una sola transacción y son los
 triggers de Postgres los que descuentan el stock y dejan el rastro en el Kardex:
 este módulo nunca toca "stock_actual" (ver database/schema_lubriexpress.sql).
 """
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QPageSize, QPdfWriter, QTextDocument
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtGui import QImage, QPageSize, QPdfWriter, QTextDocument
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
     QMessageBox, QPushButton, QSpinBox, QSplitter, QStackedWidget, QTabWidget,
@@ -25,12 +25,11 @@ from ..models import Cliente, DetalleOrden, Orden, Producto, Servicio, Usuario, 
 from ..texto import filtro_busqueda
 from .clientes import FormularioCliente, FormularioVehiculo
 from .comunes import (
-    BADGE_ALERTA, BADGE_EXITO, ROL_INSIGNIA, ItemNumerico, barra, bloque_total, clp,
-    con_aviso_vacio, crear_tabla, hacer_buscable, layout_de_dialogo, layout_de_pantalla,
-    reordenar,
+    BADGE_ALERTA, BADGE_EXITO, ROL_INSIGNIA, ItemNumerico, barra, bloque_total,
+    carpeta_de_documentos, clp, con_aviso_vacio, crear_tabla, hacer_buscable,
+    layout_de_dialogo, layout_de_pantalla, reordenar,
 )
-from .comunes import carpeta_de_documentos
-from .tema import CANAL_PANEL, ESPACIO_PANTALLA, fuente_tabular
+from .tema import CANAL_PANEL, ESPACIO_PANTALLA, LOGO, fuente_tabular
 
 COLUMNAS_CARRITO = ["Ítem", "Cant.", "Precio Unit.", "Subtotal"]
 COLUMNAS_DETALLE = ["Ítem", "Cant.", "Precio Unit.", "Subtotal"]
@@ -74,6 +73,8 @@ def guardar_pdf_de_orden(orden_id: int, ruta) -> None:
             "pagada": orden.estado_pago, "folio": orden.folio_mercado_publico, "notas": orden.notas,
         }
     documento = QTextDocument()
+    if LOGO.is_file():
+        documento.addResource(QTextDocument.ImageResource, QUrl("logo"), QImage(str(LOGO)))
     documento.setHtml(html_de_orden(datos))
     escritor = QPdfWriter(str(ruta))
     escritor.setPageSize(QPageSize(QPageSize.A4))
@@ -362,6 +363,9 @@ class OrdenesWidget(QTabWidget):
         # Crece con la ventana, pero hasta ahí: sin tope, en pantalla completa
         # queda una caja vacía de 700 px donde caben ocho líneas de texto.
         self.texto_observaciones.setMaximumHeight(240)
+        # Y puede achicarse por debajo de lo que Qt pide de suyo: es el campo
+        # que cede alto cuando la ventana está en su tamaño mínimo.
+        self.texto_observaciones.setMinimumHeight(40)
 
         self.tipo_descuento = QComboBox()
         self.tipo_descuento.addItems(TIPOS_DESCUENTO)

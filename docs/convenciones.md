@@ -79,10 +79,12 @@ imprime por `sys.excepthook` sin que pytest se entere.
 Todos los colores y medidas están en `src/ui/tema.py`. Ningún widget escribe un
 hex a mano: si un color hace falta en dos lugares, se agrega ahí como constante.
 
-El acento ámbar se reserva para donde el sistema está diciendo algo —pestaña
-activa, campo con foco, fila seleccionada, botón de acción principal— y el rojo
-óxido solo para stock bajo mínimo y cantidades negativas. Un color que aparece en
-todas partes deja de señalar nada.
+La paleta es la de Tailwind CSS —azul sobre pizarra—, para no inventar una
+escala propia. El acento se reserva para donde el sistema está diciendo algo
+—pestaña activa, campo con foco, fila seleccionada, botón de acción principal—
+y el rojo solo para stock bajo mínimo y cantidades negativas. Un color que
+aparece en todas partes deja de señalar nada. El ámbar del logo no se usa en la
+interfaz: identifica al taller, no a un estado del sistema.
 
 Las columnas numéricas van en monoespaciada (`fuente_tabular()`), incluidos RUT y
 patentes: son identificadores de dígitos y alineados se escanean de un vistazo.
@@ -207,8 +209,23 @@ Para listarlos:
 grep -rn "ponytail:" src/
 ```
 
-Hoy hay tres: el listado de inventario carga la tabla completa en memoria (sirve para
-un lubricentro, no para miles de SKU), el recordatorio de `db.refresh()` tras los
-triggers de stock, y la idempotencia de la migración, que es un guardián global y no
-un upsert por fila.
+Hoy hay tres: la normalización de tildes que `texto.py` escribe a mano en SQL, el
+listado de inventario que carga la tabla completa en memoria, y la idempotencia de la
+migración, que es un guardián global y no un upsert por fila.
 
+
+## Manuales
+
+Los dos manuales de la propuesta viven en `docs/manuales/`, en LaTeX, y se
+compilan con `pdflatex` sin `--shell-escape`:
+
+```bash
+cd docs/manuales && pdflatex manual-usuario.tex && pdflatex manual-usuario.tex
+```
+
+Dos veces, para que cuadre el índice. `estilo.tex` es el preámbulo compartido.
+
+Las capturas **no se toman de la base de trabajo**: sus pantallas están llenas
+de nombres y patentes de clientes reales y este repositorio es público.
+`docs/manuales/capturas.py` levanta datos de fantasía en una base desechable y
+fotografía eso; el propio script se niega a correr contra el puerto 55432.
