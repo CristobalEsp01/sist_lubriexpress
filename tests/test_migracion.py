@@ -205,21 +205,26 @@ def test_las_categorias_se_unifican_pero_las_erratas_quedan_avisadas():
     informe = Informe()
     mapa = canonizar_categorias(
         ["Filtro aire"] * 3 + ["FILTRO AIRE", "Filtro de Aires", "  filtro aire "]
-        + ["Aceite motor"] * 2 + ["Aceite moto"]
-        + ["Bujía", "Bujía", "Bujias"] + [None, ""],
+        + ["Aceite motor"] * 2 + ["Aceite moto"] + ["AAceite motor"]
+        + ["Bujía", "Bujía", "Bujias"] + ["REPUESTO", "REPUSTO"] + [None, ""],
         informe, "productos",
     )
 
     # Mayúsculas, tildes, el "de" del medio y el plural son la misma categoría.
     assert mapa["FILTRO AIRE"] == mapa["Filtro de Aires"] == "Filtro aire"
     assert mapa["Bujias"] == "Bujía"
+    # Erratas evidentes con equivalencia explícita comprobada.
+    assert mapa["AAceite motor"] == "Aceite motor"
+    assert mapa["REPUSTO"] == "REPUESTO"
     # El nombre es la escritura más usada: no se inventa una que nadie escribió.
-    assert sorted(set(mapa.values())) == ["Aceite moto", "Aceite motor", "Bujía", "Filtro aire"]
+    assert sorted(set(mapa.values())) == ["Aceite moto", "Aceite motor", "Bujía", "Filtro aire", "REPUESTO"]
 
     unificadas = informe.detalle[("productos", "categoría unificada (la misma, escrita distinto)")]
     assert "FILTRO AIRE (1) -> Filtro aire" in unificadas
+    assert "AAceite motor (1) -> Aceite motor" in unificadas
+    assert "REPUSTO (1) -> REPUESTO" in unificadas
 
     parecidas = informe.detalle[
         ("productos", "categoría parecida a otra (juntarlas es decisión del taller)")
     ]
-    assert parecidas == ["Aceite moto (1) ~ ¿Aceite motor (2)?"]
+    assert parecidas == ["Aceite moto (1) ~ ¿Aceite motor (3)?"]

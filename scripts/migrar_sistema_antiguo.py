@@ -130,6 +130,39 @@ CONECTORES = {"DE", "DEL"}
 # se decide sola: el umbral solo elige de qué avisar.
 PARECIDO = 0.85
 
+# Equivalencias comprobadas para erratas evidentes, modelos/formatos incluidos
+# en el nombre y sinónimos directos del sistema antiguo. Se mapean por clave
+# canónica para no depender de comparaciones difusas que arriesgarían fusionar
+# categorías legítimas distintas (como "Aceite moto" con "Aceite motor").
+EQUIVALENCIAS_CATEGORIAS = {
+    # Erratas tipográficas evidentes
+    "AACEITE MOTOR": "ACEITE MOTOR",
+    "HERRAMIETA": "HERRAMIENTA",
+    "REPUSTO": "REPUESTO",
+    "REPESTO": "REPUESTO",
+    "REUESTO": "REPUESTO",
+    "REOUESTO": "REPUESTO",
+    "FILTR AIRE": "FILTRO AIRE",
+    "FILTR O": "FILTRO AIRE",
+    "FIILTRO": "FILTRO AIRE",
+    # Modelos o descripciones físicas dentro de la categoría
+    "FILTRO AIRE CIRCULAR TIPO PLATO": "FILTRO AIRE",
+    "FILTRO AIRE RAV4 2021": "FILTRO AIRE",
+    "FILTRO AIRE SUZUKI SWIFT 1 2 2021": "FILTRO AIRE",
+    "FILTRO POLEN 2 CUERPO": "FILTRO POLEN",
+    # Sinónimos y variantes léxicas directas
+    "BEBIDA": "BEBESTIBLE",
+    "CUIDADO VEHICULO": "CUIDADO AUTO",
+    "ACEITE TRANSMISION": "ACEITE CAJA",
+    "LUCE": "AMPOLLETA",
+    "PASTILLA FRENO": "FRENO",
+    "BORNE PARA BATERIA": "BATERIA",
+    "ACCESORIO MOTOR": "BUJIA",
+    "LIMPIADOR AC": "ADITIVO",
+    # Casos especiales de contexto en productos
+    "SIN SELLO": "ACEITE MOTOR",
+}
+
 
 def clave_de_categoria(texto: str) -> str:
     """'Filtro de Aires' -> 'FILTRO AIRE'. La misma clave para las escrituras
@@ -147,13 +180,15 @@ def canonizar_categorias(valores, informe: Informe, planilla: str) -> dict[str, 
 
     No inventa nombres: de las cuatro formas de escribir el filtro de aire gana
     la que el taller tecleó 295 veces, no un Title Case que nadie escribió. Y no
-    corrige erratas —eso pide saber qué se vende, no comparar letras—, solo las
-    lista en el informe.
+    corrige erratas a ciegas —eso pide saber qué se vende, no comparar letras—,
+    sino que aplica equivalencias conocidas y avisa de parecidos dudosos.
     """
     cuenta = Counter(v for valor in valores if (v := limpio(valor)))
     grupos = defaultdict(list)
     for escritura in cuenta:
-        grupos[clave_de_categoria(escritura)].append(escritura)
+        clave = clave_de_categoria(escritura)
+        clave = EQUIVALENCIAS_CATEGORIAS.get(clave, clave)
+        grupos[clave].append(escritura)
 
     mapa, nombre, total = {}, {}, {}
     for clave, escrituras in grupos.items():
