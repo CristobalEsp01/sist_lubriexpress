@@ -42,10 +42,17 @@ def ingresos_por_periodo(db, desde: date, hasta: date) -> list[tuple]:
     ):
         d = dias[clave(fecha)]
         d[2] += 1; d[3] += int(total); d[4] += int(impuesto)
+    # La fecha viaja como `date`, no como texto: una columna de fechas ordenada
+    # alfabéticamente pone el 01 de octubre antes del 02 de septiembre. Quien
+    # muestra o exporta la formatea con `rotulo_de_fecha`.
     return [
-        (dia.strftime("%m-%Y" if por_mes else "%d-%m-%Y"), nv, tv, no, to, tv + to - iva, iva, tv + to)
+        (dia, nv, tv, no, to, tv + to - iva, iva, tv + to)
         for dia, (nv, tv, no, to, iva) in sorted(dias.items())
-    ]
+    ], por_mes
+
+
+def rotulo_de_fecha(dia: date, por_mes: bool) -> str:
+    return dia.strftime("%m-%Y" if por_mes else "%d-%m-%Y")
 
 
 def ventas_por_producto(db, desde: date, hasta: date) -> list[tuple]:
