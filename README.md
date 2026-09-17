@@ -22,7 +22,7 @@ Lubri-Express (Inversiones Tres Puntos SpA). Corre localmente sobre PostgreSQL.
 | Migración del sistema antiguo | Funcionando (`scripts/migrar_sistema_antiguo.py`) |
 | Respaldo automatizado local y a OneDrive | Funcionando (`scripts/respaldar.py`, con restauración probada) |
 | Aplicación empaquetada para Windows | Especificación lista (`lubriexpress.spec`); el `.exe` se construye en Windows |
-| Manuales de usuario y técnico | En preparación |
+| Manuales de usuario y técnico | Entregados (`docs/manuales/*.pdf`) |
 
 Los precios del catálogo son **netos**: el IVA (19 %) se calcula al cobrar y queda
 guardado en el documento, así el historial no depende de la tasa vigente. El
