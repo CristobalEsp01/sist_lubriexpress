@@ -11,7 +11,8 @@ from conftest import patente_de_prueba, rut_de_prueba
 from sqlalchemy import select, update
 
 from scripts.migrar_sistema_antiguo import (
-    USUARIO_MIGRACION, PATENTE_ORDEN, cuadre, fecha_excel, migrar,
+    USUARIO_MIGRACION, PATENTE_ORDEN, Informe, canonizar_categorias, cuadre, fecha_excel,
+    migrar,
 )
 from src.models import KardexMovimiento, Orden, Producto, Servicio, Usuario, Vehiculo
 from src.xlsx import leer_xlsx
@@ -192,3 +193,33 @@ def test_el_lector_de_xlsx_entiende_los_tres_tipos_de_celda(tmp_path):
         {"Nombre": "Pérez", "Fecha": None, "Nota": None},   # celdas vacías no aparecen en el XML
     ]
     assert fecha_excel("46272").date().isoformat() == "2026-09-07"
+
+
+def test_las_categorias_se_unifican_pero_las_erratas_quedan_avisadas():
+    """La planilla real trae 131 escrituras para sesenta y tantas categorías.
+
+    La misma palabra escrita distinto se junta sola. Una errata no: "Aceite
+    moto" es aceite de moto, no un "Aceite motor" mal tecleado, y comparar
+    letras no sabe la diferencia. Se avisa y lo resuelve quien conoce el mesón.
+    """
+    informe = Informe()
+    mapa = canonizar_categorias(
+        ["Filtro aire"] * 3 + ["FILTRO AIRE", "Filtro de Aires", "  filtro aire "]
+        + ["Aceite motor"] * 2 + ["Aceite moto"]
+        + ["Bujía", "Bujía", "Bujias"] + [None, ""],
+        informe, "productos",
+    )
+
+    # Mayúsculas, tildes, el "de" del medio y el plural son la misma categoría.
+    assert mapa["FILTRO AIRE"] == mapa["Filtro de Aires"] == "Filtro aire"
+    assert mapa["Bujias"] == "Bujía"
+    # El nombre es la escritura más usada: no se inventa una que nadie escribió.
+    assert sorted(set(mapa.values())) == ["Aceite moto", "Aceite motor", "Bujía", "Filtro aire"]
+
+    unificadas = informe.detalle[("productos", "categoría unificada (la misma, escrita distinto)")]
+    assert "FILTRO AIRE (1) -> Filtro aire" in unificadas
+
+    parecidas = informe.detalle[
+        ("productos", "categoría parecida a otra (juntarlas es decisión del taller)")
+    ]
+    assert parecidas == ["Aceite moto (1) ~ ¿Aceite motor (2)?"]

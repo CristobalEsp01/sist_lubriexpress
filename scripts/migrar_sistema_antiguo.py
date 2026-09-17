@@ -30,13 +30,22 @@ Reglas, en orden de importancia:
   se funden en un solo cliente. El dueño de cada vehículo es el nombre de su
   orden más reciente; los nombres que no están en la planilla de clientes se
   crean desde la orden.
+- Las categorías vienen escritas de cualquier manera: 131 escrituras para
+  poco más de sesenta categorías de verdad. Se unifica lo que es la misma
+  palabra —mayúsculas, tildes, espacios, el "de" del medio y el plural— y se
+  conserva la escritura más usada, sin inventar una nueva. Las erratas no se
+  tocan: "Aceite moto" no es un "Aceite motor" mal escrito, y ninguna regla de
+  parecido sabe la diferencia. Salen listadas en el informe para que las junte
+  a mano quien conozca el mostrador.
 - Los cinco técnicos pasan a ser usuarios reales, inactivos y sin contraseña
   utilizable hasta que un administrador se la ponga. Las órdenes sin técnico
   cuelgan de `sistema_antiguo`, también inactivo.
 """
+import re
 import secrets
 import sys
 from collections import Counter, defaultdict
+from difflib import SequenceMatcher
 from datetime import datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
@@ -111,6 +120,68 @@ class Informe:
             if con_detalle:
                 for fila in self.detalle[(planilla, motivo)]:
                     print(f"                   {fila}")
+
+
+# El "de" no distingue una categoría de otra: "Filtro de aire" y "Filtro aire"
+# son la misma repisa. Palabras con significado, en cambio, no se tocan.
+CONECTORES = {"DE", "DEL"}
+# Bajo esto dos categorías no se parecen en nada; sobre esto, o son la misma mal
+# escrita o son dos cosas distintas que se escriben parecido. Ninguna de las dos
+# se decide sola: el umbral solo elige de qué avisar.
+PARECIDO = 0.85
+
+
+def clave_de_categoria(texto: str) -> str:
+    """'Filtro de Aires' -> 'FILTRO AIRE'. La misma clave para las escrituras
+    que son la misma palabra: mayúsculas, tildes, puntuación, conectores y el
+    plural. Lo que sobrevive a eso son categorías distintas de verdad."""
+    return " ".join(
+        p[:-1] if p.endswith("S") and len(p) > 3 else p
+        for p in re.split(r"[^A-Z0-9]+", sin_tildes(texto or ""))
+        if p and p not in CONECTORES
+    )
+
+
+def canonizar_categorias(valores, informe: Informe, planilla: str) -> dict[str, str]:
+    """Mapa escritura -> categoría, con la escritura más usada como nombre.
+
+    No inventa nombres: de las cuatro formas de escribir el filtro de aire gana
+    la que el taller tecleó 295 veces, no un Title Case que nadie escribió. Y no
+    corrige erratas —eso pide saber qué se vende, no comparar letras—, solo las
+    lista en el informe.
+    """
+    cuenta = Counter(v for valor in valores if (v := limpio(valor)))
+    grupos = defaultdict(list)
+    for escritura in cuenta:
+        grupos[clave_de_categoria(escritura)].append(escritura)
+
+    mapa, nombre, total = {}, {}, {}
+    for clave, escrituras in grupos.items():
+        canonica = min(escrituras, key=lambda e: (-cuenta[e], e))
+        nombre[clave] = canonica
+        total[clave] = sum(cuenta[e] for e in escrituras)
+        for escritura in escrituras:
+            mapa[escritura] = canonica
+            if escritura != canonica:
+                informe.descartar(
+                    planilla, "categoría unificada (la misma, escrita distinto)",
+                    f"{escritura} ({cuenta[escritura]}) -> {canonica}",
+                )
+
+    # Y lo que se parece sin ser lo mismo, o al revés. Cada categoría chica se
+    # compara contra la más parecida de las que tienen más productos que ella:
+    # una errata es una categoría de uno al lado de una de cuatrocientos. Esto
+    # solo avisa —"Aceite moto" no es un "Aceite motor" mal escrito— y la línea
+    # queda en el informe para que la resuelva quien conozca el mostrador.
+    claves = sorted(grupos, key=lambda k: (-total[k], k))
+    for i, chica in enumerate(claves[1:], 1):
+        grande = max(claves[:i], key=lambda k: SequenceMatcher(None, chica, k).ratio())
+        if SequenceMatcher(None, chica, grande).ratio() >= PARECIDO:
+            informe.descartar(
+                planilla, "categoría parecida a otra (juntarlas es decisión del taller)",
+                f"{nombre[chica]} ({total[chica]}) ~ ¿{nombre[grande]} ({total[grande]})?",
+            )
+    return mapa
 
 
 def recortar(informe: Informe, planilla: str, campo: str, valor, largo: int, fila: str):
@@ -356,6 +427,9 @@ def _stock_inicial(texto, informe: Informe, nombre: str) -> int:
 def _productos(db, filas, usuario_migracion: Usuario, informe: Informe) -> None:
     nombres = Counter()
     productos = []
+    categorias = canonizar_categorias(
+        (fila.get("Categoría") for fila in filas), informe, "productos",
+    )
     for fila in filas:
         nombre = limpio(fila.get("Nombre del producto"))
         if not nombre:
@@ -374,7 +448,8 @@ def _productos(db, filas, usuario_migracion: Usuario, informe: Informe) -> None:
         producto = Producto(
             nombre=recortar(informe, "productos", "nombre", nombre, 100, nombre),
             marca=recortar(informe, "productos", "marca", fila.get("Fabricante"), 50, nombre),
-            categoria=recortar(informe, "productos", "categoría", fila.get("Categoría"), 50, nombre),
+            categoria=recortar(informe, "productos", "categoría",
+                               categorias.get(limpio(fila.get("Categoría"))), 50, nombre),
             descripcion=limpio(fila.get("Descripción")),
             precio_costo=costo, precio_venta=neto,
         )
@@ -395,6 +470,9 @@ def _productos(db, filas, usuario_migracion: Usuario, informe: Informe) -> None:
 
 def _servicios(db, filas, informe: Informe) -> None:
     servicios = []
+    categorias = canonizar_categorias(
+        (fila.get("Categoría del servicio") for fila in filas), informe, "servicios",
+    )
     for fila in filas:
         nombre = limpio(fila.get("Nombre del servicio"))
         precio = numero(fila.get("Precio"))
@@ -403,7 +481,8 @@ def _servicios(db, filas, informe: Informe) -> None:
             continue
         servicios.append(Servicio(
             nombre=recortar(informe, "servicios", "nombre", nombre, 100, nombre),
-            categoria=recortar(informe, "servicios", "categoría", fila.get("Categoría del servicio"), 50, nombre),
+            categoria=recortar(informe, "servicios", "categoría",
+                               categorias.get(limpio(fila.get("Categoría del servicio"))), 50, nombre),
             precio_venta=precio,
         ))
     db.add_all(servicios)
