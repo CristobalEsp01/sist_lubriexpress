@@ -571,16 +571,23 @@ class InventarioWidget(QWidget):
         self.resumen = QLabel()
         self.resumen.setProperty("clase", "resumen")
 
+        # Dos filas: buscar y lo que se hace con el producto elegido arriba, y
+        # las tareas de bodega abajo. En una sola, los siete botones aplastaban
+        # la caja de búsqueda hasta dejarla en "Bus…".
         barra_superior = barra(
-            self.busqueda, self.solo_criticos, self.boton_vender,
-            self.boton_ingreso, self.boton_excel, self.boton_minimos, self.boton_ajuste,
-            boton_nuevo, self.boton_editar, estira=0,
+            self.busqueda, self.solo_criticos, self.boton_vender, self.boton_editar,
+            boton_nuevo, estira=0,
+        )
+        barra_bodega = barra(
+            QLabel("Bodega:"), self.boton_ingreso, self.boton_ajuste, self.boton_excel,
+            self.boton_minimos, estira=5,
         )
 
         arriba = QWidget()
         layout_arriba = QVBoxLayout(arriba)
         layout_arriba.setContentsMargins(0, 0, 0, CANAL_PANEL)
         layout_arriba.addLayout(barra_superior)
+        layout_arriba.addLayout(barra_bodega)
         layout_arriba.addWidget(self.tabla)
 
         abajo = QWidget()

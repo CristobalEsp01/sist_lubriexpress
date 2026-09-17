@@ -34,3 +34,9 @@ dist/
 
 # Respaldos locales de la base (scripts/respaldar.py)
 respaldos/
+
+# Auxiliares de LaTeX
+docs/manuales/*.aux
+docs/manuales/*.log
+docs/manuales/*.out
+docs/manuales/*.toc

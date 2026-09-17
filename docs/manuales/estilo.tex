@@ -1,0 +1,39 @@
+% Preámbulo compartido por los dos manuales. Sobrio y sin colores: se imprime
+% en blanco y negro en el mesón del taller.
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[spanish,es-noquoting]{babel}
+\usepackage[a4paper,margin=2.6cm]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{fancyhdr}
+\usepackage[hidelinks]{hyperref}
+\usepackage{titlesec}
+
+\graphicspath{{imagenes/}}
+\setlist{itemsep=2pt,topsep=4pt}
+\titleformat{\section}{\large\bfseries}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{0.6em}{}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small Lubri-Express — Sistema de Gestión}
+\fancyhead[R]{\small\leftmark}
+\fancyfoot[C]{\small\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% Una captura de pantalla con su pie.
+\newcommand{\pantalla}[2]{%
+  \begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\linewidth]{#1}
+    \caption{#2}
+  \end{figure}}
+
+% Media captura, para los diálogos.
+\newcommand{\dialogo}[2]{%
+  \begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.62\linewidth]{#1}
+    \caption{#2}
+  \end{figure}}

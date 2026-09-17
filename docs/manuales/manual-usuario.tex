@@ -1,0 +1,301 @@
+\documentclass[11pt,a4paper]{article}
+\input{estilo}
+
+\title{\vspace{-1.5cm}\textbf{Manual de usuario}\\[0.3cm]
+       \large Sistema de Gestión de Taller, Inventario y Ventas}
+\author{Lubri-Express — Inversiones Tres Puntos SpA}
+\date{}
+
+\begin{document}
+\maketitle
+\thispagestyle{empty}
+
+\noindent Este manual describe el uso diario del sistema. La instalación y la
+configuración están en el \emph{Manual técnico}.
+
+\tableofcontents
+\newpage
+
+\section{Antes de empezar}
+
+\subsection{Iniciar sesión}
+
+El sistema pide usuario y contraseña cada vez que se abre. No hay sesión que
+quede abierta de un día para otro: cada movimiento de inventario, cada venta y
+cada orden quedan firmados con el nombre de quien los hizo, y esa firma es la
+que permite después saber quién tocó qué.
+
+\dialogo{login}{Inicio de sesión. Los errores se muestran bajo los campos.}
+
+Si la contraseña no es correcta, o la cuenta está desactivada, el aviso aparece
+en la misma ventana. Las contraseñas las cambia un administrador desde la
+pestaña \textbf{Usuarios}.
+
+\subsection{Qué puede hacer cada rol}
+
+El sistema tiene tres roles. Los botones que un rol no puede usar aparecen
+apagados, y al pasar el mouse por encima dicen a quién corresponden.
+
+\begin{center}
+\begin{tabular}{p{7.2cm}ccc}
+\toprule
+\textbf{Acción} & \textbf{Usuario} & \textbf{Supervisor} & \textbf{Admin.} \\
+\midrule
+Vender en mostrador & Sí & Sí & Sí \\
+Abrir órdenes de trabajo & Sí & Sí & Sí \\
+Clientes y vehículos & Sí & Sí & Sí \\
+Consultar inventario y Kardex & Sí & Sí & Sí \\
+Ver reportes & Sí & Sí & Sí \\
+\midrule
+Crear y editar productos & --- & Sí & Sí \\
+Ingresar mercadería & --- & Sí & Sí \\
+Ajustar stock por recuento & --- & Sí & Sí \\
+Cargar inventario desde Excel & --- & Sí & Sí \\
+Fijar el mínimo de una categoría & --- & Sí & Sí \\
+Ver el precio de costo & --- & Sí & Sí \\
+\midrule
+Crear usuarios y asignar roles & --- & --- & Sí \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Los precios son netos}
+
+Todos los precios del catálogo —productos y servicios— se guardan \textbf{sin
+IVA}. El impuesto se calcula al cobrar, se muestra desglosado y queda guardado
+en la boleta o en la orden. Por eso, al crear un producto, el formulario pide el
+precio neto y muestra al lado cuánto es con IVA.
+
+\section{Inventario}
+
+\pantalla{inventario}{Listado de productos, con el historial de movimientos del
+producto seleccionado abajo.}
+
+La tabla de arriba es el catálogo completo. Se busca escribiendo en la caja
+superior: sirve el nombre, la marca o la categoría, sin importar tildes ni
+mayúsculas. La casilla \textbf{Solo stock crítico} deja a la vista los productos
+que están en su mínimo o por debajo.
+
+Al elegir un producto, abajo aparece su \textbf{Kardex}: cada entrada, cada
+salida por venta o por orden, con la fecha, la cantidad, el saldo que quedó y
+quién lo hizo. Ese historial no se puede editar —es el registro auditable del
+inventario— y por eso el stock nunca se escribe a mano.
+
+\subsection{Recibir mercadería}
+
+\dialogo{dialogo_ingreso}{Ingreso de mercadería: se arma la lista y se confirma
+una sola vez.}
+
+\begin{enumerate}
+  \item \textbf{Ingresar Mercadería}.
+  \item Buscar el producto, poner la cantidad que llegó y \textbf{Añadir a la
+        lista}. Se repite por cada producto de la factura del proveedor.
+  \item Revisar la columna \emph{Nuevo Stock}, que muestra cómo quedará cada uno.
+  \item \textbf{Confirmar Ingreso}.
+\end{enumerate}
+
+Recién al confirmar se mueve el stock, y queda una entrada en el Kardex por cada
+producto.
+
+\subsection{Corregir el stock después de un recuento}
+
+Cuando lo que hay en la repisa no coincide con lo que dice el sistema —una
+merma, un error de digitación, un dato que venía mal del sistema antiguo— se
+corrige contando.
+
+\dialogo{dialogo_ajuste}{Ajuste por recuento: se escribe lo que hay de verdad.}
+
+Se elige el producto, se aprieta \textbf{Ajustar stock} y se escribe el
+\textbf{stock real contado}. El sistema calcula la diferencia y la registra como
+un ajuste manual en el Kardex. El inventario queda corregido y, además, queda
+dicho que se corrigió, cuándo y por quién.
+
+\subsection{Cargar muchos productos desde Excel}
+
+\dialogo{dialogo_excel}{Carga masiva: primero se ve qué entraría, y solo
+entonces se carga.}
+
+\begin{enumerate}
+  \item \textbf{Cargar Excel} y después \textbf{Guardar plantilla\ldots}: el
+        sistema entrega un archivo con las columnas que espera y una fila de
+        ejemplo.
+  \item Llenar la plantilla con LibreOffice o Excel.
+  \item \textbf{Elegir planilla\ldots}: se ve la lista de lo que entraría, y
+        cada fila dice si es un producto \emph{nuevo} o uno \emph{existente}.
+  \item Si alguna fila tiene un problema, aparece abajo con su número de fila y
+        el botón \textbf{Cargar} queda apagado. Se corrige la planilla y se
+        vuelve a elegir.
+\end{enumerate}
+
+La carga es todo o nada, a propósito: si entrara una parte y después se repitiera
+la planilla corregida, el stock de las filas que sí entraron quedaría sumado dos
+veces. A un producto que ya existe solo se le suma el stock; sus precios no se
+pisan desde una planilla.
+
+\subsection{Stock mínimo por categoría}
+
+\dialogo{dialogo_minimos}{El mínimo de toda una categoría, de una vez.}
+
+El \emph{stock mínimo} es el umbral bajo el cual un producto aparece como
+crítico. Fijarlo producto por producto es inviable con miles de ítems, así que
+\textbf{Mínimo por categoría} lo aplica a todos los de una misma categoría. Un
+producto puntual puede tener después su propio mínimo, editándolo.
+
+\section{Ventas de mostrador}
+
+\pantalla{ventas}{Punto de venta: catálogo a la izquierda, carrito a la derecha.}
+
+\begin{enumerate}
+  \item Buscar el producto y \textbf{Agregar al carrito} (o doble clic).
+  \item Repetir por cada producto. La cantidad se ajusta al agregar.
+  \item Si el cliente está registrado, elegirlo en \textbf{Cliente}; una venta
+        sin cliente es normal y no exige nada.
+  \item Escribir el \textbf{N.º de boleta}. Es obligatorio: es lo que amarra la
+        venta del sistema con el documento que se le entrega al cliente.
+  \item \textbf{Generar Venta}.
+\end{enumerate}
+
+El pie muestra el neto, el IVA y el total. Al cobrar, el stock baja solo y queda
+la salida en el Kardex. Si entremedio alguien vendió lo último que quedaba, el
+sistema lo avisa y no deja cobrar de más.
+
+La pestaña \textbf{Historial de Ventas} lista lo cobrado; con doble clic se ve el
+detalle de cada boleta.
+
+\section{Clientes y vehículos}
+
+\pantalla{clientes}{Clientes arriba; abajo, los vehículos del cliente elegido.}
+
+Se busca por nombre, por RUT o por patente, sin importar tildes, puntos ni
+guiones: \texttt{perez}, \texttt{Pérez} y \texttt{PEREZ} encuentran lo mismo, y
+\texttt{12345678} encuentra al RUT \texttt{12.345.678-5}.
+
+A las personas no se les pide RUT —en el mesón no lo dan y frena la atención—;
+a las empresas sí, porque sin RUT no se les puede facturar.
+
+\subsection{Vehículos}
+
+\dialogo{dialogo_vehiculo}{Ficha del vehículo.}
+
+Cada vehículo cuelga de un cliente y se identifica por su patente, que es única
+en todo el sistema. Además de marca, modelo y año, la ficha guarda el tipo, la
+versión, el VIN y el número de motor, que es lo que traía el sistema anterior.
+
+\subsection{Escribir por WhatsApp}
+
+Con un cliente elegido, el botón \textbf{WhatsApp} abre la conversación con su
+teléfono, para avisarle que el auto está listo. El botón está apagado si el
+cliente no tiene un número que parezca un celular chileno.
+
+\section{Órdenes de trabajo}
+
+\pantalla{orden}{Orden en proceso. La tarjeta superior dice de qué vehículo se
+trata y cuál fue su último servicio.}
+
+\subsection{Abrir una orden}
+
+\begin{enumerate}
+  \item \textbf{Nueva Orden de Trabajo}.
+  \item Elegir el cliente. Si no existe, \textbf{Crear Cliente} sin salir de ahí.
+  \item Elegir el vehículo. Si es la primera vez que viene, \textbf{Añadir
+        Vehículo}.
+\end{enumerate}
+
+Se abre la mesa de trabajo, con una tarjeta arriba que muestra la patente, el
+vehículo, el cliente y \textbf{el último servicio registrado con su
+kilometraje}: es contra ese número que se compara el de hoy.
+
+\subsection{Cargar lo que se usó}
+
+Los \textbf{productos} (aceites, filtros, insumos) descuentan stock; los
+\textbf{servicios} (mano de obra) no, y por eso van en su propio buscador. Se
+agregan uno por uno, con su cantidad.
+
+El \textbf{kilometraje de ingreso} es obligatorio: es con lo que se calcula el
+próximo servicio. Si se anota un kilometraje menor que el del servicio anterior,
+el sistema pregunta antes de guardar —suele ser un dedo cambiado, pero a veces
+es un tablero reemplazado.
+
+\subsection{Descuento, folio y pago}
+
+El descuento se aplica \textbf{en porcentaje o en monto fijo}, nunca los dos a
+la vez: se elige cuál en la lista y se escribe el valor al lado. El IVA se
+calcula sobre lo que efectivamente se cobra, ya descontado.
+
+El \textbf{folio de Mercado Público} se llena solo en las órdenes
+institucionales; es lo que después permite separarlas de los clientes normales
+en el historial. La casilla \textbf{Pagada} deja constancia del pago.
+
+\subsection{Historial y PDF para el cliente}
+
+\pantalla{historial_ordenes}{Historial de órdenes, con el filtro de Mercado
+Público.}
+
+El historial se busca por número de orden, patente o cliente, y el filtro de la
+derecha separa \emph{Mercado Público} de \emph{Clientes}. Con doble clic se abre
+el detalle de la orden.
+
+\dialogo{dialogo_detalle_orden}{Detalle de una orden guardada.}
+
+Desde ahí, \textbf{Exportar PDF} genera el documento para el cliente, con el
+desglose de insumos y servicios, el descuento, el IVA y el total. Se guarda en
+\texttt{Documentos\textbackslash Lubri-Express\textbackslash Órdenes}.
+
+\section{Reportes}
+
+\pantalla{reportes}{Ingresos del período, con su gráfico.}
+
+Arriba se elige el rango de fechas. Hay cuatro reportes:
+
+\begin{itemize}
+  \item \textbf{Ingresos por período}: ventas y órdenes por día —o por mes, si
+        el rango es largo—, con neto, IVA y total.
+  \item \textbf{Ventas por producto}: cuánto se vendió de cada cosa.
+  \item \textbf{Por usuario}: cuánto movió cada persona.
+  \item \textbf{Reabastecimiento}: qué hay que reponer.
+\end{itemize}
+
+\pantalla{reabastecimiento}{Reabastecimiento: los productos en su mínimo o por
+debajo, ordenados por lo que falta.}
+
+\textbf{Exportar a Excel} guarda el reporte que está a la vista en
+\texttt{Documentos\textbackslash Lubri-Express\textbackslash Reportes}, y
+\textbf{Abrir carpeta de reportes} abre esa carpeta.
+
+\medskip
+\noindent\emph{Nota:} las órdenes traídas del sistema anterior se cargaron con
+su total, pero sin el detalle de qué insumos llevaron —el sistema viejo no lo
+guardaba—. Por eso \emph{Ventas por producto} refleja lo vendido desde que se
+usa este sistema, mientras que \emph{Ingresos por período} sí cubre todo el
+historial.
+
+\section{Usuarios}
+
+\pantalla{usuarios}{Administración de usuarios. Solo la ve el administrador.}
+
+\textbf{Nuevo usuario} pide nombre, usuario, rol y contraseña. Al editar, dejar
+la contraseña en blanco la conserva; escribir una nueva la reemplaza.
+
+Un usuario \textbf{desactivado} no puede entrar, pero su nombre sigue firmando
+todo lo que hizo: por eso se desactiva en vez de borrarse. Un administrador no
+puede desactivarse a sí mismo —el sistema quedaría sin nadie que pueda
+deshacerlo—.
+
+\section{Preguntas frecuentes}
+
+\subsection*{El producto no aparece al vender}
+Puede estar desactivado. En Inventario se ve en gris y su fila lo dice.
+
+\subsection*{Aparecen muchos productos como ``stock crítico''}
+El mínimo empieza en cero para todo lo que vino del sistema anterior, así que
+cualquier producto sin stock figura como crítico. Se corrige fijando los mínimos
+por categoría (sección 2.4).
+
+\subsection*{Me equivoqué en una orden ya guardada}
+Las órdenes no se editan: son el registro de lo que se hizo. Si hay que corregir
+el inventario, se hace con un ajuste por recuento, que deja constancia.
+
+\subsection*{El sistema dice que no se pudo conectar a la base de datos}
+Es un problema de instalación, no de uso. Está en el Manual técnico.
+
+\end{document}

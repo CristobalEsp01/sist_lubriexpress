@@ -211,3 +211,19 @@ Hoy hay tres: la normalización de tildes que `texto.py` escribe a mano en SQL, 
 listado de inventario que carga la tabla completa en memoria, y la idempotencia de la
 migración, que es un guardián global y no un upsert por fila.
 
+
+## Manuales
+
+Los dos manuales de la propuesta viven en `docs/manuales/`, en LaTeX, y se
+compilan con `pdflatex` sin `--shell-escape`:
+
+```bash
+cd docs/manuales && pdflatex manual-usuario.tex && pdflatex manual-usuario.tex
+```
+
+Dos veces, para que cuadre el índice. `estilo.tex` es el preámbulo compartido.
+
+Las capturas **no se toman de la base de trabajo**: sus pantallas están llenas
+de nombres y patentes de clientes reales y este repositorio es público.
+`docs/manuales/capturas.py` levanta datos de fantasía en una base desechable y
+fotografía eso; el propio script se niega a correr contra el puerto 55432.
