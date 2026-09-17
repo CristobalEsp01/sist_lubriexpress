@@ -9,7 +9,7 @@ Lubri-Express. Corre localmente sobre PostgreSQL.
 |---|---|
 | Esquema de base de datos y triggers de Kardex | Funcionando |
 | Login y control de acceso por rol | Funcionando (tres roles; pestaña Usuarios para el administrador) |
-| Mantenedor de Inventario | Funcionando |
+| Mantenedor de Inventario | Funcionando (con el valorizado a precio costo de lo listado) |
 | Historial de Kardex por producto | Funcionando (solo lectura) |
 | Ingreso de mercadería y ajuste de stock por recuento | Funcionando |
 | Carga masiva de inventario desde Excel | Funcionando (plantilla que genera el propio sistema) |
@@ -17,7 +17,8 @@ Lubri-Express. Corre localmente sobre PostgreSQL.
 | Mantenedor de Clientes y Vehículos | Funcionando |
 | Ventas de mostrador | Funcionando |
 | Órdenes de trabajo: insumos, servicios, descuentos, folio y estado de pago | Funcionando |
-| Aviso al cliente por WhatsApp desde la orden abierta | Funcionando |
+| Pago parcial de una orden: abono al cerrarla y saldo cobrado después | Funcionando (el saldo se registra desde el historial) |
+| Aviso al cliente por WhatsApp | Funcionando (desde la orden abierta y desde una guardada, que cita su N° de OT) |
 | Exportación de la orden a PDF | Funcionando |
 | Reportería (ingresos, productos, usuarios, reabastecimiento) | Funcionando (con gráficos y exportación a Excel) |
 | Migración del sistema antiguo | Funcionando (`scripts/migrar_sistema_antiguo.py`) |
