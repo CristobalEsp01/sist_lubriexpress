@@ -24,16 +24,31 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from dotenv import load_dotenv  # noqa: E402
 
-RAIZ = Path(__file__).resolve().parent.parent
-CARPETA = RAIZ / "respaldos"
+from src.rutas import carpeta_app  # noqa: E402
+
 CUANTOS_SE_CONSERVAN = 30
-# El contenedor del README; solo se usa si pg_dump no está instalado en el PC.
-CONTENEDOR = os.getenv("RESPALDO_CONTENEDOR", "lubriexpress-db")
+
+
+def contenedor() -> str:
+    """El contenedor de Docker donde corre PostgreSQL; solo se usa si pg_dump
+    no está instalado en el PC.
+
+    Se lee acá y no al importar el módulo: al importar, el `.env` todavía no
+    está cargado, así que configurarlo ahí no haría nada y `.env.example` lo
+    documenta como si funcionara.
+    """
+    load_dotenv(carpeta_app() / ".env")
+    return os.getenv("RESPALDO_CONTENEDOR", "lubriexpress-db")
+
+
+def carpeta_de_respaldos() -> Path:
+    """Junto al ejecutable, no dentro del bundle: ver `src/rutas.py`."""
+    return carpeta_app() / "respaldos"
 
 
 def datos_de_conexion() -> dict:
     """Usuario, contraseña, host, puerto y base, sacados de DATABASE_URL."""
-    load_dotenv()
+    load_dotenv(carpeta_app() / ".env")
     url = os.getenv("DATABASE_URL")
     if not url:
         raise SystemExit("No hay DATABASE_URL en el entorno ni en el .env.")
@@ -80,14 +95,15 @@ def comando_de_volcado(datos: dict) -> tuple[list[str], dict]:
     servidor— y el del contenedor, que es como corre en desarrollo.
     """
     entorno = dict(os.environ, PGPASSWORD=datos["password"])
+    nombre = contenedor()
     servidor = version_del_servidor(datos)
     del_sistema = ["pg_dump", "-h", datos["host"], "-p", datos["puerto"],
                    "-U", datos["usuario"], "-d", datos["base"], "--clean", "--if-exists"]
-    del_contenedor = ["docker", "exec", "-e", f"PGPASSWORD={datos['password']}", CONTENEDOR,
+    del_contenedor = ["docker", "exec", "-e", f"PGPASSWORD={datos['password']}", nombre,
                       "pg_dump", "-U", datos["usuario"], "-d", datos["base"],
                       "--clean", "--if-exists"]
 
-    candidatos = [(["pg_dump"], del_sistema), (["docker", "exec", CONTENEDOR, "pg_dump"], del_contenedor)]
+    candidatos = [(["pg_dump"], del_sistema), (["docker", "exec", nombre, "pg_dump"], del_contenedor)]
     versiones = []
     for prueba, comando in candidatos:
         version = version_de(prueba)
@@ -97,19 +113,21 @@ def comando_de_volcado(datos: dict) -> tuple[list[str], dict]:
     raise SystemExit(
         f"Ningún pg_dump disponible es de PostgreSQL {servidor}: "
         f"el del sistema es {versiones[0] or 'inexistente'} y el del contenedor "
-        f"'{CONTENEDOR}' es {versiones[1] or 'inexistente'}. Un volcado hecho con "
+        f"'{nombre}' es {versiones[1] or 'inexistente'}. Un volcado hecho con "
         "otra versión no se puede restaurar en este servidor. Instala las "
         "herramientas cliente que correspondan o ajusta RESPALDO_CONTENEDOR."
     )
 
 
-def respaldos_guardados(carpeta: Path = CARPETA) -> list[Path]:
+def respaldos_guardados(carpeta: Path | None = None) -> list[Path]:
+    carpeta = carpeta or carpeta_de_respaldos()
     return sorted(carpeta.glob("lubriexpress-*.sql.gz"))
 
 
-def rotar(carpeta: Path = CARPETA, cuantos: int = CUANTOS_SE_CONSERVAN) -> list[Path]:
+def rotar(carpeta: Path | None = None, cuantos: int = CUANTOS_SE_CONSERVAN) -> list[Path]:
     """Borra los más viejos y devuelve lo que se borró. El nombre lleva la
     fecha, así que ordenar alfabéticamente es ordenar cronológicamente."""
+    carpeta = carpeta or carpeta_de_respaldos()
     sobran = respaldos_guardados(carpeta)[:-cuantos] if cuantos else []
     for viejo in sobran:
         viejo.unlink()
@@ -129,9 +147,10 @@ def copiar_a_la_nube(archivo: Path) -> Path | None:
     return Path(shutil.copy2(archivo, carpeta / archivo.name))
 
 
-def respaldar(carpeta: Path = CARPETA) -> Path:
+def respaldar(carpeta: Path | None = None) -> Path:
     """Vuelca la base comprimida y devuelve el archivo. Si pg_dump falla, no
     deja un .gz a medias: se escribe en un temporal y se renombra al final."""
+    carpeta = carpeta or carpeta_de_respaldos()
     datos = datos_de_conexion()
     comando, entorno = comando_de_volcado(datos)
     carpeta.mkdir(parents=True, exist_ok=True)
@@ -170,7 +189,7 @@ def main(argv: list[str]) -> int:
         guardados = respaldos_guardados()
         for archivo in guardados:
             print(f"  {archivo.name}  {archivo.stat().st_size / 1024:.0f} KB")
-        print(f"{len(guardados)} respaldo(s) en {CARPETA}")
+        print(f"{len(guardados)} respaldo(s) en {carpeta_de_respaldos()}")
         return 0
 
     archivo = respaldar()

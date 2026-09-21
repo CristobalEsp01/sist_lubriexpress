@@ -92,3 +92,42 @@ def test_el_volcado_exige_un_pg_dump_de_la_version_del_servidor(monkeypatch):
 ])
 def test_la_version_mayor_se_lee_de_cualquiera_de_los_dos_formatos(texto, esperado):
     assert R.mayor(texto) == esperado
+
+
+def test_los_respaldos_caen_junto_al_ejecutable_cuando_va_empaquetada(tmp_path, monkeypatch):
+    """Regresión: la carpeta salía de `Path(__file__).parent.parent`, que dentro
+    del bundle de PyInstaller es el temporal que el sistema borra al cerrar."""
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "lubriexpress.exe"))
+
+    assert R.carpeta_de_respaldos() == tmp_path / "respaldos"
+
+
+def test_el_env_se_lee_junto_al_ejecutable(tmp_path, monkeypatch):
+    """Regresión: `load_dotenv()` a secas busca desde el directorio actual, y
+    empaquetada eso no es donde está el `.env` que dejó el instalador."""
+    (tmp_path / ".env").write_text(
+        "DATABASE_URL=postgresql+psycopg2://taller:clave@localhost:5432/base_del_taller\n"
+    )
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "lubriexpress.exe"))
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+
+    assert R.datos_de_conexion()["base"] == "base_del_taller"
+    assert R.datos_de_conexion()["usuario"] == "taller"
+
+
+def test_el_contenedor_se_puede_configurar_desde_el_env(tmp_path, monkeypatch):
+    """Regresión: se leía con `os.getenv` al importar el módulo, o sea antes de
+    que nadie cargara el `.env`. Configurarlo ahí no hacía nada, y
+    `.env.example` lo documenta como si funcionara: en un PC donde PostgreSQL
+    corre en Docker con otro nombre, el respaldo no encontraba el pg_dump."""
+    (tmp_path / ".env").write_text(
+        "DATABASE_URL=postgresql+psycopg2://u:c@localhost:5432/b\n"
+        "RESPALDO_CONTENEDOR=postgres-del-taller\n"
+    )
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "respaldar.exe"))
+    monkeypatch.delenv("RESPALDO_CONTENEDOR", raising=False)
+
+    assert R.contenedor() == "postgres-del-taller"

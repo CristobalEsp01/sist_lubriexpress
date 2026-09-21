@@ -13,7 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from scripts.respaldar import CONTENEDOR, datos_de_conexion  # noqa: E402
+from scripts.respaldar import contenedor, datos_de_conexion  # noqa: E402
 
 
 def comando_de_restauracion(datos: dict) -> tuple[list[str], dict]:
@@ -23,7 +23,7 @@ def comando_de_restauracion(datos: dict) -> tuple[list[str], dict]:
     if shutil.which("psql"):
         return ["psql", "-h", datos["host"], "-p", datos["puerto"], "-U", datos["usuario"],
                 "-d", datos["base"], "-v", "ON_ERROR_STOP=1", "-q"], entorno
-    return ["docker", "exec", "-i", "-e", f"PGPASSWORD={datos['password']}", CONTENEDOR,
+    return ["docker", "exec", "-i", "-e", f"PGPASSWORD={datos['password']}", contenedor(),
             "psql", "-U", datos["usuario"], "-d", datos["base"], "-v", "ON_ERROR_STOP=1", "-q"], entorno
 
 
