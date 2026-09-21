@@ -3,10 +3,20 @@
 
     .venv\\Scripts\\pyinstaller.exe --noconfirm lubriexpress.spec
 
-Deja dist/lubriexpress/ con el ejecutable y todo lo que necesita. Al lado del
-ejecutable va el .env con DATABASE_URL (ver .env.example); la base es un
-PostgreSQL de la misma máquina. El .exe se construye en Windows: PyInstaller
-no cruza plataformas.
+Deja dist/lubriexpress/ con tres ejecutables y todo lo que necesitan:
+
+    lubriexpress.exe   la aplicación
+    actualizar.exe     lleva la base a la versión nueva del esquema
+    respaldar.exe      el volcado diario, para la tarea programada
+
+Los dos últimos van de consola: son operaciones de mantenimiento y lo que
+importa de ellas es el registro que imprimen. Existen porque el PC del taller
+no tiene Python; sin ellos, ni el respaldo ni la actualización se pueden
+correr ahí.
+
+Al lado de los ejecutables va el .env con DATABASE_URL (ver .env.example); la
+base es un PostgreSQL de la misma máquina. Ahí mismo caen los respaldos. Los
+.exe se construyen en Windows: PyInstaller no cruza plataformas.
 
 qtbase_es.qm va explícito: sin él los botones estándar de los diálogos
 (Guardar, Cancelar, Sí, No) salen en inglés. Se copia a la ruta donde Qt lo
@@ -27,9 +37,26 @@ a = Analysis(
     excludes=["PySide6.QtNetwork", "PySide6.QtQml", "PySide6.QtQuick", "PySide6.QtWebEngineCore",
               "PySide6.QtMultimedia", "PySide6.QtOpenGL", "PySide6.Qt3DCore"],  # QtCharts sí: Reportes
 )
-pyz = PYZ(a.pure)
+# Las herramientas de consola no necesitan Qt: fuera, que son 60 MB por cada una.
+SIN_QT = ["PySide6", "shiboken6"]
+actualizador = Analysis(["scripts/actualizar.py"], excludes=SIN_QT)
+respaldo = Analysis(["scripts/respaldar.py"], excludes=SIN_QT)
+
 exe = EXE(
-    pyz, a.scripts, exclude_binaries=True,
+    PYZ(a.pure), a.scripts, exclude_binaries=True,
     name="lubriexpress", console=False, icon="src/ui/recursos/logo.ico",
 )
-coll = COLLECT(exe, a.binaries, a.datas, name="lubriexpress")
+exe_actualizar = EXE(
+    PYZ(actualizador.pure), actualizador.scripts, exclude_binaries=True,
+    name="actualizar", console=True, icon="src/ui/recursos/logo.ico",
+)
+exe_respaldar = EXE(
+    PYZ(respaldo.pure), respaldo.scripts, exclude_binaries=True,
+    name="respaldar", console=True, icon="src/ui/recursos/logo.ico",
+)
+coll = COLLECT(
+    exe, a.binaries, a.datas,
+    exe_actualizar, actualizador.binaries, actualizador.datas,
+    exe_respaldar, respaldo.binaries, respaldo.datas,
+    name="lubriexpress",
+)

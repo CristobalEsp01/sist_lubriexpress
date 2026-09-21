@@ -227,6 +227,7 @@ class KardexMovimiento(Base):
     tipo_movimiento = Column(String(20), nullable=False)
     cantidad_movida = Column(Integer, nullable=False)
     stock_resultante = Column(Integer, nullable=False)
+    costo_unitario = Column(Numeric(10, 2))
     orden_id = Column(Integer, ForeignKey("ordenes.id"))
     venta_id = Column(Integer, ForeignKey("ventas.id"))
     fecha_movimiento = Column(DateTime, server_default=func.now(), nullable=False)
@@ -235,3 +236,25 @@ class KardexMovimiento(Base):
     usuario = relationship("Usuario")
     orden = relationship("Orden")
     venta = relationship("Venta")
+
+
+class MovimientoCaja(Base):
+    """Caja chica del día: el efectivo del cajón que no pasa por una venta.
+
+    Append-only. Lo que entra por una venta o un abono no se copia acá; se
+    suma de "ventas" y "pagos_orden". Corregir una fila es anularla con su
+    inversa, no borrarla.
+    """
+
+    __tablename__ = "movimientos_caja"
+
+    id = Column(Integer, primary_key=True, index=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
+    tipo = Column(String(10), nullable=False)
+    monto = Column(Numeric(10, 2), nullable=False)
+    motivo = Column(String(200), nullable=False)
+    fecha = Column(DateTime, server_default=func.now(), nullable=False)
+    anula_id = Column(Integer, ForeignKey("movimientos_caja.id"), unique=True)
+
+    usuario = relationship("Usuario")
+    anulado = relationship("MovimientoCaja", remote_side=[id])

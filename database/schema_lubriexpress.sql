@@ -202,12 +202,40 @@ CREATE TABLE "kardex_movimientos" (
   "orden_id" INT REFERENCES "ordenes"("id"),
   "venta_id" INT REFERENCES "ventas"("id"),
   "fecha_movimiento" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  -- Lo que costó esa compra, para el histórico de precios del proveedor.
+  -- Nullable: las salidas por venta u orden, los ajustes por recuento y todo
+  -- lo registrado antes de que existiera esta columna no traen costo.
+  "costo_unitario" DECIMAL(10,2) CHECK ("costo_unitario" >= 0),
   CONSTRAINT origen_movimiento_valido
       CHECK (
         ("tipo_movimiento" = 'SALIDA_ORDEN' AND "orden_id" IS NOT NULL AND "venta_id" IS NULL) OR
         ("tipo_movimiento" = 'SALIDA_VENTA' AND "venta_id" IS NOT NULL AND "orden_id" IS NULL) OR
         ("tipo_movimiento" IN ('ENTRADA', 'AJUSTE_MANUAL') AND "orden_id" IS NULL AND "venta_id" IS NULL)
       )
+);
+
+-- ---------------------------------------------------------------------
+-- Tabla de Movimientos de Caja (caja chica del día) — append-only
+-- ---------------------------------------------------------------------
+-- El efectivo que entra y sale del cajón de la oficina sin pasar por una
+-- venta: la plata que se deja en la mañana para dar vuelto y los gastos del
+-- día. Lo que sí viene de una venta o de un abono no se copia acá; se suma
+-- de "ventas" y "pagos_orden", que ya lo tienen. Dos registros del mismo
+-- dinero es la forma más segura de terminar con dos cifras distintas.
+--
+-- No hay tabla de cajas ni estado abierta/cerrada: el día de una caja es su
+-- fecha, así que abre y cierra sola. Una fila mal tecleada no se borra: se
+-- anula con su inversa, igual que en "kardex_movimientos" y "pagos_orden".
+CREATE TABLE "movimientos_caja" (
+  "id" SERIAL PRIMARY KEY,
+  "usuario_id" INT NOT NULL REFERENCES "usuarios"("id"),
+  "tipo" VARCHAR(10) NOT NULL CHECK ("tipo" IN ('INGRESO', 'EGRESO')),
+  -- El signo lo dice "tipo"; el monto siempre es positivo.
+  "monto" DECIMAL(10,2) NOT NULL CHECK ("monto" > 0),
+  "motivo" VARCHAR(200) NOT NULL,
+  "fecha" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  -- El movimiento que esta fila anula. UNIQUE: nadie anula dos veces el mismo.
+  "anula_id" INT UNIQUE REFERENCES "movimientos_caja"("id")
 );
 
 -- =====================================================================
@@ -228,6 +256,7 @@ CREATE INDEX idx_detalle_ventas_producto ON "detalle_ventas"("producto_id");
 CREATE INDEX idx_pagos_orden_orden ON "pagos_orden"("orden_id");
 CREATE INDEX idx_kardex_producto ON "kardex_movimientos"("producto_id");
 CREATE INDEX idx_kardex_fecha ON "kardex_movimientos"("fecha_movimiento");
+CREATE INDEX idx_movimientos_caja_fecha ON "movimientos_caja"("fecha");
 
 -- =====================================================================
 -- Triggers: updated_at automático

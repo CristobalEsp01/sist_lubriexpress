@@ -32,6 +32,7 @@ consola de psql abierta.
 | `pagos_orden` | Abonos de una orden. Solo se agrega: lo pagado es la suma, y el estado de la orden sale de ahí |
 | `ventas` / `detalle_ventas` | Ventas de mostrador |
 | `kardex_movimientos` | Historial de inventario. Solo se agrega, nunca se edita |
+| `movimientos_caja` | Caja chica del día: el efectivo del cajón que no pasa por una venta. Solo se agrega |
 
 ## Triggers
 
@@ -120,6 +121,33 @@ recalcular nada.
 Es la misma convención del sistema antiguo, cuyos datos migrados traen las
 tres cifras por separado.
 
+## La caja chica no tiene tabla de cajas
+
+El día de una caja es su fecha. No hay fila de "caja", ni estado abierta/cerrada,
+ni nada que alguien pueda dejar abierto un viernes: la caja del día abre y cierra
+sola porque el calendario avanza.
+
+`movimientos_caja` guarda **solo lo que no está en otra parte**: el efectivo que
+se deja en la mañana para dar vuelto (`INGRESO`) y los gastos del día (`EGRESO`).
+Lo que entra por una venta o por el abono de una orden **no se copia**: se suma de
+`ventas` y `pagos_orden`, que ya lo tienen.
+
+```
+BALANCE del día = agregado a mano + ventas y abonos del día − gastos del día
+```
+
+Dos registros del mismo dinero es la forma más segura de terminar con dos cifras
+que no cuadran, y es exactamente el problema que el sistema anterior tenía con el
+stock. `monto` siempre es positivo; el signo lo dice `tipo`. Una fila mal tecleada
+no se borra: se anula insertando su inversa con `anula_id` apuntando a ella, igual
+que un `AJUSTE_MANUAL` corrige un stock.
+
+**Lo que no distingue:** efectivo de tarjeta. El sistema no guarda método de pago
+—el anterior tampoco— así que el balance del día cuenta todo lo cobrado. La salida,
+si algún día hace falta el arqueo fino, es una columna `metodo_pago` en `ventas` y
+`pagos_orden`. Y las órdenes migradas no traen abonos detrás, porque el sistema
+viejo no los guardaba: un día de 2024 se ve con ingresos en $0.
+
 ## Vistas
 
 `vw_stock_critico` lista los productos activos con `stock_actual <= stock_minimo`. La
@@ -128,15 +156,35 @@ cambia en un solo lugar.
 
 ## Cambios de esquema
 
-No hay migraciones todavía. Un cambio hoy significa editar el `.sql` y recrear la base:
+Hay datos reales en producción: recrear la base dejó de ser una opción. Un cambio
+de esquema son **tres cosas que van juntas**, y hay pruebas que lo verifican:
 
-```bash
-docker rm -f lubriexpress-db && docker volume rm lubriexpress-pgdata
-# volver a crear el contenedor y cargar el esquema (ver README)
+1. La tabla o columna en `database/schema_lubriexpress.sql` — sigue siendo la verdad.
+2. Su modelo en `src/models.py` — `tests/test_models.py` falla si no calzan.
+3. Un paso en `scripts/actualizar.py` — `tests/test_actualizar.py` falla si lo que
+   crea el paso no es lo que declara el esquema.
+
+Sin el tercero, una instalación nueva y una actualizada quedan distintas, y la
+diferencia no la mira ninguna prueba hasta que algo se rompe en el taller.
+
+El actualizador corre así, junto al ejecutable en el PC del taller:
+
+```
+actualizar.exe --simular    # dice qué haría, sin escribir nada
+actualizar.exe              # respalda, aplica y verifica los conteos
 ```
 
-Sirve mientras no haya datos reales. Antes de la puesta en producción hay que
-incorporar Alembic, o cada ajuste posterior obligará a migrar el inventario a mano.
+Cada paso mira la base antes de actuar, así que correrlo dos veces no hace daño.
+El respaldo va primero y su fallo aborta todo. Si la verificación no cuadra, el
+camino de vuelta es `restaurar.py` con el archivo que el propio actualizador dejó.
+
+Está probado contra una base con los datos reales migrados: la estructura resultante
+es idéntica a la de una instalación limpia desde el `.sql`. (Un `pg_dump` re-escribe
+los `CHECK ... = ANY (ARRAY[...])` con otra sintaxis equivalente, así que una base
+restaurada muestra esa diferencia cosmética contra una cargada directo del `.sql`.)
+
+Sigue pendiente Alembic: la lista de pasos va a mano y solo hacia adelante. Mientras
+sean unos pocos cambios aditivos alcanza; el día que haya que revertir uno, toca.
 
 Bases creadas antes de servicios, IVA y las columnas extra del vehículo se
 ponen al día con:

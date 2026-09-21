@@ -23,7 +23,8 @@ Lubri-Express. Corre localmente sobre PostgreSQL.
 | Reportería (ingresos, productos, usuarios, reabastecimiento) | Funcionando (con gráficos y exportación a Excel) |
 | Migración del sistema antiguo | Funcionando (`scripts/migrar_sistema_antiguo.py`) |
 | Respaldo automatizado local y a OneDrive | Funcionando (`scripts/respaldar.py`, con restauración probada) |
-| Aplicación empaquetada para Windows | Especificación lista (`lubriexpress.spec`); el `.exe` se construye en Windows |
+| Aplicación empaquetada para Windows | Especificación lista (`lubriexpress.spec`); los `.exe` se construyen en Windows |
+| Actualización del esquema en una instalación con datos | Funcionando (`scripts/actualizar.py`, ensayado contra una base con los datos reales migrados) |
 | Manuales de usuario y técnico | Entregados (`docs/manuales/*.pdf`) |
 
 Los precios del catálogo son **netos**: el IVA (19 %) se calcula al cobrar y queda
@@ -127,12 +128,31 @@ sola transacción, y se niega a correr dos veces. El informe final dice qué se
 descartó y por qué. **Las planillas del taller no van al repositorio**: son datos
 reales de clientes y este repositorio es público.
 
-### 4. Respaldar
+### 4. Actualizar una instalación que ya tiene datos
+
+Cuando el esquema cambia y la base **ya está en uso**, no se recrea: se actualiza.
+
+```bash
+.venv/bin/python scripts/actualizar.py --simular   # qué haría, sin escribir nada
+.venv/bin/python scripts/actualizar.py             # respalda, aplica y verifica
+```
+
+En el PC del taller, que no tiene Python, es `actualizar.exe` en la carpeta de la
+aplicación. Respalda antes de tocar nada, aplica en una sola transacción y al
+final compara los conteos de cada tabla. Correrlo dos veces no hace daño: cada
+paso mira la base y se salta lo que ya está.
+
+### 5. Respaldar
 
 ```bash
 .venv/bin/python scripts/respaldar.py            # deja un .sql.gz en respaldos/
 .venv/bin/python scripts/restaurar.py <archivo>  # lo pone de vuelta
 ```
+
+En el PC del taller la tarea programada llama a `respaldar.exe`, que viene en la
+misma carpeta. Empaquetados, el `.env` y la carpeta `respaldos/` se resuelven
+**junto al ejecutable**: dentro del bundle de PyInstaller esas rutas apuntan a un
+temporal que el sistema borra al cerrar.
 
 Con `RESPALDO_ONEDRIVE` configurado en el `.env`, el respaldo se copia además a
 esa carpeta. En el PC del taller conviene dejarlo como tarea programada diaria.
@@ -153,7 +173,7 @@ lo necesitan se saltan solas en vez de fallar.
 ```text
 sist_lubriexpress/
 ├── main.py                          # Punto de entrada
-├── lubriexpress.spec                # Empaquetado con PyInstaller (el .exe se arma en Windows)
+├── lubriexpress.spec                # Empaquetado: lubriexpress.exe, actualizar.exe y respaldar.exe
 ├── src/
 │   ├── auth.py                      # Sesión en memoria y hash de contraseñas (bcrypt)
 │   ├── permisos.py                  # Qué puede hacer cada rol
@@ -163,6 +183,7 @@ sist_lubriexpress/
 │   ├── patente.py                   # Patente chilena: formato y normalización
 │   ├── texto.py                     # Normalización para buscar (sin tildes ni puntuación)
 │   ├── precios.py                   # IVA: los precios del catálogo son netos
+│   ├── rutas.py                     # Dónde van el .env y los respaldos cuando va empaquetada
 │   ├── xlsx.py                      # Leer y escribir .xlsx con la biblioteca estándar
 │   ├── carga_excel.py               # Carga masiva de inventario por plantilla
 │   ├── documentos.py                # La orden de trabajo como documento para el cliente
@@ -189,6 +210,7 @@ sist_lubriexpress/
 ├── scripts/
 │   ├── crear_usuario.py             # El primer administrador de una instalación
 │   ├── migrar_sistema_antiguo.py    # Las cinco planillas del sistema viejo
+│   ├── actualizar.py                # Lleva una base con datos reales al esquema nuevo
 │   ├── respaldar.py                 # Respaldo comprimido, con copia a OneDrive
 │   └── restaurar.py                 # Vuelve a poner un respaldo
 ├── requirements.txt                 # Dependencias de la aplicación

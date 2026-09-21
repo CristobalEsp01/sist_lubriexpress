@@ -8,10 +8,12 @@
 - `src/patente.py` — patente chilena, con el mismo criterio que `rut.py`.
 - `src/precios.py` — el IVA. Los precios del catálogo son netos; el impuesto se calcula al cobrar y se guarda en el documento.
 - `src/permisos.py` — qué puede hacer cada rol, una acción por entrada. La sesión sigue en `src/auth.py`.
+- `src/rutas.py` — dónde están los archivos que la aplicación lee y escribe. Empaquetada, el `.env` y los respaldos van **junto al ejecutable**, no dentro del bundle: ahí `Path(__file__)` es un temporal que el sistema borra al cerrar.
 - `src/xlsx.py` — leer y escribir `.xlsx` con la biblioteca estándar. Lo usan la migración y la carga masiva; no se suma pandas ni openpyxl por esto.
 - `src/carga_excel.py` — carga masiva de inventario por plantilla, sin UI. Todo o nada: una fila rechazada no deja escribir ninguna.
 - `scripts/migrar_sistema_antiguo.py` — las cinco planillas del sistema viejo; las planillas viven fuera del repo.
-- `lubriexpress.spec` — el empaquetado con PyInstaller para el PC del taller. El `.exe` se construye en Windows.
+- `scripts/actualizar.py` — lleva una base con datos reales a la versión nueva del esquema. Un cambio de esquema son tres cosas juntas: el `.sql`, el modelo y un paso acá (ver `docs/base-de-datos.md`).
+- `lubriexpress.spec` — el empaquetado con PyInstaller para el PC del taller, que **no tiene Python**: de ahí salen `lubriexpress.exe`, `actualizar.exe` y `respaldar.exe`. Se construyen en Windows.
 - `src/ui/` — un módulo por mantenedor. `comunes.py` tiene lo que comparten y `tema.py` la identidad visual.
 - `main.py` — solo arranca la aplicación y avisa si la base no responde.
 
@@ -209,9 +211,10 @@ Para listarlos:
 grep -rn "ponytail:" src/
 ```
 
-Hoy hay tres: la normalización de tildes que `texto.py` escribe a mano en SQL, el
-listado de inventario que carga la tabla completa en memoria, y la idempotencia de la
-migración, que es un guardián global y no un upsert por fila.
+Hoy hay cuatro: la normalización de tildes que `texto.py` escribe a mano en SQL, el
+listado de inventario que carga la tabla completa en memoria, la idempotencia de la
+migración —un guardián global y no un upsert por fila— y la lista de pasos del
+actualizador de esquema, que va a mano y solo hacia adelante en vez de Alembic.
 
 
 ## Manuales
