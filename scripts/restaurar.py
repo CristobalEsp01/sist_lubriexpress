@@ -1,4 +1,10 @@
-"""Restaura un respaldo hecho con scripts/respaldar.py.
+"""Restaura un respaldo hecho con respaldar.
+
+En el PC del taller, junto al ejecutable:
+
+    restaurar.exe respaldos\\lubriexpress-20260916-2030.sql.gz
+
+Desde el repositorio:
 
     .venv/bin/python scripts/restaurar.py respaldos/lubriexpress-20260916-2030.sql.gz
 

@@ -5,9 +5,14 @@ Genera un volcado comprimido en `respaldos/`, conserva los últimos 30 y, si
 OneDrive sube solo lo que cae en su carpeta, así que copiar el archivo es todo
 lo que hace falta para el respaldo en la nube.
 
-Uso:
-    .venv/bin/python scripts/respaldar.py            # respalda
-    .venv/bin/python scripts/respaldar.py --listar   # qué hay guardado
+Uso, en el PC del taller (junto al ejecutable):
+
+    respaldar.exe             # respalda
+    respaldar.exe --listar    # qué hay guardado
+
+Desde el repositorio:
+
+    .venv/bin/python scripts/respaldar.py [--listar]
 
 En Windows conviene dejarlo como tarea programada diaria (ver el manual
 técnico). Restaurar: scripts/restaurar.py.
