@@ -139,6 +139,21 @@ def sembrar() -> dict:
             db.add(venta); db.flush()
             db.add(DetalleVenta(venta=venta, producto=productos[5], cantidad=n + 1,
                                 precio_unitario_cobrado=productos[5].precio_venta))
+        # Un auto que sigue en el taller: su orden queda abierta.
+        abierta = Orden(vehiculo=vehiculos[3], usuario=supervisor,
+                        fecha_creacion=ahora - timedelta(hours=5),
+                        kilometraje_ingreso=96400, estado="ABIERTA",
+                        subtotal=47500, impuesto=9025, total_final=56525,
+                        notas="Nivel de Combustible: 1/4\nObservaciones: Espera filtro de aire")
+        db.add(abierta)
+        db.flush()
+        db.add_all([
+            DetalleOrden(orden=abierta, producto=productos[1], cantidad=1,
+                         precio_unitario_cobrado=productos[1].precio_venta),
+            DetalleOrden(orden=abierta, servicio=servicios[0], cantidad=1,
+                         precio_unitario_cobrado=servicios[0].precio_venta),
+        ])
+
         hoy = datetime.now()
         for tipo, monto, motivo, hora in [
             ("INGRESO", 80000, "Efectivo para dar vuelto", 8),
@@ -187,8 +202,14 @@ def capturar(datos: dict) -> None:
     v.ordenes.spin_kilometraje.setValue(78500)
     v.ordenes.tipo_descuento.setCurrentIndex(1); v.ordenes.valor_descuento.setValue(10)
     guardar(v, "orden")
-    v.ordenes.setCurrentIndex(1); v.ordenes.tabla_historial.selectRow(0)
+    v.ordenes.setCurrentIndex(2); v.ordenes.tabla_historial.selectRow(0)
     guardar(v, "historial_ordenes")
+    v.ordenes.setCurrentIndex(0)
+
+    v.ordenes.setCurrentIndex(1)
+    v.ordenes.cargar_abiertas()
+    v.ordenes.tabla_abiertas.selectRow(0)
+    guardar(v, "ordenes_abiertas")
     v.ordenes.setCurrentIndex(0)
 
     v.pestanias.setCurrentWidget(v.caja); v.caja.recargar(); v.caja.tabla.selectRow(0)

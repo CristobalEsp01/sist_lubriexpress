@@ -175,3 +175,78 @@ def test_el_estado_de_pago_lo_deciden_los_abonos(db, datos):
     db.refresh(orden)
     assert orden.estado_pago
     assert (orden.monto_pagado, orden.saldo) == (11900, 0)
+
+
+def test_quitar_una_linea_de_una_orden_devuelve_el_stock_con_su_rastro(db, datos):
+    """Una orden abierta ya descontó: el mecánico sacó el aceite de la repisa.
+    Si después se quita la línea —se cargó de más, o se anula la orden entera—
+    el stock tiene que volver solo y dejar dicho por qué, igual que al salir.
+    """
+    usuario, producto, cliente, vehiculo = datos
+
+    orden = Orden(vehiculo=vehiculo, usuario=usuario, kilometraje_ingreso=90000,
+                  estado="ABIERTA", subtotal=105000, total_final=105000)
+    db.add(orden)
+    db.flush()
+    linea = DetalleOrden(orden=orden, producto=producto, cantidad=3,
+                         precio_unitario_cobrado=35000)
+    db.add(linea)
+    db.flush()
+    db.refresh(producto)
+    assert producto.stock_actual == 7
+
+    db.delete(linea)
+    db.flush()
+    db.refresh(producto)
+    assert producto.stock_actual == 10
+
+    devolucion = db.query(KardexMovimiento).filter_by(
+        producto_id=producto.id, tipo_movimiento="DEVOLUCION_ORDEN").one()
+    assert (devolucion.cantidad_movida, devolucion.stock_resultante) == (3, 10)
+    # Con su orden detrás: un Kardex que no dice de dónde vino el stock no
+    # sirve para cuadrar nada.
+    assert devolucion.orden_id == orden.id
+
+
+def test_quitar_una_linea_de_servicio_no_toca_el_kardex(db, datos):
+    """Los servicios no tienen stock, así que su línea entra y sale sin dejar
+    movimiento. Es el mismo WHEN que ya protege al trigger de descuento."""
+    usuario, producto, cliente, vehiculo = datos
+
+    servicio = Servicio(nombre="QA Revisión", precio_venta=12000)
+    orden = Orden(vehiculo=vehiculo, usuario=usuario, kilometraje_ingreso=90000,
+                  estado="ABIERTA", subtotal=12000, total_final=12000)
+    db.add_all([servicio, orden])
+    db.flush()
+    linea = DetalleOrden(orden=orden, servicio=servicio, cantidad=1,
+                         precio_unitario_cobrado=12000)
+    db.add(linea)
+    db.flush()
+    db.delete(linea)
+    db.flush()
+
+    assert db.query(KardexMovimiento).filter_by(orden_id=orden.id).count() == 0
+
+
+def test_agregarle_una_linea_a_una_orden_pagada_la_deja_debiendo(db, datos):
+    """Una orden abierta que se pagó al dejar el auto, y a la que después se le
+    carga un repuesto más, no puede seguir marcada como pagada. El estado sale
+    de los abonos contra el total, y el total acaba de cambiar."""
+    usuario, producto, cliente, vehiculo = datos
+
+    orden = Orden(vehiculo=vehiculo, usuario=usuario, kilometraje_ingreso=90000,
+                  estado="ABIERTA", subtotal=35000, total_final=41650)
+    db.add(orden)
+    db.flush()
+    db.add_all([
+        DetalleOrden(orden=orden, producto=producto, cantidad=1, precio_unitario_cobrado=35000),
+        PagoOrden(orden=orden, usuario=usuario, monto=41650),
+    ])
+    db.flush()
+    db.refresh(orden)
+    assert orden.estado_pago is True
+
+    orden.total_final = 83300   # se le agregó otra línea antes de entregarla
+    db.flush()
+    db.refresh(orden)
+    assert orden.estado_pago is False

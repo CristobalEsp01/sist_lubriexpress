@@ -28,7 +28,7 @@ consola de psql abierta.
 | `ubicaciones` | Dónde está guardado físicamente un producto |
 | `productos` | Inventario. `stock_actual` lo manejan los triggers |
 | `servicios` | Mano de obra (cambio de aceite, scanner). Se cobra en una orden; no tiene stock ni Kardex |
-| `ordenes` / `detalle_ordenes` | Órdenes de trabajo del taller. Cada línea del detalle es un producto o un servicio |
+| `ordenes` / `detalle_ordenes` | Órdenes de trabajo del taller. Cada línea del detalle es un producto o un servicio. `estado` dice si el auto sigue adentro |
 | `pagos_orden` | Abonos de una orden. Solo se agrega: lo pagado es la suma, y el estado de la orden sale de ahí |
 | `ventas` / `detalle_ventas` | Ventas de mostrador |
 | `kardex_movimientos` | Historial de inventario. Solo se agrega, nunca se edita |
@@ -41,7 +41,9 @@ consola de psql abierta.
 | `trg_detalle_ordenes_descuento` | `INSERT` en `detalle_ordenes` con `producto_id` | Descuenta stock y escribe `SALIDA_ORDEN` en el Kardex. Las líneas de servicio no lo disparan (`WHEN`) |
 | `trg_detalle_ventas_descuento` | `INSERT` en `detalle_ventas` | Descuenta stock y escribe `SALIDA_VENTA` en el Kardex |
 | `trg_kardex_movimiento_manual` | `INSERT` en `kardex_movimientos` de tipo `ENTRADA` o `AJUSTE_MANUAL` | Mueve el stock y calcula `stock_resultante` |
+| `trg_detalle_ordenes_devolucion` | `DELETE` en `detalle_ordenes` con `producto_id` | Devuelve el stock y escribe `DEVOLUCION_ORDEN` en el Kardex |
 | `trg_pagos_orden_estado` | `INSERT` en `pagos_orden` | Recalcula `ordenes.estado_pago` con la suma de los abonos |
+| `trg_ordenes_estado_pago` | `UPDATE` de `ordenes.total_final` | Recalcula `estado_pago`: si el total creció, lo abonado ya no alcanza |
 | `trg_*_updated_at` | `UPDATE` en `usuarios`, `clientes`, `vehiculos`, `productos` | Refresca `updated_at` |
 
 `trg_pagos_orden_estado` sigue la misma idea que los de stock: la pantalla registra
@@ -120,6 +122,25 @@ recalcular nada.
 
 Es la misma convención del sistema antiguo, cuyos datos migrados traen las
 tres cifras por separado.
+
+## Una orden abierta es un auto que sigue en el taller
+
+`ordenes.estado` vale `ABIERTA`, `ENTREGADA` o `ANULADA`. Varios autos pueden
+estar adentro a la vez: la orden se guarda abierta, se retoma y se entrega
+cuando el trabajo termina. El `DEFAULT 'ENTREGADA'` cierra todo lo que existía
+antes de la columna, que es lo que es.
+
+**Una orden abierta ya descontó su stock.** El trigger de descuento corre al
+insertar la línea, y eso es lo correcto: el mecánico sacó el aceite de la
+repisa cuando lo usó, no cuando el cliente pagó. De ahí sale la simetría que
+faltaba: quitar una línea —o anular la orden entera— la borra, y
+`trg_detalle_ordenes_devolucion` devuelve el stock con su `DEVOLUCION_ORDEN` en
+el Kardex, apuntando a la orden de la que volvió. Retomar una orden no reinserta
+sus líneas: las que ya están guardadas viajan marcadas con su id.
+
+Una orden anulada **no se borra**: el auto entró al taller y eso pasó. Queda en
+el historial, y los reportes de ingresos y de productos la excluyen, porque el
+trabajo no se hizo.
 
 ## La caja chica no tiene tabla de cajas
 

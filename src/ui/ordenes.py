@@ -28,7 +28,8 @@ from ..texto import filtro_busqueda
 from ..whatsapp import PLANTILLAS, describir_vehiculo, enlace_whatsapp, redactar
 from .clientes import FormularioCliente, FormularioVehiculo
 from .comunes import (
-    BADGE_ALERTA, BADGE_EXITO, BADGE_INFO, ROL_INSIGNIA, ItemNumerico, barra, bloque_total,
+    BADGE_ACENTO, BADGE_ALERTA, BADGE_EXITO, BADGE_INFO, BADGE_NEUTRAL, ROL_INSIGNIA,
+    ItemNumerico, barra, bloque_total,
     carpeta_de_documentos, clp, con_aviso_vacio, crear_tabla, hacer_buscable,
     layout_de_dialogo, layout_de_pantalla, reordenar,
 )
@@ -38,8 +39,18 @@ from .tema import CANAL_PANEL, ESPACIO_PANTALLA, LOGO, fuente_tabular
 COLUMNAS_CARRITO = ["Ítem", "Cant.", "Precio Unit.", "Subtotal"]
 COLUMNAS_DETALLE = ["Ítem", "Cant.", "Precio Unit.", "Subtotal"]
 COLUMNAS_HISTORIAL = [
-    "ID OT", "Fecha", "Cliente", "Patente", "Vehículo", "Mecánico", "Folio MP", "Estado", "Total",
+    "ID OT", "Fecha", "Cliente", "Patente", "Vehículo", "Mecánico", "Folio MP",
+    "Estado", "Pago", "Total",
 ]
+COLUMNAS_ABIERTAS = [
+    "ID OT", "Abierta el", "Cliente", "Patente", "Vehículo", "Mecánico", "Ítems", "Total",
+]
+# En qué va el trabajo, que no es lo mismo que el pago.
+ESTADOS = {
+    "ABIERTA": ("Abierta", BADGE_ACENTO),
+    "ENTREGADA": ("Entregada", BADGE_EXITO),
+    "ANULADA": ("Anulada", BADGE_NEUTRAL),
+}
 NIVELES_COMBUSTIBLE = ["No registrado", "Reserva", "1/4", "Medio", "3/4", "Lleno"]
 # Un selector y un solo campo: la base prohíbe porcentaje y monto a la vez
 # (CHECK descuento_exclusivo_orden) y la pantalla lo hace imposible de intentar.
@@ -49,6 +60,25 @@ TIPOS_DESCUENTO = ["Sin descuento", "Porcentaje (%)", "Monto ($)"]
 FILTROS_HISTORIAL = ["Todas", "Mercado Público", "Clientes"]
 
 REPOSO = "Seleccione 'Nueva Orden' para comenzar."
+# Marca las líneas del carrito que ya existen en la base.
+ROL_DETALLE = Qt.UserRole + 1
+
+
+def _leer_notas(notas: str) -> tuple[str, str]:
+    """Separa el nivel de combustible de las observaciones.
+
+    Las dos cosas viajan en un solo campo porque el esquema tiene uno; al
+    retomar una orden hay que devolverlas a sus dos controles.
+    """
+    nivel, observaciones = "", ""
+    for linea in notas.splitlines():
+        if linea.startswith("Nivel de Combustible: "):
+            nivel = linea.removeprefix("Nivel de Combustible: ").strip()
+        elif linea.startswith("Observaciones: "):
+            observaciones = linea.removeprefix("Observaciones: ").strip()
+        elif observaciones:
+            observaciones += "\n" + linea
+    return nivel, observaciones
 
 
 def km(valor: int) -> str:
@@ -300,7 +330,9 @@ class DialogoWhatsApp(QDialog):
 
 
 class OrdenesWidget(QTabWidget):
-    """Pestaña Órdenes: la orden en curso y el historial, una al lado de la otra."""
+    """Pestaña Órdenes: la que se está armando, las que siguen abiertas y el
+    historial. Varios autos pueden estar en el taller a la vez: una orden se
+    deja abierta, se retoma y se entrega cuando el trabajo termina."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -309,10 +341,14 @@ class OrdenesWidget(QTabWidget):
         self.tab_nueva_orden = QWidget()
         self._configurar_ui_nueva_orden()
 
+        self.tab_abiertas = QWidget()
+        self._configurar_ui_abiertas()
+
         self.tab_historial = QWidget()
         self._configurar_ui_historial()
 
         self.addTab(self.tab_nueva_orden, "Nueva Orden")
+        self.addTab(self.tab_abiertas, "Órdenes Abiertas")
         self.addTab(self.tab_historial, "Historial de Órdenes")
 
         # Refrescar historial cada vez que el usuario cambie a la pestaña 2
@@ -362,6 +398,10 @@ class OrdenesWidget(QTabWidget):
         fila_tarjeta.addWidget(self.boton_whatsapp)
         self.tarjeta.hide()
         self.ultimo_km: int | None = None
+        # La orden que se está retomando, y las líneas que se le sacaron: al
+        # guardar, borrarlas es lo que devuelve su stock a la bodega.
+        self.orden_abierta_id: int | None = None
+        self.detalles_borrados: list[int] = []
         # Lo que necesita el aviso por WhatsApp, tomado al abrir la orden.
         self.contacto_whatsapp: dict | None = None
 
@@ -494,11 +534,24 @@ class OrdenesWidget(QTabWidget):
         self.boton_cancelar.setAutoDefault(False)
         self.boton_cancelar.clicked.connect(self.cancelar_orden)
 
-        self.boton_guardar = QPushButton("Guardar Orden")
+        # Dos salidas: el auto se lleva ahora, o se queda y la orden sigue
+        # abierta para cargarle lo que falte.
+        self.boton_dejar_abierta = QPushButton("Dejar abierta")
+        self.boton_dejar_abierta.setAutoDefault(False)
+        self.boton_dejar_abierta.setEnabled(False)
+        self.boton_dejar_abierta.setToolTip(
+            "Guarda la orden con el auto todavía en el taller. Se retoma desde "
+            "'Órdenes Abiertas'."
+        )
+        self.boton_dejar_abierta.clicked.connect(lambda: self.guardar_orden("ABIERTA"))
+
+        self.boton_guardar = QPushButton("Guardar y entregar")
         self.boton_guardar.setProperty("clase", "primario")
         self.boton_guardar.setAutoDefault(False)
         self.boton_guardar.setEnabled(False)
-        self.boton_guardar.clicked.connect(self.guardar_orden)
+        # Con lambda y no con el método pelado: clicked manda su `checked` como
+        # primer argumento, y ese bool terminaría de estado de la orden.
+        self.boton_guardar.clicked.connect(lambda: self.guardar_orden("ENTREGADA"))
 
         panel_der = QWidget()
         layout_der = QVBoxLayout(panel_der)
@@ -517,7 +570,8 @@ class OrdenesWidget(QTabWidget):
         layout_der.addLayout(barra(self.folio, self.pagada, self.abono, estira=0))
         layout_der.addStretch()
         layout_der.addWidget(marco_total)
-        layout_der.addLayout(barra(self.boton_cancelar, self.boton_guardar, estira=1))
+        layout_der.addLayout(barra(self.boton_cancelar, self.boton_dejar_abierta,
+                                   self.boton_guardar, estira=0))
 
         division = QSplitter(Qt.Horizontal)
         division.setHandleWidth(1)
@@ -541,6 +595,88 @@ class OrdenesWidget(QTabWidget):
         # mitad: en pantalla completa el rótulo medía 506 px de alto.
         layout_tab_1.addWidget(self.panel_trabajo, 1)
 
+    def _configurar_ui_abiertas(self) -> None:
+        """Los autos que siguen en el taller. Una orden abierta ya descontó su
+        stock: retomarla es seguir cargándole cosas, no volver a empezar."""
+        self.tabla_abiertas = con_aviso_vacio(
+            crear_tabla(COLUMNAS_ABIERTAS, ancha=2, orden=0, descendente=True,
+                        numericas=(0, 6, 7)),
+            "No hay órdenes abiertas: todos los autos están entregados.",
+        )
+        self.tabla_abiertas.doubleClicked.connect(self.retomar_orden)
+        self.tabla_abiertas.itemSelectionChanged.connect(self._al_elegir_abierta)
+
+        self.boton_retomar = QPushButton("Retomar")
+        self.boton_retomar.setProperty("clase", "primario")
+        self.boton_retomar.setAutoDefault(False)
+        self.boton_retomar.setEnabled(False)
+        self.boton_retomar.clicked.connect(self.retomar_orden)
+
+        self.boton_anular = QPushButton("Anular")
+        self.boton_anular.setAutoDefault(False)
+        self.boton_anular.setEnabled(False)
+        self.boton_anular.setToolTip("Devuelve a la bodega lo que la orden había descontado")
+        self.boton_anular.clicked.connect(self.anular_orden_abierta)
+
+        aviso = QLabel(
+            "Una orden abierta ya descontó su stock. Anularla lo devuelve a la bodega, "
+            "y queda registrado en el Kardex."
+        )
+        aviso.setWordWrap(True)
+        aviso.setProperty("clase", "resumen")
+
+        layout = layout_de_pantalla(self.tab_abiertas)
+        layout.addLayout(barra(QWidget(), self.boton_retomar, self.boton_anular, estira=0))
+        layout.addWidget(aviso)
+        layout.addWidget(self.tabla_abiertas, 1)
+
+    def _al_elegir_abierta(self) -> None:
+        hay = self.tabla_abiertas.selectionModel().hasSelection()
+        self.boton_retomar.setEnabled(hay)
+        self.boton_anular.setEnabled(hay)
+
+    def cargar_abiertas(self) -> None:
+        cuantos_items = (
+            select(func.count(DetalleOrden.id))
+            .where(DetalleOrden.orden_id == Orden.id).scalar_subquery()
+        )
+        consulta = (
+            select(Orden, Cliente, Vehiculo, Usuario, cuantos_items)
+            .join(Vehiculo, Orden.vehiculo_id == Vehiculo.id)
+            .join(Cliente, Vehiculo.cliente_id == Cliente.id)
+            .join(Usuario, Orden.usuario_id == Usuario.id)
+            .where(Orden.estado == "ABIERTA")
+            .order_by(Orden.id.desc())
+        )
+        with SessionLocal() as db:
+            filas = [
+                (orden.id, orden.fecha_creacion, cliente.nombre_completo, vehiculo.patente,
+                 f"{vehiculo.marca or ''} {vehiculo.modelo or ''}".strip() or "S/D",
+                 usuario.nombre, int(items), orden.total_final)
+                for orden, cliente, vehiculo, usuario, items in db.execute(consulta).all()
+            ]
+
+        self.tabla_abiertas.setSortingEnabled(False)
+        self.tabla_abiertas.setRowCount(len(filas))
+        for fila, (oid, fecha, cliente, patente, vehiculo, mecanico, items, total) in enumerate(filas):
+            celda_id = ItemNumerico(str(oid), oid)
+            celda_id.setData(Qt.UserRole, oid)
+            celda_fecha = ItemNumerico(fecha.strftime("%d-%m-%Y %H:%M"), fecha.timestamp())
+            celda_fecha.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            celda_patente = QTableWidgetItem(patente)
+            celda_patente.setFont(fuente_tabular())
+            self.tabla_abiertas.setItem(fila, 0, celda_id)
+            self.tabla_abiertas.setItem(fila, 1, celda_fecha)
+            self.tabla_abiertas.setItem(fila, 2, QTableWidgetItem(cliente))
+            self.tabla_abiertas.setItem(fila, 3, celda_patente)
+            self.tabla_abiertas.setItem(fila, 4, QTableWidgetItem(vehiculo))
+            self.tabla_abiertas.setItem(fila, 5, QTableWidgetItem(mecanico))
+            self.tabla_abiertas.setItem(fila, 6, ItemNumerico(str(items), items))
+            self.tabla_abiertas.setItem(fila, 7, ItemNumerico(clp(total), total))
+        reordenar(self.tabla_abiertas)
+        self.setTabText(1, f"Órdenes Abiertas ({len(filas)})" if filas else "Órdenes Abiertas")
+        self._al_elegir_abierta()
+
     def _configurar_ui_historial(self) -> None:
         """Diseño visual de la segunda pestaña (Historial)."""
         self.busqueda_historial = QLineEdit(
@@ -553,7 +689,7 @@ class OrdenesWidget(QTabWidget):
 
         self.tabla_historial = con_aviso_vacio(
             crear_tabla(COLUMNAS_HISTORIAL, ancha=2, orden=0, descendente=True,
-                        numericas=(0, 8)),
+                        numericas=(0, 9)),
             "Todavía no hay órdenes de trabajo registradas.",
         )
         self.tabla_historial.doubleClicked.connect(self.abrir_detalle_orden)
@@ -564,6 +700,8 @@ class OrdenesWidget(QTabWidget):
 
     def _al_cambiar_pestana(self, index: int) -> None:
         if index == 1:
+            self.cargar_abiertas()
+        elif index == 2:
             self.cargar_historial()
 
     def cargar_historial(self) -> None:
@@ -596,8 +734,8 @@ class OrdenesWidget(QTabWidget):
             filas = [
                 (orden.id, orden.fecha_creacion, cliente.nombre_completo, vehiculo.patente,
                  f"{vehiculo.marca or ''} {vehiculo.modelo or ''}".strip() or "S/D",
-                 usuario.nombre, orden.folio_mercado_publico or "", orden.estado_pago,
-                 int(pagado), orden.total_final)
+                 usuario.nombre, orden.folio_mercado_publico or "", orden.estado,
+                 orden.estado_pago, int(pagado), orden.total_final)
                 for orden, cliente, vehiculo, usuario, pagado in db.execute(consulta).all()
             ]
 
@@ -605,8 +743,8 @@ class OrdenesWidget(QTabWidget):
         self.tabla_historial.setSortingEnabled(False)
         self.tabla_historial.setRowCount(len(filas))
 
-        for fila, (oid, fecha, cliente, patente, vehiculo, mecanico, folio, pagada,
-                   pagado, total) in enumerate(filas):
+        for fila, (oid, fecha, cliente, patente, vehiculo, mecanico, folio, estado_ot,
+                   pagada, pagado, total) in enumerate(filas):
             celda_id = ItemNumerico(str(oid), oid)
             celda_id.setData(Qt.UserRole, oid)
             # Ordenable por el instante real: como texto, "%d-%m-%Y" ordena por
@@ -637,8 +775,12 @@ class OrdenesWidget(QTabWidget):
             estado.setData(ROL_INSIGNIA, insignia)
             if rotulo == "Abonada":
                 estado.setToolTip(estado_de_pago(pagada, pagado, int(total)))
-            self.tabla_historial.setItem(fila, 7, estado)
-            self.tabla_historial.setItem(fila, 8, ItemNumerico(clp(total), total))
+            rotulo_ot, insignia_ot = ESTADOS[estado_ot]
+            celda_estado = QTableWidgetItem(rotulo_ot)
+            celda_estado.setData(ROL_INSIGNIA, insignia_ot)
+            self.tabla_historial.setItem(fila, 7, celda_estado)
+            self.tabla_historial.setItem(fila, 8, estado)
+            self.tabla_historial.setItem(fila, 9, ItemNumerico(clp(total), total))
 
         # Sin folios a la vista la columna es aire que le falta al cliente.
         self.tabla_historial.setColumnHidden(6, not any(f[6] for f in filas))
@@ -726,6 +868,7 @@ class OrdenesWidget(QTabWidget):
         self.combo_combustible.setCurrentIndex(0)
         self.texto_observaciones.clear()
         self.tipo_descuento.setCurrentIndex(0)
+        self.detalles_borrados = []
         self.folio.clear()
         self.pagada.setChecked(False)
         self.abono.setValue(0)
@@ -772,6 +915,8 @@ class OrdenesWidget(QTabWidget):
 
     def _volver_al_reposo(self) -> None:
         self._vaciar_formulario()
+        self.orden_abierta_id = None
+        self.detalles_borrados = []
         self.vehiculo_actual_id = None
         self.ultimo_km = None
         self.contacto_whatsapp = None
@@ -861,7 +1006,11 @@ class OrdenesWidget(QTabWidget):
             nombre, precio = servicio.nombre, int(servicio.precio_venta)
         self._insertar_en_carrito({"servicio_id": servicio_id}, nombre, precio, cantidad)
 
-    def _insertar_en_carrito(self, item: dict, nombre: str, precio: int, cantidad: int) -> None:
+    def _insertar_en_carrito(self, item: dict, nombre: str, precio: int, cantidad: int,
+                             detalle_id: int | None = None) -> None:
+        """`detalle_id` marca las líneas que ya están en la base —las de una
+        orden retomada—: su stock ya salió, así que al guardar no se insertan
+        de nuevo."""
         subtotal = precio * cantidad
 
         self.tabla_carrito.setSortingEnabled(False)
@@ -880,6 +1029,7 @@ class OrdenesWidget(QTabWidget):
             celda.setData(Qt.UserRole, valor)
             self.tabla_carrito.setItem(fila, columna, celda)
 
+        celda_nombre.setData(ROL_DETALLE, detalle_id)
         reordenar(self.tabla_carrito)
         self.recalcular_total()
 
@@ -890,6 +1040,11 @@ class OrdenesWidget(QTabWidget):
         fila = self.tabla_carrito.currentRow()
         if fila < 0:
             return
+        detalle_id = self.tabla_carrito.item(fila, 0).data(ROL_DETALLE)
+        if detalle_id is not None:
+            # Ya estaba guardada: se borra recién al guardar, y ahí el trigger
+            # le devuelve el stock a la bodega.
+            self.detalles_borrados.append(detalle_id)
         self.tabla_carrito.removeRow(fila)
         self.recalcular_total()
 
@@ -907,11 +1062,99 @@ class OrdenesWidget(QTabWidget):
 
     def _actualizar_boton_guardar(self) -> None:
         """Guardar exige insumos Y kilometraje, y lo dice apagándose."""
-        self.boton_guardar.setEnabled(
-            self.tabla_carrito.rowCount() > 0 and self.spin_kilometraje.value() > 0
-        )
+        listo = self.tabla_carrito.rowCount() > 0 and self.spin_kilometraje.value() > 0
+        self.boton_guardar.setEnabled(listo)
+        self.boton_dejar_abierta.setEnabled(listo)
 
-    def guardar_orden(self) -> None:
+    def retomar_orden(self) -> None:
+        """Trae una orden abierta a la mesa de trabajo tal como quedó.
+
+        Sus líneas vienen marcadas con el id que tienen en la base: ya
+        descontaron stock, así que al guardar no se insertan de nuevo, y
+        sacarlas es lo que se lo devuelve.
+        """
+        fila = self.tabla_abiertas.currentRow()
+        if fila < 0:
+            return
+        orden_id = self.tabla_abiertas.item(fila, 0).data(Qt.UserRole)
+
+        if self.tabla_carrito.rowCount() and QMessageBox.question(
+            self, "Hay una orden en curso",
+            "Tienes insumos cargados en la mesa de trabajo. Si retomas otra orden "
+            "se descartan. ¿Seguir?",
+        ) != QMessageBox.Yes:
+            return
+
+        with SessionLocal() as db:
+            orden = db.get(Orden, orden_id)
+            lineas = [
+                ({"producto_id": d.producto_id} if d.producto_id else {"servicio_id": d.servicio_id},
+                 (d.producto or d.servicio).nombre, int(d.precio_unitario_cobrado),
+                 d.cantidad, d.id)
+                for d in orden.detalles
+            ]
+            datos = {
+                "vehiculo_id": orden.vehiculo_id, "km": orden.kilometraje_ingreso or 0,
+                "folio": orden.folio_mercado_publico or "", "notas": orden.notas or "",
+                "porcentaje": int(orden.descuento_porcentaje),
+                "monto": int(orden.descuento_monto), "pagado": orden.monto_pagado,
+            }
+
+        # Deja la tarjeta del vehículo y vacía el formulario; después se llena
+        # con lo que la orden traía.
+        self._iniciar_nueva_orden(datos["vehiculo_id"])
+        self.orden_abierta_id = orden_id
+        for item, nombre, precio, cantidad, detalle_id in lineas:
+            self._insertar_en_carrito(item, nombre, precio, cantidad, detalle_id)
+
+        self.spin_kilometraje.setValue(datos["km"])
+        self.folio.setText(datos["folio"])
+        nivel, observaciones = _leer_notas(datos["notas"])
+        if nivel in NIVELES_COMBUSTIBLE:
+            self.combo_combustible.setCurrentText(nivel)
+        self.texto_observaciones.setPlainText(observaciones)
+        if datos["porcentaje"]:
+            self.tipo_descuento.setCurrentIndex(1)
+            self.valor_descuento.setValue(datos["porcentaje"])
+        elif datos["monto"]:
+            self.tipo_descuento.setCurrentIndex(2)
+            self.valor_descuento.setValue(datos["monto"])
+        self.recalcular_total()
+
+        abonado = f" · abonado {clp(datos['pagado'])}" if datos["pagado"] else ""
+        self.label_contexto.setText(f"OT #{orden_id} abierta{abonado}")
+        self.setCurrentIndex(0)
+
+    def anular_orden_abierta(self) -> None:
+        """Devuelve a la bodega lo que la orden había descontado y la cierra.
+
+        No se borra: queda en el historial marcada, porque el auto entró al
+        taller y eso pasó.
+        """
+        fila = self.tabla_abiertas.currentRow()
+        if fila < 0 or not Sesion.activa():
+            return
+        orden_id = self.tabla_abiertas.item(fila, 0).data(Qt.UserRole)
+        if QMessageBox.question(
+            self, "Anular la orden",
+            f"Se anula la OT #{orden_id} y todo lo que había descontado vuelve a la "
+            "bodega, con su movimiento en el Kardex. La orden queda en el historial.",
+        ) != QMessageBox.Yes:
+            return
+
+        with SessionLocal() as db:
+            orden = db.get(Orden, orden_id)
+            for linea in list(orden.detalles):
+                db.delete(linea)      # el trigger devuelve el stock
+            db.flush()
+            orden.estado = "ANULADA"
+            db.commit()
+
+        if self.orden_abierta_id == orden_id:
+            self._volver_al_reposo()
+        self.cargar_abiertas()
+
+    def guardar_orden(self, estado: str = "ENTREGADA") -> None:
         if not Sesion.activa():
             QMessageBox.critical(
                 self, "Sesión no válida",
@@ -945,6 +1188,7 @@ class OrdenesWidget(QTabWidget):
         # Capturar totales y empaquetar detalles
         detalles = [
             {
+                "detalle_id": self.tabla_carrito.item(fila, 0).data(ROL_DETALLE),
                 "item": self.tabla_carrito.item(fila, 0).data(Qt.UserRole),
                 "cantidad": self.tabla_carrito.item(fila, 1).data(Qt.UserRole),
                 "precio": self.tabla_carrito.item(fila, 2).data(Qt.UserRole),
@@ -963,23 +1207,36 @@ class OrdenesWidget(QTabWidget):
             notas_finales += f"\nObservaciones: {observaciones}"
 
         with SessionLocal() as db:
-            nueva_orden = Orden(
-                vehiculo_id=self.vehiculo_actual_id,
-                usuario_id=Sesion.usuario_id,  # Extraído de tu clase auth
-                kilometraje_ingreso=self.spin_kilometraje.value(),
-                descuento_porcentaje=porcentaje,
-                descuento_monto=monto,
-                subtotal=suma_total,
-                impuesto=impuesto,
-                total_final=total_final,
-                folio_mercado_publico=self.folio.text().strip() or None,
-                estado_pago=self.pagada.isChecked(),
-                notas=notas_finales,
-            )
-            db.add(nueva_orden)
+            if self.orden_abierta_id:
+                nueva_orden = db.get(Orden, self.orden_abierta_id)
+            else:
+                nueva_orden = Orden(vehiculo_id=self.vehiculo_actual_id,
+                                    usuario_id=Sesion.usuario_id,
+                                    estado_pago=self.pagada.isChecked())
+                db.add(nueva_orden)
+            # `estado_pago` no se vuelve a escribir al actualizar: sale de los
+            # abonos contra el total, y de eso se encargan los triggers.
+            nueva_orden.kilometraje_ingreso = self.spin_kilometraje.value()
+            nueva_orden.descuento_porcentaje = porcentaje
+            nueva_orden.descuento_monto = monto
+            nueva_orden.subtotal = suma_total
+            nueva_orden.impuesto = impuesto
+            nueva_orden.total_final = total_final
+            nueva_orden.folio_mercado_publico = self.folio.text().strip() or None
+            nueva_orden.notas = notas_finales
+            nueva_orden.estado = estado
             try:
                 db.flush()  # asigna nueva_orden.id sin cerrar la transacción
+                # Lo que se sacó de una orden retomada: al borrarlo, el trigger
+                # le devuelve el stock a la bodega y lo escribe en el Kardex.
+                for detalle_id in self.detalles_borrados:
+                    linea = db.get(DetalleOrden, detalle_id)
+                    if linea is not None:
+                        db.delete(linea)
+                db.flush()
                 for det in detalles:
+                    if det["detalle_id"] is not None:
+                        continue      # ya está guardada; su stock ya salió
                     db.add(DetalleOrden(
                         orden_id=nueva_orden.id,
                         cantidad=det["cantidad"],
@@ -1020,9 +1277,13 @@ class OrdenesWidget(QTabWidget):
             numero = nueva_orden.id
 
         QMessageBox.information(
-            self, "Orden guardada", f"Orden N° {numero} guardada correctamente."
+            self, "Orden guardada",
+            f"Orden N° {numero} " + ("guardada y entregada." if estado == "ENTREGADA"
+                                     else "guardada. El auto queda en el taller."),
         )
         self._volver_al_reposo()
+        if estado == "ABIERTA":
+            self.cargar_abiertas()
 
     def abrir_detalle_orden(self) -> None:
         """Consultar una orden guardada no toca la que se esté armando.
@@ -1176,10 +1437,15 @@ class DialogoDetalleOrden(QDialog):
         with SessionLocal() as db:
             orden = db.get(Orden, self.orden_id)
             texto = estado_de_pago(orden.estado_pago, orden.monto_pagado, self.total)
-            self.saldo = orden.saldo
+            self.saldo, anulada = orden.saldo, orden.estado == "ANULADA"
         self.info.setText(self._cabecera + texto + self._folio)
-        self.boton_pago.setEnabled(self.saldo > 0)
-        self.boton_pago.setToolTip("" if self.saldo > 0 else "No queda saldo por cobrar.")
+        # Una orden anulada no tiene qué cobrar: el trabajo no se hizo y su
+        # stock volvió a la bodega.
+        self.boton_pago.setEnabled(self.saldo > 0 and not anulada)
+        self.boton_pago.setToolTip(
+            "Esta orden está anulada." if anulada
+            else "" if self.saldo > 0 else "No queda saldo por cobrar."
+        )
 
     def registrar_pago(self) -> None:
         """Un abono se suma a lo ya pagado, no corrige nada: por eso el tope es

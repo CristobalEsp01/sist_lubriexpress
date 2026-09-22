@@ -17,6 +17,7 @@ Lubri-Express. Corre localmente sobre PostgreSQL.
 | Mantenedor de Clientes y Vehículos | Funcionando |
 | Ventas de mostrador | Funcionando |
 | Órdenes de trabajo: insumos, servicios, descuentos, folio y estado de pago | Funcionando (con buscador de productos que muestra stock y ubicación) |
+| Varias órdenes abiertas a la vez | Funcionando (se deja abierta, se retoma y se entrega; anularla devuelve el stock) |
 | Pago parcial de una orden: abono al cerrarla y saldo cobrado después | Funcionando (el saldo se registra desde el historial) |
 | Aviso al cliente por WhatsApp | Funcionando (desde la orden abierta y desde una guardada, que cita su N° de OT) |
 | Exportación de la orden a PDF | Funcionando |

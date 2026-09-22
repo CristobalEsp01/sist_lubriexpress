@@ -13,6 +13,11 @@ from sqlalchemy import func, select, text
 
 from .models import DetalleOrden, DetalleVenta, Orden, Producto, Usuario, Venta
 
+# Una orden anulada no se hizo: su stock volvió a la bodega y no puede seguir
+# contándose como ingreso ni como producto vendido.
+VIGENTE = Orden.estado != "ANULADA"
+
+
 COLUMNAS_INGRESOS = ["Fecha", "Ventas", "Total ventas", "Órdenes", "Total órdenes", "Neto", "IVA", "Total"]
 COLUMNAS_PRODUCTOS = ["Producto", "Marca", "Cantidad", "Monto neto"]
 COLUMNAS_USUARIOS = ["Usuario", "Ventas", "Total ventas", "Órdenes", "Total órdenes", "Total"]
@@ -38,7 +43,7 @@ def ingresos_por_periodo(db, desde: date, hasta: date) -> list[tuple]:
         d[0] += 1; d[1] += int(total); d[4] += int(impuesto)
     for fecha, total, impuesto in db.execute(
         select(Orden.fecha_creacion, Orden.total_final, Orden.impuesto)
-        .where(Orden.fecha_creacion >= ini, Orden.fecha_creacion < fin)
+        .where(Orden.fecha_creacion >= ini, Orden.fecha_creacion < fin, VIGENTE)
     ):
         d = dias[clave(fecha)]
         d[2] += 1; d[3] += int(total); d[4] += int(impuesto)
@@ -64,7 +69,7 @@ def ventas_por_producto(db, desde: date, hasta: date) -> list[tuple]:
         .where(Venta.fecha_venta >= ini, Venta.fecha_venta < fin),
         select(Producto.nombre, Producto.marca, DetalleOrden.cantidad, DetalleOrden.precio_unitario_cobrado)
         .join(DetalleOrden.producto).join(DetalleOrden.orden)
-        .where(Orden.fecha_creacion >= ini, Orden.fecha_creacion < fin),
+        .where(Orden.fecha_creacion >= ini, Orden.fecha_creacion < fin, VIGENTE),
     ]
     for consulta in lineas:
         for nombre, marca, cantidad, precio in db.execute(consulta):
@@ -86,7 +91,9 @@ def por_usuario(db, desde: date, hasta: date) -> list[tuple]:
         acumulado[nombre][0] += n; acumulado[nombre][1] += int(total)
     for nombre, n, total in db.execute(
         select(Usuario.nombre, func.count(Orden.id), func.coalesce(func.sum(Orden.total_final), 0))
-        .join(Orden.usuario).where(Orden.fecha_creacion >= ini, Orden.fecha_creacion < fin).group_by(Usuario.nombre)
+        .join(Orden.usuario)
+        .where(Orden.fecha_creacion >= ini, Orden.fecha_creacion < fin, VIGENTE)
+        .group_by(Usuario.nombre)
     ):
         acumulado[nombre][2] += n; acumulado[nombre][3] += int(total)
     return sorted(

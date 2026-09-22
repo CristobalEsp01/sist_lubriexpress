@@ -33,17 +33,79 @@ from src.ubicaciones import detectar  # noqa: E402
 
 @dataclass(frozen=True)
 class Paso:
-    """Un cambio de esquema. `nombre` es la tabla, o "tabla.columna"."""
+    """Un cambio de esquema.
+
+    `declara` son los trozos de `database/schema_lubriexpress.sql` que este paso
+    tiene que reproducir palabra por palabra; vacío significa "todo el `sql`".
+    Una prueba verifica que aparezcan en el esquema y en el `sql` del paso, así
+    que una base actualizada y una recién instalada no se pueden separar.
+    """
 
     nombre: str
     comprobacion: str   # SELECT que devuelve true si el paso ya está aplicado
     sql: str
+    declara: tuple[str, ...] = ()
 
+
+# Funciones y triggers copiados del `.sql`; van en constantes porque son largos
+# y porque la prueba de paridad los compara enteros contra el esquema.
+DEVOLVER_STOCK = '''
+CREATE OR REPLACE FUNCTION fn_devolver_stock_orden() RETURNS TRIGGER AS $$
+DECLARE
+  v_usuario_id INT;
+  v_stock_nuevo INT;
+BEGIN
+  SELECT "usuario_id" INTO v_usuario_id FROM "ordenes" WHERE "id" = OLD."orden_id";
+
+  UPDATE "productos"
+     SET "stock_actual" = "stock_actual" + OLD."cantidad"
+   WHERE "id" = OLD."producto_id"
+   RETURNING "stock_actual" INTO v_stock_nuevo;
+
+  INSERT INTO "kardex_movimientos"
+      ("producto_id", "usuario_id", "tipo_movimiento", "cantidad_movida",
+       "stock_resultante", "orden_id")
+  VALUES
+      (OLD."producto_id", v_usuario_id, 'DEVOLUCION_ORDEN', OLD."cantidad",
+       v_stock_nuevo, OLD."orden_id");
+
+  RETURN OLD;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_detalle_ordenes_devolucion
+  AFTER DELETE ON "detalle_ordenes"
+  FOR EACH ROW
+  WHEN (OLD."producto_id" IS NOT NULL)
+  EXECUTE FUNCTION fn_devolver_stock_orden();
+'''
+
+ESTADO_PAGO_AL_CAMBIAR_TOTAL = '''
+-- Y al revés: si cambia el total de una orden —se le agregó una línea antes de
+-- entregarla— lo abonado ya no alcanza, y el estado tiene que decirlo. Sin
+-- esto, una orden abierta que se pagó al dejar el auto seguiría marcada como
+-- pagada después de cargarle un repuesto más.
+CREATE OR REPLACE FUNCTION fn_estado_pago_al_cambiar_total() RETURNS TRIGGER AS $$
+BEGIN
+  NEW."estado_pago" := (
+    SELECT COALESCE(SUM(p."monto"), 0) >= NEW."total_final"
+      FROM "pagos_orden" p
+     WHERE p."orden_id" = NEW."id"
+  );
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_ordenes_estado_pago
+  BEFORE UPDATE OF "total_final" ON "ordenes"
+  FOR EACH ROW
+  WHEN (NEW."total_final" IS DISTINCT FROM OLD."total_final")
+  EXECUTE FUNCTION fn_estado_pago_al_cambiar_total();
+'''
 
 # ponytail: la lista de pasos se escribe a mano y solo va hacia adelante. Sirve
 # mientras sean unos pocos cambios aditivos; el día que haya que revertir uno, o
 # que la lista crezca, toca incorporar Alembic (anotado en docs/base-de-datos.md).
-# Las dos copias —esta y la del .sql— las mantiene calzadas una prueba.
 PASOS = [
     Paso(
         nombre="movimientos_caja",
@@ -60,6 +122,10 @@ CREATE TABLE "movimientos_caja" (
 );
 CREATE INDEX idx_movimientos_caja_fecha ON "movimientos_caja"("fecha");
 ''',
+        declara=(
+            'CREATE TABLE "movimientos_caja" (',
+            'CREATE INDEX idx_movimientos_caja_fecha ON "movimientos_caja"("fecha");',
+        ),
     ),
     Paso(
         nombre="kardex_movimientos.costo_unitario",
@@ -72,6 +138,69 @@ CREATE INDEX idx_movimientos_caja_fecha ON "movimientos_caja"("fecha");
 ALTER TABLE "kardex_movimientos"
   ADD COLUMN "costo_unitario" DECIMAL(10,2) CHECK ("costo_unitario" >= 0);
 ''',
+        declara=('"costo_unitario" DECIMAL(10,2) CHECK ("costo_unitario" >= 0)',),
+    ),
+    Paso(
+        nombre="ordenes.estado",
+        comprobacion="""
+            SELECT EXISTS (SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'ordenes' AND column_name = 'estado')
+        """,
+        sql='''
+ALTER TABLE "ordenes"
+  ADD COLUMN "estado" VARCHAR(20) NOT NULL DEFAULT 'ENTREGADA'
+      CHECK ("estado" IN ('ABIERTA', 'ENTREGADA', 'ANULADA'));
+''',
+        declara=('''"estado" VARCHAR(20) NOT NULL DEFAULT 'ENTREGADA'
+      CHECK ("estado" IN ('ABIERTA', 'ENTREGADA', 'ANULADA'))''',),
+    ),
+    Paso(
+        nombre="kardex_movimientos.devolucion",
+        comprobacion="""
+            SELECT EXISTS (SELECT 1 FROM pg_constraint
+                            WHERE conname = 'origen_movimiento_valido'
+                              AND pg_get_constraintdef(oid) LIKE '%DEVOLUCION_ORDEN%')
+        """,
+        sql='''
+ALTER TABLE "kardex_movimientos"
+  DROP CONSTRAINT "kardex_movimientos_tipo_movimiento_check",
+  ADD CONSTRAINT "kardex_movimientos_tipo_movimiento_check"
+      CHECK ("tipo_movimiento" IN ('ENTRADA', 'SALIDA_VENTA', 'SALIDA_ORDEN',
+                                   'AJUSTE_MANUAL', 'DEVOLUCION_ORDEN')),
+  DROP CONSTRAINT "origen_movimiento_valido",
+  ADD CONSTRAINT "origen_movimiento_valido"
+      CHECK (
+        ("tipo_movimiento" IN ('SALIDA_ORDEN', 'DEVOLUCION_ORDEN') AND "orden_id" IS NOT NULL AND "venta_id" IS NULL) OR
+        ("tipo_movimiento" = 'SALIDA_VENTA' AND "venta_id" IS NOT NULL AND "orden_id" IS NULL) OR
+        ("tipo_movimiento" IN ('ENTRADA', 'AJUSTE_MANUAL') AND "orden_id" IS NULL AND "venta_id" IS NULL)
+      );
+''',
+        declara=(
+            '''CHECK ("tipo_movimiento" IN ('ENTRADA', 'SALIDA_VENTA', 'SALIDA_ORDEN',
+                                   'AJUSTE_MANUAL', 'DEVOLUCION_ORDEN'))''',
+            '''CHECK (
+        ("tipo_movimiento" IN ('SALIDA_ORDEN', 'DEVOLUCION_ORDEN') AND "orden_id" IS NOT NULL AND "venta_id" IS NULL) OR
+        ("tipo_movimiento" = 'SALIDA_VENTA' AND "venta_id" IS NOT NULL AND "orden_id" IS NULL) OR
+        ("tipo_movimiento" IN ('ENTRADA', 'AJUSTE_MANUAL') AND "orden_id" IS NULL AND "venta_id" IS NULL)
+      )''',
+        ),
+    ),
+    Paso(
+        nombre="detalle_ordenes.devolucion",
+        comprobacion="""
+            SELECT EXISTS (SELECT 1 FROM pg_trigger
+                            WHERE tgname = 'trg_detalle_ordenes_devolucion')
+        """,
+        sql=DEVOLVER_STOCK,
+        declara=(DEVOLVER_STOCK,),
+    ),
+    Paso(
+        nombre="ordenes.estado_pago_derivado",
+        comprobacion="""
+            SELECT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_ordenes_estado_pago')
+        """,
+        sql=ESTADO_PAGO_AL_CAMBIAR_TOTAL,
+        declara=(ESTADO_PAGO_AL_CAMBIAR_TOTAL,),
     ),
 ]
 

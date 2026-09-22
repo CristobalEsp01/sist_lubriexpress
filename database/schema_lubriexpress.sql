@@ -128,6 +128,13 @@ CREATE TABLE "ordenes" (
   "numero_boleta" VARCHAR(50) UNIQUE,
   "estado_pago" BOOLEAN NOT NULL DEFAULT FALSE,
   "notas" TEXT,
+  -- En qué va el trabajo, que no es lo mismo que el pago. Una orden ABIERTA es
+  -- un auto que sigue en el taller: se le pueden agregar líneas y se entrega
+  -- después. El default cierra todo lo que ya existía, que es lo que es. Va al
+  -- final porque ALTER TABLE solo sabe agregar ahí: así una base actualizada y
+  -- una recién instalada quedan iguales hasta en el orden de las columnas.
+  "estado" VARCHAR(20) NOT NULL DEFAULT 'ENTREGADA'
+      CHECK ("estado" IN ('ABIERTA', 'ENTREGADA', 'ANULADA')),
   CONSTRAINT descuento_exclusivo_orden
       CHECK (NOT ("descuento_porcentaje" > 0 AND "descuento_monto" > 0))
 );
@@ -196,7 +203,8 @@ CREATE TABLE "kardex_movimientos" (
   "producto_id" INT NOT NULL REFERENCES "productos"("id"),
   "usuario_id" INT NOT NULL REFERENCES "usuarios"("id"),
   "tipo_movimiento" VARCHAR(20) NOT NULL
-      CHECK ("tipo_movimiento" IN ('ENTRADA', 'SALIDA_VENTA', 'SALIDA_ORDEN', 'AJUSTE_MANUAL')),
+      CHECK ("tipo_movimiento" IN ('ENTRADA', 'SALIDA_VENTA', 'SALIDA_ORDEN',
+                                   'AJUSTE_MANUAL', 'DEVOLUCION_ORDEN')),
   "cantidad_movida" INT NOT NULL CHECK ("cantidad_movida" <> 0),
   "stock_resultante" INT NOT NULL CHECK ("stock_resultante" >= 0),
   "orden_id" INT REFERENCES "ordenes"("id"),
@@ -208,7 +216,7 @@ CREATE TABLE "kardex_movimientos" (
   "costo_unitario" DECIMAL(10,2) CHECK ("costo_unitario" >= 0),
   CONSTRAINT origen_movimiento_valido
       CHECK (
-        ("tipo_movimiento" = 'SALIDA_ORDEN' AND "orden_id" IS NOT NULL AND "venta_id" IS NULL) OR
+        ("tipo_movimiento" IN ('SALIDA_ORDEN', 'DEVOLUCION_ORDEN') AND "orden_id" IS NOT NULL AND "venta_id" IS NULL) OR
         ("tipo_movimiento" = 'SALIDA_VENTA' AND "venta_id" IS NOT NULL AND "orden_id" IS NULL) OR
         ("tipo_movimiento" IN ('ENTRADA', 'AJUSTE_MANUAL') AND "orden_id" IS NULL AND "venta_id" IS NULL)
       )
@@ -318,6 +326,40 @@ CREATE TRIGGER trg_detalle_ordenes_descuento
   WHEN (NEW."producto_id" IS NOT NULL)  -- las líneas de servicio no mueven stock
   EXECUTE FUNCTION fn_descontar_stock_orden();
 
+-- --- Devolución de stock al quitar una línea de una orden ---
+-- Una orden abierta ya descontó: el mecánico sacó el aceite de la repisa. Si
+-- después se quita la línea —se cargó de más, o se anula la orden entera— el
+-- stock vuelve y queda dicho por qué. Firma el dueño de la orden, igual que la
+-- salida: lo que el Kardex responde es de qué orden salió y a cuál volvió.
+CREATE OR REPLACE FUNCTION fn_devolver_stock_orden() RETURNS TRIGGER AS $$
+DECLARE
+  v_usuario_id INT;
+  v_stock_nuevo INT;
+BEGIN
+  SELECT "usuario_id" INTO v_usuario_id FROM "ordenes" WHERE "id" = OLD."orden_id";
+
+  UPDATE "productos"
+     SET "stock_actual" = "stock_actual" + OLD."cantidad"
+   WHERE "id" = OLD."producto_id"
+   RETURNING "stock_actual" INTO v_stock_nuevo;
+
+  INSERT INTO "kardex_movimientos"
+      ("producto_id", "usuario_id", "tipo_movimiento", "cantidad_movida",
+       "stock_resultante", "orden_id")
+  VALUES
+      (OLD."producto_id", v_usuario_id, 'DEVOLUCION_ORDEN', OLD."cantidad",
+       v_stock_nuevo, OLD."orden_id");
+
+  RETURN OLD;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_detalle_ordenes_devolucion
+  AFTER DELETE ON "detalle_ordenes"
+  FOR EACH ROW
+  WHEN (OLD."producto_id" IS NOT NULL)
+  EXECUTE FUNCTION fn_devolver_stock_orden();
+
 -- --- Salida de stock por Venta de Mostrador ---
 CREATE OR REPLACE FUNCTION fn_descontar_stock_venta() RETURNS TRIGGER AS $$
 DECLARE
@@ -401,6 +443,27 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER trg_pagos_orden_estado
   AFTER INSERT ON "pagos_orden"
   FOR EACH ROW EXECUTE FUNCTION fn_actualizar_estado_pago();
+
+-- Y al revés: si cambia el total de una orden —se le agregó una línea antes de
+-- entregarla— lo abonado ya no alcanza, y el estado tiene que decirlo. Sin
+-- esto, una orden abierta que se pagó al dejar el auto seguiría marcada como
+-- pagada después de cargarle un repuesto más.
+CREATE OR REPLACE FUNCTION fn_estado_pago_al_cambiar_total() RETURNS TRIGGER AS $$
+BEGIN
+  NEW."estado_pago" := (
+    SELECT COALESCE(SUM(p."monto"), 0) >= NEW."total_final"
+      FROM "pagos_orden" p
+     WHERE p."orden_id" = NEW."id"
+  );
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_ordenes_estado_pago
+  BEFORE UPDATE OF "total_final" ON "ordenes"
+  FOR EACH ROW
+  WHEN (NEW."total_final" IS DISTINCT FROM OLD."total_final")
+  EXECUTE FUNCTION fn_estado_pago_al_cambiar_total();
 
 -- =====================================================================
 -- Vista de alerta de stock crítico (para el módulo de reportería)

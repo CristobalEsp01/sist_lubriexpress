@@ -244,6 +244,34 @@ próximo servicio. Si se anota un kilometraje menor que el del servicio anterior
 el sistema pregunta antes de guardar —suele ser un dedo cambiado, pero a veces
 es un tablero reemplazado.
 
+\subsection{Dejar la orden abierta (el auto se queda)}
+
+\pantalla{ordenes_abiertas}{Los autos que siguen en el taller, cada uno con su
+orden esperando.}
+
+No todos los autos se entregan el mismo día. Si el trabajo sigue mañana, o falta
+un repuesto, el botón \textbf{Dejar abierta} guarda la orden con el auto todavía
+adentro. Se pueden tener \textbf{varias órdenes abiertas a la vez}, una por auto.
+
+Aparecen en la pestaña \textbf{Órdenes Abiertas}, que muestra entre paréntesis
+cuántas hay. Ahí se elige una y:
+
+\begin{itemize}
+  \item \textbf{Retomar} la trae de vuelta a la mesa de trabajo tal como quedó,
+        con sus insumos cargados. Se le agrega lo que falte y se entrega con
+        \textbf{Guardar y entregar}.
+  \item \textbf{Anular} cierra la orden sin entregarla.
+\end{itemize}
+
+\textbf{Lo importante del stock.} Una orden abierta \emph{ya descontó} sus
+repuestos: es correcto, porque el mecánico los sacó de la repisa cuando los usó.
+Por eso, si se le quita una línea al retomarla, o si se anula la orden entera,
+\textbf{ese stock vuelve solo a la bodega} y queda anotado en el Kardex diciendo
+de qué orden volvió. No hay que corregir nada a mano.
+
+Una orden anulada no desaparece: queda en el historial marcada como tal, porque
+el auto sí entró al taller. Los reportes no la cuentan.
+
 \subsection{Descuento, folio y pago}
 
 El descuento se aplica \textbf{en porcentaje o en monto fijo}, nunca los dos a
@@ -409,6 +437,11 @@ Puede estar desactivado. En Inventario se ve en gris y su fila lo dice.
 El mínimo empieza en cero para todo lo que vino del sistema anterior, así que
 cualquier producto sin stock figura como crítico. Se corrige fijando los mínimos
 por categoría (sección 2.4).
+
+\subsection*{Guardé una orden y el auto todavía no estaba listo}
+
+Para eso es \textbf{Dejar abierta}. Si ya la guardaste con \textbf{Guardar y
+entregar}, no se puede reabrir: se hace una orden nueva por lo que falte.
 
 \subsection*{Me equivoqué en una orden ya guardada}
 Las órdenes no se editan: son el registro de lo que se hizo. Si hay que corregir

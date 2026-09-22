@@ -125,6 +125,7 @@ class Orden(Base):
     impuesto = Column(Numeric(10, 2), default=0, nullable=False)
     total_final = Column(Numeric(10, 2), default=0, nullable=False)
     numero_boleta = Column(String(50), unique=True)
+    estado = Column(String(20), nullable=False, server_default="ENTREGADA")
     estado_pago = Column(Boolean, default=False, nullable=False)
     notas = Column(Text)
 

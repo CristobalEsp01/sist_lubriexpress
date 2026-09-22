@@ -33,8 +33,12 @@ def limpiar():
         if cliente:
             for vehiculo in db.scalars(select(Vehiculo).where(Vehiculo.cliente_id == cliente.id)):
                 for orden in db.scalars(select(Orden).where(Orden.vehiculo_id == vehiculo.id)):
-                    db.query(KardexMovimiento).filter_by(orden_id=orden.id).delete()
+                    # El detalle va primero: borrarlo dispara el trigger de
+                    # devolución, que escribe kardex nuevo. Al revés, esas filas
+                    # quedarían apuntando a una orden que ya no se puede borrar.
                     db.query(DetalleOrden).filter_by(orden_id=orden.id).delete()
+                    db.flush()
+                    db.query(KardexMovimiento).filter_by(orden_id=orden.id).delete()
                     db.query(PagoOrden).filter_by(orden_id=orden.id).delete()
                     db.delete(orden)
                 db.delete(vehiculo)
@@ -126,7 +130,7 @@ def test_mirar_el_historial_no_descarta_la_orden_en_progreso(app, taller, sin_mo
     widget.spin_kilometraje.setValue(120000)
     widget.texto_observaciones.setPlainText("Ingresa con raya en la puerta")
 
-    widget.setCurrentIndex(1)               # carga el historial
+    widget.setCurrentIndex(2)               # carga el historial
     widget.tabla_historial.selectRow(0)     # elegir una fila es lo que junta los connect
     widget.abrir_detalle_orden()
 
@@ -398,8 +402,8 @@ def test_la_orden_se_cierra_con_un_abono_y_el_saldo_se_cobra_despues(app, taller
 
     # En el historial no es ni "Pagada" ni "No pagada": el mesón tiene que ver
     # cuáles quedaron a medio cobrar.
-    widget.setCurrentIndex(1)
-    estado = widget.tabla_historial.item(0, 7)
+    widget.setCurrentIndex(2)
+    estado = widget.tabla_historial.item(0, COLUMNAS_HISTORIAL.index("Pago"))
     assert estado.text() == "Abonada"
     assert "saldo $5.351" in estado.toolTip()
 
@@ -479,3 +483,81 @@ def test_el_buscador_muestra_stock_y_ubicacion_y_deja_el_producto_elegido(app, t
     widget.buscar_producto()
 
     assert widget.combo_productos.currentData()["id"] == taller.producto_id
+
+
+def test_una_orden_se_deja_abierta_se_retoma_y_se_entrega(app, taller, sin_modales, monkeypatch):
+    """El auto se queda en el taller: la orden se guarda abierta, se le agrega
+    lo que falte y se entrega después. Lo que ya estaba cargado no se descuenta
+    dos veces, y lo que se le saca vuelve a la bodega."""
+    from PySide6.QtWidgets import QMessageBox
+
+    from src.ui import ordenes
+    from src.ui.ordenes import ROL_DETALLE
+
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
+    widget = ordenes.OrdenesWidget()
+    widget._iniciar_nueva_orden(taller.vehiculo_id)
+    widget.agregar_al_carrito(taller.producto_id, 2)
+    widget.spin_kilometraje.setValue(50000)
+    widget.guardar_orden("ABIERTA")
+
+    with SessionLocal() as db:
+        orden = db.scalar(select(Orden).where(Orden.vehiculo_id == taller.vehiculo_id))
+        assert orden.estado == "ABIERTA"
+        # El stock ya salió: el mecánico sacó el aceite de la repisa.
+        assert db.get(Producto, taller.producto_id).stock_actual == 8
+        orden_id = orden.id
+
+    widget.setCurrentIndex(1)
+    filas = [widget.tabla_abiertas.item(f, 0).text() for f in range(widget.tabla_abiertas.rowCount())]
+    widget.tabla_abiertas.selectRow(filas.index(str(orden_id)))
+    assert widget.boton_retomar.isEnabled()
+    widget.retomar_orden()
+
+    # Vuelve con su línea, marcada como ya guardada, y en la mesa de trabajo.
+    assert widget.currentIndex() == 0
+    assert widget.orden_abierta_id == orden_id
+    assert widget.tabla_carrito.rowCount() == 1
+    assert widget.tabla_carrito.item(0, 0).data(ROL_DETALLE) is not None
+
+    widget.agregar_servicio_al_carrito(taller.servicio_id)
+    widget.guardar_orden("ENTREGADA")
+
+    with SessionLocal() as db:
+        orden = db.get(Orden, orden_id)
+        assert orden.estado == "ENTREGADA"
+        # La línea vieja no se duplicó y la nueva entró.
+        assert len(orden.detalles) == 2
+        # Y el producto se descontó una sola vez en todo el recorrido.
+        assert db.get(Producto, taller.producto_id).stock_actual == 8
+
+
+def test_anular_una_orden_abierta_devuelve_todo_a_la_bodega(app, taller, sin_modales, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    from src.ui import ordenes
+
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
+    widget = ordenes.OrdenesWidget()
+    widget._iniciar_nueva_orden(taller.vehiculo_id)
+    widget.agregar_al_carrito(taller.producto_id, 3)
+    widget.spin_kilometraje.setValue(50000)
+    widget.guardar_orden("ABIERTA")
+
+    with SessionLocal() as db:
+        orden_id = db.scalar(select(Orden).where(Orden.vehiculo_id == taller.vehiculo_id)).id
+        assert db.get(Producto, taller.producto_id).stock_actual == 7
+
+    widget.setCurrentIndex(1)
+    filas = [widget.tabla_abiertas.item(f, 0).text() for f in range(widget.tabla_abiertas.rowCount())]
+    widget.tabla_abiertas.selectRow(filas.index(str(orden_id)))
+    widget.anular_orden_abierta()
+
+    with SessionLocal() as db:
+        orden = db.get(Orden, orden_id)
+        assert (orden.estado, len(orden.detalles)) == ("ANULADA", 0)
+        assert db.get(Producto, taller.producto_id).stock_actual == 10
+        # Con su rastro: el Kardex dice de qué orden volvió.
+        devolucion = db.query(KardexMovimiento).filter_by(
+            orden_id=orden_id, tipo_movimiento="DEVOLUCION_ORDEN").one()
+        assert devolucion.cantidad_movida == 3

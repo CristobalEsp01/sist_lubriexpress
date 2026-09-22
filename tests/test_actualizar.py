@@ -15,29 +15,34 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from conftest import exigir_base_de_datos  # noqa: E402
 from scripts import actualizar as A  # noqa: E402
-from test_models import columnas_del_esquema  # noqa: E402
+from test_models import SQL, columnas_del_esquema  # noqa: E402
 
 
-def columnas_del_paso(paso) -> set[str]:
-    """Lo que el SQL del paso agrega de verdad, leído de su propio texto."""
-    tabla = re.search(r'CREATE TABLE "\w+" \((.*?)\n\);', paso.sql, re.S)
-    if tabla:
-        return set(re.findall(r'^\s+"(\w+)"', tabla.group(1), re.M))
-    return set(re.findall(r'ADD COLUMN "(\w+)"', paso.sql))
+def normalizado(sql: str) -> str:
+    """Sin comentarios y con los espacios colapsados: lo que queda es el SQL."""
+    return re.sub(r"\s+", " ", re.sub(r"--[^\n]*", " ", sql)).strip()
 
 
-def test_lo_que_agrega_el_actualizador_es_lo_que_declara_el_esquema():
+def test_lo_que_agrega_el_actualizador_es_texto_del_esquema():
     """Una base actualizada y una recién instalada tienen que quedar idénticas.
-    Si el `.sql` gana una columna y el actualizador no, el PC del taller termina
-    con un esquema que ninguna otra prueba mira."""
-    esquema = columnas_del_esquema()
+
+    Cada paso declara qué trozos de `schema_lubriexpress.sql` reproduce, y acá
+    se verifica que estén palabra por palabra en el esquema **y** en el SQL que
+    el paso ejecuta. Si el `.sql` cambia una columna, una restricción o un
+    trigger y el actualizador no, el PC del taller termina con un esquema que
+    ninguna otra prueba mira.
+    """
+    esquema = normalizado(SQL)
+    columnas = columnas_del_esquema()
 
     for paso in A.PASOS:
-        tabla, _, columna = paso.nombre.partition(".")
-        assert tabla in esquema, f"{paso.nombre}: esa tabla no está en el esquema"
-        assert columnas_del_paso(paso) == ({columna} if columna else esquema[tabla]), (
-            f"{paso.nombre}: el actualizador y el esquema no dicen lo mismo"
-        )
+        tabla = paso.nombre.partition(".")[0]
+        assert tabla in columnas, f"{paso.nombre}: esa tabla no está en el esquema"
+        for trozo in paso.declara or (paso.sql,):
+            assert normalizado(trozo) in esquema, f"{paso.nombre}: no está en el .sql"
+            assert normalizado(trozo) in normalizado(paso.sql), (
+                f"{paso.nombre}: declara algo que su propio SQL no hace"
+            )
 
 
 def test_correrlo_dos_veces_no_deja_nada_pendiente():
