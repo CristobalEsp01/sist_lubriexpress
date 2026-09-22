@@ -34,7 +34,7 @@ depende de internet y los datos no salen de ahí.
 \midrule
 Windows & 10 o superior (64 bits) \\
 PostgreSQL & 16 o superior \\
-Python & 3.10 o superior (solo si se corre desde el código fuente) \\
+Python & 3.10 o superior (\textbf{no} hace falta en el equipo del taller) \\
 Espacio en disco & 1 GB para la aplicación, más la base y los respaldos \\
 \bottomrule
 \end{tabular}
@@ -42,7 +42,26 @@ Espacio en disco & 1 GB para la aplicación, más la base y los respaldos \\
 
 El sistema se puede ejecutar de dos maneras: desde el \textbf{ejecutable}
 empaquetado (lo normal en el taller) o desde el \textbf{código fuente} (para
-desarrollo y para correr los scripts de migración y respaldo).
+desarrollo). La carpeta empaquetada trae, además de la aplicación, las cuatro
+herramientas de mantención que hacen falta en el equipo, de modo que ahí
+\textbf{no se necesita Python instalado}:
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Ejecutable} & \textbf{Para qué} \\
+\midrule
+\texttt{lubriexpress.exe} & La aplicación \\
+\texttt{actualizar.exe} & Lleva la base a la versión nueva del esquema \\
+\texttt{respaldar.exe} & El volcado diario, para la tarea programada \\
+\texttt{restaurar.exe} & Pone de vuelta un respaldo: el camino de regreso \\
+\texttt{crear\_usuario.exe} & El primer administrador de una instalación nueva \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+La migración del sistema anterior queda fuera a propósito: se hace una sola vez,
+desde el código fuente y con las planillas, que no viven en el repositorio.
 
 \section{Instalación en el equipo del taller}
 
@@ -66,12 +85,18 @@ El archivo \texttt{schema\_lubriexpress.sql} está en \texttt{database/} del
 código fuente. Crea las tablas, las restricciones, los triggers de Kardex y la
 vista de stock crítico.
 
+No hace falta configurar el huso horario del servidor: la aplicación lo fija en
+cada conexión. Importa más de lo que parece, porque la hora de cada venta, abono
+y movimiento la pone el servidor; con el servidor en UTC, una venta de las nueve
+de la noche quedaría fechada al día siguiente y se caería del cierre de caja y
+del reporte del día.
+
 \subsection{2. La aplicación}
 
 Copiar la carpeta \texttt{lubriexpress} (la que produce el empaquetado, sección
 \ref{sec:empaquetar}) al equipo, por ejemplo en
-\texttt{C:\textbackslash Lubri-Express}. Dentro va el ejecutable
-\texttt{lubriexpress.exe}.
+\texttt{C:\textbackslash Lubri-Express}. Dentro van los cinco ejecutables y
+todo lo que necesitan.
 
 \subsection{3. El archivo .env}
 
@@ -86,13 +111,18 @@ Sin ese archivo la aplicación no arranca, y lo dice con un cartel. Es a
 propósito: más vale que no abra a que se conecte en silencio a una base que no
 es la que se creía.
 
+Ese mismo \texttt{.env} lo leen las cuatro herramientas de consola, y la carpeta
+\texttt{respaldos\textbackslash} también se crea ahí, \textbf{junto al
+ejecutable}. Adentro del paquete no sirve de nada: esas rutas apuntan a una
+carpeta temporal que Windows borra al cerrar el programa.
+
 \subsection{4. El primer administrador}
 
 Los usuarios se administran desde la aplicación, pero el primero hay que
-crearlo por consola, desde el código fuente:
+crearlo por consola:
 
 \begin{lstlisting}
-.venv\Scripts\python scripts\crear_usuario.py
+crear_usuario.exe
 \end{lstlisting}
 
 Pide nombre, usuario, rol y contraseña. Elegir rol \texttt{ADMINISTRADOR}. De
@@ -164,7 +194,7 @@ categoría}, una categoría a la vez.
 \subsection{Respaldar}
 
 \begin{lstlisting}
-.venv\Scripts\python scripts\respaldar.py
+respaldar.exe
 \end{lstlisting}
 
 Deja un archivo comprimido en \texttt{respaldos\textbackslash
@@ -180,12 +210,19 @@ El cliente de OneDrive sube solo lo que cae en su carpeta, así que con copiar e
 archivo basta. Si la carpeta no existe, el script avisa y el respaldo local
 igual queda hecho.
 
-\texttt{scripts\textbackslash respaldar.py --listar} muestra lo que hay guardado.
+\texttt{respaldar.exe --listar} muestra lo que hay guardado.
+
+Si PostgreSQL no está instalado en el equipo sino dentro de un contenedor de
+Docker, se le dice cuál en el mismo \texttt{.env}:
+
+\begin{lstlisting}
+RESPALDO_CONTENEDOR=lubriexpress-db
+\end{lstlisting}
 
 \subsection{Restaurar}
 
 \begin{lstlisting}
-.venv\Scripts\python scripts\restaurar.py respaldos\lubriexpress-20260916-2030.sql.gz
+restaurar.exe respaldos\lubriexpress-20260916-2030.sql.gz
 \end{lstlisting}
 
 \textbf{Pisa la base entera.} Por eso pide escribir el nombre de la base para
@@ -198,11 +235,13 @@ En el Programador de tareas de Windows, o con este comando en \texttt{cmd} como
 administrador (ajustando las rutas):
 
 \begin{lstlisting}
-schtasks /create /tn "Respaldo Lubri-Express" /tr "C:\Lubri-Express\codigo\.venv\Scripts\python.exe C:\Lubri-Express\codigo\scripts\respaldar.py" /sc daily /st 20:00
+schtasks /create /tn "Respaldo Lubri-Express" /tr "C:\Lubri-Express\lubriexpress\respaldar.exe" /sc daily /st 20:00
 \end{lstlisting}
 
 A las 20:00, después del cierre. Conviene revisar cada tanto que los archivos
-estén apareciendo, tanto en \texttt{respaldos\textbackslash} como en OneDrive.
+estén apareciendo, tanto en \texttt{respaldos\textbackslash} como en OneDrive:
+una tarea programada que dejó de correr no avisa, y eso se descubre el día que
+hace falta el respaldo.
 
 \subsection{Una advertencia sobre las versiones}
 
@@ -223,9 +262,9 @@ sistema operativo a otro. Desde el código fuente, con el entorno virtual creado
 .venv\Scripts\pyinstaller.exe --noconfirm lubriexpress.spec
 \end{lstlisting}
 
-Queda en \texttt{dist\textbackslash lubriexpress\textbackslash}. Esa carpeta
-completa es lo que se copia al equipo del taller; el \texttt{.env} va adentro,
-al lado del \texttt{.exe}.
+Queda en \texttt{dist\textbackslash lubriexpress\textbackslash}, con los cinco
+ejecutables. Esa carpeta completa es lo que se copia al equipo del taller; el
+\texttt{.env} va adentro, al lado de los \texttt{.exe}.
 
 El archivo \texttt{lubriexpress.spec} incluye \texttt{qtbase\_es.qm}, que es lo
 que hace que los botones de los diálogos digan ``Guardar'' y ``Cancelar'' en vez
@@ -255,15 +294,46 @@ vez de fallar.
 
 \section{Actualizar a una versión nueva}
 
+Con la base ya en uso, \textbf{no se recrea}: se actualiza. El paso 2 es el que
+importa, y hace todo solo.
+
 \begin{enumerate}
-  \item Respaldar primero (\texttt{scripts\textbackslash respaldar.py}).
-  \item Traer el código nuevo y volver a empaquetar.
-  \item Reemplazar la carpeta del ejecutable, \textbf{conservando el
-        \texttt{.env}}.
-  \item Si el esquema de la base cambió, la nota de cambios lo dice y trae el
-        bloque \texttt{ALTER} que hay que ejecutar; está en
-        \texttt{docs/base-de-datos.md}.
+  \item Traer el código nuevo, volver a empaquetar (sección
+        \ref{sec:empaquetar}) y reemplazar la carpeta del ejecutable,
+        \textbf{conservando el \texttt{.env}}.
+  \item Correr el actualizador:
 \end{enumerate}
+
+\begin{lstlisting}
+actualizar.exe --simular
+actualizar.exe
+\end{lstlisting}
+
+Con \texttt{--simular} dice qué haría y no escribe nada: sirve para mirar la
+lista antes de aceptarla. Sin la opción, hace esto en orden:
+
+\begin{enumerate}
+  \item \textbf{Respalda.} Si el respaldo falla, no toca el esquema.
+  \item \textbf{Aplica los cambios de esquema}, todos en una sola transacción:
+        uno que falle no deja la base a medio camino.
+  \item \textbf{Pregunta} por los cambios que tocan datos y no estructura ---
+        por ejemplo rellenar la ubicación de bodega que el sistema anterior
+        había dejado escrita en la descripción del producto--- y muestra la
+        lista antes de escribir.
+  \item \textbf{Verifica}: compara el número de filas de cada tabla antes y
+        después. Un cambio de esquema no borra filas; si alguna cifra se movió,
+        lo dice y hay que restaurar el respaldo.
+\end{enumerate}
+
+Cada paso mira la base antes de actuar y se salta lo que ya está, así que
+\textbf{correrlo dos veces no hace daño}. Si algo no cuadra, el camino de vuelta
+es el respaldo que el propio actualizador acaba de dejar:
+
+\begin{lstlisting}
+restaurar.exe respaldos\lubriexpress-AAAAMMDD-HHMM.sql.gz
+\end{lstlisting}
+
+El detalle de cada cambio de esquema está en \texttt{docs/base-de-datos.md}.
 
 \section{Problemas frecuentes}
 
@@ -295,13 +365,16 @@ que es justamente lo que el sistema anterior no hacía.
   \item El ejecutable abre y muestra la ventana de inicio de sesión.
   \item Se entra con el administrador creado por consola.
   \item Los botones de los diálogos están en español.
-  \item Las seis pestañas abren sin errores.
+  \item Las siete pestañas abren sin errores.
   \item Una venta de prueba baja el stock y aparece en el Kardex.
   \item Una orden de prueba se guarda y exporta su PDF.
   \item \texttt{Documentos\textbackslash Lubri-Express\textbackslash} se crea al
         exportar.
-  \item \texttt{scripts\textbackslash respaldar.py} deja un archivo y lo copia a
-        OneDrive.
+  \item \texttt{respaldar.exe} deja un archivo y lo copia a OneDrive.
+  \item \texttt{actualizar.exe} dice que el esquema ya está al día.
+  \item Un gasto registrado en \textbf{Caja} aparece en el día correcto ---si
+        cayera en el día siguiente, el huso horario del servidor no está
+        llegando a la conexión---.
   \item La tarea programada aparece en el Programador de tareas.
   \item Al día siguiente, hay un respaldo nuevo.
 \end{enumerate}

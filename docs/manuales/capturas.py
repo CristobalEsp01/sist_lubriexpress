@@ -31,8 +31,8 @@ for nombre in ("warning", "critical", "information"):
 from src.auth import Sesion, hash_password  # noqa: E402
 from src.database import SessionLocal  # noqa: E402
 from src.models import (  # noqa: E402
-    Cliente, DetalleOrden, DetalleVenta, KardexMovimiento, Orden, PagoOrden, Producto,
-    Servicio, Ubicacion, Usuario, Vehiculo, Venta,
+    Cliente, DetalleOrden, DetalleVenta, KardexMovimiento, MovimientoCaja, Orden,
+    PagoOrden, Producto, Servicio, Ubicacion, Usuario, Vehiculo, Venta,
 )
 from src.ui.tema import aplicar  # noqa: E402
 
@@ -78,17 +78,19 @@ def sembrar() -> dict:
                              password_hash=hash_password("demo123"), rol="SUPERVISOR")
         mesero = Usuario(nombre="Diego Pérez", username="diego",
                          password_hash=hash_password("demo123"), rol="USUARIO_NORMAL")
-        repisa = Ubicacion(descripcion="Mueble 2 - Repisa B")
-        db.add_all([admin, supervisor, mesero, repisa])
+        repisas = [Ubicacion(descripcion=d) for d in
+                   ("M2-B", "M2-C", "Bandeja 7", "Caja Wurth", "Mueble exterior")]
+        db.add_all([admin, supervisor, mesero, *repisas])
         db.flush()
 
         productos = []
-        for nombre, marca, categoria, costo, venta, stock, minimo in PRODUCTOS:
-            p = Producto(nombre=nombre, marca=marca, categoria=categoria, ubicacion=repisa,
+        for indice, (nombre, marca, categoria, costo, venta, stock, minimo) in enumerate(PRODUCTOS):
+            p = Producto(nombre=nombre, marca=marca, categoria=categoria,
+                         ubicacion=repisas[indice % len(repisas)],
                          precio_costo=costo, precio_venta=venta, stock_minimo=minimo)
             db.add(p); db.flush()
-            db.add(KardexMovimiento(producto=p, usuario=supervisor,
-                                    tipo_movimiento="ENTRADA", cantidad_movida=stock))
+            db.add(KardexMovimiento(producto=p, usuario=supervisor, tipo_movimiento="ENTRADA",
+                                    cantidad_movida=stock, costo_unitario=costo))
             productos.append(p)
         servicios = [Servicio(nombre=n, categoria=c, precio_venta=p) for n, c, p in SERVICIOS]
         db.add_all(servicios)
@@ -137,6 +139,14 @@ def sembrar() -> dict:
             db.add(venta); db.flush()
             db.add(DetalleVenta(venta=venta, producto=productos[5], cantidad=n + 1,
                                 precio_unitario_cobrado=productos[5].precio_venta))
+        hoy = datetime.now()
+        for tipo, monto, motivo, hora in [
+            ("INGRESO", 80000, "Efectivo para dar vuelto", 8),
+            ("EGRESO", 9500, "Bencina de la camioneta", 11),
+            ("EGRESO", 18000, "Flete de repuestos", 15),
+        ]:
+            db.add(MovimientoCaja(usuario=mesero, tipo=tipo, monto=monto, motivo=motivo,
+                                  fecha=hoy.replace(hour=hora, minute=20)))
         db.commit()
         return {"vehiculo": vehiculos[0].id, "producto": productos[0].id,
                 "servicio": servicios[0].id, "usuario": admin.id}
@@ -148,6 +158,7 @@ def capturar(datos: dict) -> None:
     from src.ui.clientes import FormularioVehiculo
     from src.ui.inventario import AjusteStockDialog, IngresoMercaderiaDialog, MinimoPorCategoriaDialog
     from src.ui.ordenes import DialogoDetalleOrden
+    from src.ui.selector_producto import SelectorProducto
     from src.ui.ventas import PuntoVentaWidget
 
     DESTINO.mkdir(parents=True, exist_ok=True)
@@ -180,6 +191,9 @@ def capturar(datos: dict) -> None:
     guardar(v, "historial_ordenes")
     v.ordenes.setCurrentIndex(0)
 
+    v.pestanias.setCurrentWidget(v.caja); v.caja.recargar(); v.caja.tabla.selectRow(0)
+    guardar(v, "caja")
+
     v.pestanias.setCurrentWidget(v.reportes)
     guardar(v, "reportes")
     v.reportes.lista.setCurrentRow(3)   # Reabastecimiento
@@ -189,8 +203,19 @@ def capturar(datos: dict) -> None:
 
     with SessionLocal() as db:
         orden_id = db.query(Orden).order_by(Orden.id).first().id
+    ingreso = IngresoMercaderiaDialog()
+    ingreso.combo_productos.setCurrentIndex(0)
+    ingreso.spin_cantidad.setValue(12)
+    ingreso.spin_costo.setValue(21500)   # el proveedor subió el precio
+    ingreso.agregar_a_lista()
+
+    buscador = SelectorProducto()
+    buscador.busqueda.setText("filtro")
+    buscador.tabla.selectRow(0)
+
     for nombre, dialogo in [
-        ("dialogo_ingreso", IngresoMercaderiaDialog()),
+        ("dialogo_ingreso", ingreso),
+        ("dialogo_buscar_producto", buscador),
         ("dialogo_ajuste", AjusteStockDialog(producto_id=datos["producto"])),
         ("dialogo_minimos", MinimoPorCategoriaDialog()),
         ("dialogo_excel", CargaExcelDialog()),

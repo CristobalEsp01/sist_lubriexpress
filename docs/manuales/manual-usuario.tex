@@ -46,13 +46,14 @@ Abrir órdenes de trabajo & Sí & Sí & Sí \\
 Clientes y vehículos & Sí & Sí & Sí \\
 Consultar inventario y Kardex & Sí & Sí & Sí \\
 Ver reportes & Sí & Sí & Sí \\
+Registrar dinero y gastos en la caja del día & Sí & Sí & Sí \\
 \midrule
 Crear y editar productos & --- & Sí & Sí \\
 Ingresar mercadería & --- & Sí & Sí \\
 Ajustar stock por recuento & --- & Sí & Sí \\
 Cargar inventario desde Excel & --- & Sí & Sí \\
 Fijar el mínimo de una categoría & --- & Sí & Sí \\
-Ver el precio de costo & --- & Sí & Sí \\
+Ver el precio de costo, en el listado y en el Kardex & --- & Sí & Sí \\
 \midrule
 Crear usuarios y asignar roles & --- & --- & Sí \\
 \bottomrule
@@ -101,14 +102,23 @@ una sola vez.}
 
 \begin{enumerate}
   \item \textbf{Ingresar Mercadería}.
-  \item Buscar el producto, poner la cantidad que llegó y \textbf{Añadir a la
-        lista}. Se repite por cada producto de la factura del proveedor.
+  \item Buscar el producto. Al elegirlo, el campo \textbf{Costo unit.} se llena
+        solo con lo que ese producto cuesta hoy.
+  \item Poner la cantidad que llegó y, \textbf{si el proveedor cambió el
+        precio}, corregir el costo. Después, \textbf{Añadir a la lista}. Se
+        repite por cada producto de la factura.
   \item Revisar la columna \emph{Nuevo Stock}, que muestra cómo quedará cada uno.
   \item \textbf{Confirmar Ingreso}.
 \end{enumerate}
 
 Recién al confirmar se mueve el stock, y queda una entrada en el Kardex por cada
 producto.
+
+El costo que se escriba pasa a ser el del producto en el catálogo, y además
+queda guardado en esa entrada del Kardex. Por eso, meses después, el historial
+de un producto sigue diciendo a cuánto se compró cada vez. \textbf{El precio de
+venta no cambia solo}: subir el precio es una decisión del taller y se hace en
+la ficha del producto.
 
 \subsection{Corregir el stock después de un recuento}
 
@@ -218,6 +228,17 @@ Los \textbf{productos} (aceites, filtros, insumos) descuentan stock; los
 \textbf{servicios} (mano de obra) no, y por eso van en su propio buscador. Se
 agregan uno por uno, con su cantidad.
 
+Si se sabe el nombre, se escribe en el campo \textbf{Producto} y la lista se va
+reduciendo. Cuando hay varios que se llaman casi igual ---dos filtros de aire
+del mismo modelo, uno de cada marca--- conviene el botón \textbf{Buscar\ldots}:
+abre una ventana con todo el catálogo y, al lado de cada nombre, la marca, la
+categoría, \textbf{cuántos quedan}, \textbf{en qué repisa están} y el precio. El
+stock bajo el mínimo sale en rojo. Se elige con doble clic y el producto queda
+puesto en el campo, listo para agregar con su cantidad.
+
+\dialogo{dialogo_buscar_producto}{El buscador de productos: stock y ubicación al
+lado de cada nombre.}
+
 El \textbf{kilometraje de ingreso} es obligatorio: es con lo que se calcula el
 próximo servicio. Si se anota un kilometraje menor que el del servicio anterior,
 el sistema pregunta antes de guardar —suele ser un dedo cambiado, pero a veces
@@ -287,6 +308,58 @@ El botón está apagado si el cliente no tiene registrado un celular chileno; un
 teléfono fijo no sirve, WhatsApp abriría una conversación que no existe. El
 número se corrige en la ficha del cliente, en \textbf{Clientes}.
 
+\section{Caja}
+
+\pantalla{caja}{La caja del día: lo agregado, lo cobrado, los gastos y con
+cuánto debería quedar el cajón.}
+
+Es la \textbf{caja chica del día}: sirve para saber con cuánta plata debería
+quedar el cajón de la oficina al cerrar.
+
+\textbf{No hay que abrirla ni cerrarla.} La caja de un día es simplemente la de
+esa fecha: al día siguiente empieza una nueva, sola. Arriba a la izquierda se
+elige el día; se puede mirar cualquier día anterior, pero no uno futuro.
+
+Las cuatro cifras son:
+
+\begin{itemize}
+  \item \textbf{Agregado}: el efectivo que se puso en el cajón ese día, anotado
+        a mano ---el de la mañana para dar vuelto, por ejemplo---.
+  \item \textbf{Ingresos}: lo cobrado ese día por ventas de mostrador y por
+        abonos de órdenes. \textbf{Esto entra solo}, no hay que anotarlo.
+  \item \textbf{Egresos}: los gastos anotados a mano.
+  \item \textbf{Balance}: agregado más ingresos, menos egresos. Es lo que
+        debería haber en el cajón.
+\end{itemize}
+
+\subsection{Agregar dinero y anotar un gasto}
+
+\textbf{Agregar dinero} es para el efectivo que se pone en el cajón;
+\textbf{Agregar gasto} para lo que sale de ahí (bencina, un flete, el almuerzo).
+Los dos piden el monto y \textbf{un motivo, que es obligatorio}: un gasto sin
+motivo no sirve para nada el día que hay que cuadrar.
+
+Al agregar dinero, el sistema propone el saldo con que cerró el último día que
+tuvo movimiento ---un lunes propone el del viernes---. Casi siempre es la plata
+que quedó en el cajón, y así no hay que acordarse de la cifra.
+
+\subsection{Si se anotó algo mal}
+
+Las líneas de la caja \textbf{no se borran ni se editan}. Se elige la línea
+equivocada y se aprieta \textbf{Anular}: el sistema anota el movimiento
+contrario. Las dos líneas quedan a la vista, en gris, y dejan de contar para las
+cifras del día.
+
+Es la misma regla del Kardex: lo que pasó por caja queda registrado, y quién lo
+anotó también.
+
+\subsection{Guardar la caja del día}
+
+\textbf{Guardar caja en PDF} deja un archivo en
+\texttt{Documentos\textbackslash Lubri-Express\textbackslash Caja\textbackslash}
+con las cuatro cifras y el detalle de lo anotado a mano. Sirve para imprimirlo o
+archivarlo al cierre.
+
 \section{Reportes}
 
 \pantalla{reportes}{Ingresos del período, con su gráfico.}
@@ -341,6 +414,16 @@ por categoría (sección 2.4).
 Las órdenes no se editan: son el registro de lo que se hizo. Si hay que corregir
 el inventario, se hace con un ajuste por recuento, que deja constancia. Lo único
 que se le agrega a una orden guardada es un pago.
+
+\subsection*{El balance de la caja no coincide con el cajón}
+
+Primero, revisar que estén anotados \emph{todos} los gastos del día: es lo que
+más se olvida. Después, tener presente que \textbf{la caja cuenta todo lo
+cobrado}, sin distinguir efectivo de tarjeta o transferencia; si ese día hubo
+pagos que no entraron en efectivo, el cajón va a tener menos que el balance.
+
+Y si un día antiguo aparece con \emph{Ingresos} en cero: las órdenes que vienen
+del sistema anterior no traen el detalle de cómo se pagaron, así que no suman.
 
 \subsection*{El sistema dice que no se pudo conectar a la base de datos}
 Es un problema de instalación, no de uso. Está en el Manual técnico.
