@@ -11,7 +11,7 @@ Lubri-Express. Corre localmente sobre PostgreSQL.
 | Login y control de acceso por rol | Funcionando (tres roles; pestaña Usuarios para el administrador) |
 | Mantenedor de Inventario | Funcionando (con el valorizado a precio costo de lo listado) |
 | Historial de Kardex por producto | Funcionando (solo lectura) |
-| Ingreso de mercadería y ajuste de stock por recuento | Funcionando |
+| Ingreso de mercadería y ajuste de stock por recuento | Funcionando (con el costo de cada compra, que queda en el Kardex) |
 | Carga masiva de inventario desde Excel | Funcionando (plantilla que genera el propio sistema) |
 | Stock mínimo por categoría | Funcionando (acción masiva; cada producto puede sobrescribirlo) |
 | Mantenedor de Clientes y Vehículos | Funcionando |
@@ -20,6 +20,7 @@ Lubri-Express. Corre localmente sobre PostgreSQL.
 | Pago parcial de una orden: abono al cerrarla y saldo cobrado después | Funcionando (el saldo se registra desde el historial) |
 | Aviso al cliente por WhatsApp | Funcionando (desde la orden abierta y desde una guardada, que cita su N° de OT) |
 | Exportación de la orden a PDF | Funcionando |
+| Caja chica del día | Funcionando (abre y cierra sola; efectivo agregado, gastos y PDF del día) |
 | Reportería (ingresos, productos, usuarios, reabastecimiento) | Funcionando (con gráficos y exportación a Excel) |
 | Migración del sistema antiguo | Funcionando (`scripts/migrar_sistema_antiguo.py`) |
 | Respaldo automatizado local y a OneDrive | Funcionando (`scripts/respaldar.py`, con restauración probada) |
@@ -189,6 +190,7 @@ sist_lubriexpress/
 │   ├── carga_excel.py               # Carga masiva de inventario por plantilla
 │   ├── documentos.py                # La orden de trabajo como documento para el cliente
 │   ├── whatsapp.py                  # Enlace wa.me y plantillas del aviso al cliente
+│   ├── caja.py                      # Caja chica del día: agregado, ingresos, egresos, balance
 │   ├── reportes.py                  # Los cuatro reportes, sin interfaz
 │   └── ui/
 │       ├── __init__.py              # Ventana principal con pestañas
@@ -201,6 +203,7 @@ sist_lubriexpress/
 │       ├── ventas.py                # Punto de venta, carrito e historial
 │       ├── selector_producto.py     # Buscar un producto viendo stock, ubicación y precio
 │       ├── ordenes.py               # Órdenes de trabajo, aviso por WhatsApp y PDF
+│       ├── caja.py                  # Pestaña de Caja
 │       ├── reportes.py              # Pestaña de reportes con gráficos
 │       └── usuarios.py              # Alta de usuarios y asignación de roles
 ├── database/

@@ -6,6 +6,7 @@ from PySide6.QtWidgets import QMainWindow, QTabWidget
 
 from ..auth import Sesion
 from ..permisos import puede
+from .caja import CajaWidget
 from .clientes import ClientesWidget, FormularioCliente, FormularioVehiculo
 from .comunes import ItemNumerico, clp
 from .inventario import FormularioProducto, InventarioWidget
@@ -16,7 +17,7 @@ from .usuarios import ETIQUETAS_ROL, FormularioUsuario, UsuariosWidget
 from .ventas import VentasWidget
 
 __all__ = [
-    "ClientesWidget", "FormularioCliente", "FormularioProducto", "FormularioUsuario",
+    "CajaWidget", "ClientesWidget", "FormularioCliente", "FormularioProducto", "FormularioUsuario",
     "FormularioVehiculo", "InventarioWidget", "ItemNumerico", "LoginDialog", "OrdenesWidget",
     "ReportesWidget", "UsuariosWidget", "VentanaPrincipal", "VentasWidget", "clp",
 ]
@@ -41,6 +42,8 @@ class VentanaPrincipal(QMainWindow):
         self.pestanias.addTab(self.ventas, "Ventas")
         self.pestanias.addTab(self.clientes, "Clientes")
         self.pestanias.addTab(self.ordenes, "Órdenes de Trabajo")
+        self.caja = CajaWidget(self)
+        self.pestanias.addTab(self.caja, "Caja")
         self.reportes = ReportesWidget(self)
         self.pestanias.addTab(self.reportes, "Reportes")
         # La pestaña de usuarios existe solo para quien puede usarla: una

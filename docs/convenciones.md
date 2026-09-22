@@ -8,6 +8,7 @@
 - `src/patente.py` — patente chilena, con el mismo criterio que `rut.py`.
 - `src/precios.py` — el IVA. Los precios del catálogo son netos; el impuesto se calcula al cobrar y se guarda en el documento.
 - `src/permisos.py` — qué puede hacer cada rol, una acción por entrada. La sesión sigue en `src/auth.py`.
+- `src/caja.py` — las cifras de la caja chica del día, sin interfaz. El día de una caja es su fecha: no hay tabla de cajas ni estado abierta/cerrada.
 - `src/ubicaciones.py` — la ubicación de bodega que el sistema viejo dejó escrita en la descripción del producto. Sin dependencias de base de datos ni de UI: la usan la migración y el relleno de una base ya en producción.
 - `src/rutas.py` — dónde están los archivos que la aplicación lee y escribe. Empaquetada, el `.env` y los respaldos van **junto al ejecutable**, no dentro del bundle: ahí `Path(__file__)` es un temporal que el sistema borra al cerrar.
 - `src/xlsx.py` — leer y escribir `.xlsx` con la biblioteca estándar. Lo usan la migración y la carga masiva; no se suma pandas ni openpyxl por esto.
@@ -15,6 +16,7 @@
 - `scripts/migrar_sistema_antiguo.py` — las cinco planillas del sistema viejo; las planillas viven fuera del repo.
 - `scripts/actualizar.py` — lleva una base con datos reales a la versión nueva del esquema. Un cambio de esquema son tres cosas juntas: el `.sql`, el modelo y un paso acá (ver `docs/base-de-datos.md`).
 - `lubriexpress.spec` — el empaquetado con PyInstaller para el PC del taller, que **no tiene Python**: de ahí salen `lubriexpress.exe`, `actualizar.exe` y `respaldar.exe`. Se construyen en Windows.
+- `src/ui/caja.py` — la pestaña de Caja: las cuatro cifras, los movimientos del día y el PDF.
 - `src/ui/selector_producto.py` — la ventana para buscar un producto viendo stock, ubicación y precio. La abre Órdenes; sirve para cualquier pantalla que elija un producto.
 - `src/ui/` — un módulo por mantenedor. `comunes.py` tiene lo que comparten y `tema.py` la identidad visual.
 - `main.py` — solo arranca la aplicación y avisa si la base no responde.
@@ -133,6 +135,14 @@ ventana cuando el rol puede usarla. El primer administrador de una instalación
 nueva se crea con `scripts/crear_usuario.py`.
 
 ## Sesiones de base de datos
+
+**El huso horario se fija en la conexión** (`ZONA_HORARIA` en `database.py`). La
+hora de cada venta, abono y movimiento la pone el servidor con
+`CURRENT_TIMESTAMP`: con el servidor en UTC —el contenedor lo está— una venta de
+las nueve de la noche queda fechada al día siguiente, se cae del cierre de caja y
+del reporte de hoy, y el cajón no cuadra sin que nada en pantalla lo explique.
+Fijarlo en la conexión y no en el servidor hace que valga igual en el PC del
+taller, sin depender de cómo quedó instalado PostgreSQL ahí.
 
 Una sesión por operación, con `with SessionLocal() as db:`. Los triggers modifican
 `productos` por fuera de la sesión, así que después de confirmar una venta, una orden

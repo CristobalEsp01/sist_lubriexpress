@@ -269,7 +269,7 @@ def test_la_ventana_recorre_sus_cuatro_pestanas_sin_reventar(app, taller, sin_mo
         if tabla.rowCount():
             tabla.selectRow(0)
 
-    assert ventana.pestanias.count() == 5  # Reportes también, para todos
+    assert ventana.pestanias.count() == 6  # Caja y Reportes también, para todos
 
 
 def test_la_cifra_del_total_no_se_corta_en_la_ventana_mas_chica(app, taller):

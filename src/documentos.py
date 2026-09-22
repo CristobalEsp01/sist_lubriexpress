@@ -91,3 +91,46 @@ def html_de_orden(o: dict) -> str:
 <hr>
 <p align="center" style="font-size: 8pt; color: gray;">{e(PIE)}</p>
 </body></html>"""
+
+
+def html_de_caja(dia, cifras: dict, filas: list) -> str:
+    """La caja de un día para archivar: las cuatro cifras y el detalle de lo
+    que se movió a mano. Las ventas no se listan —están en su propia pantalla—
+    pero su total sí, que es lo que hace cuadrar el cajón."""
+    e = escape
+    lineas = "".join(
+        f"<tr><td>{f.hora:%H:%M}</td>"
+        f"<td>{'Ingreso' if f.tipo == 'INGRESO' else 'Gasto'}</td>"
+        f"<td>{e(f.motivo)}</td><td align='right'>{clp(f.monto)}</td>"
+        f"<td>{e(f.usuario)}</td>"
+        f"<td>{'anulado' if f.anulado else ''}</td></tr>"
+        for f in filas
+    ) or "<tr><td colspan='6'>Sin movimientos registrados a mano.</td></tr>"
+    resumen = "".join(
+        f"<tr><td align='right'><b>{rotulo}</b></td><td align='right'>"
+        f"{'<b>' if rotulo == 'Balance' else ''}{clp(cifras[clave])}"
+        f"{'</b>' if rotulo == 'Balance' else ''}</td></tr>"
+        for clave, rotulo in (("agregado", "Agregado a mano"), ("ingresos", "Ventas y abonos"),
+                              ("egresos", "Gastos"), ("balance", "Balance"))
+    )
+    return f"""<html><body style="font-family: sans-serif; font-size: 10pt;">
+<table width="100%" cellpadding="0">
+<tr>
+  <td valign="top"><h2 style="margin: 0;">CAJA DEL DÍA</h2>
+      <p style="margin: 2px 0 0 0;"><b>{dia:%d-%m-%Y}</b></p></td>
+  <td align="right" valign="top" style="font-size: 8pt; color: gray;">
+      {e(TALLER)}<br>{e(DIRECCION)}<br>{e(TELEFONO)}<br>{e(SITIO)}</td>
+  <td align="right" valign="top" width="90"><img src="logo" width="80"></td>
+</tr>
+</table>
+<hr>
+<table width="100%" cellpadding="3">{resumen}</table>
+<h3>Movimientos registrados a mano</h3>
+<table width="100%" border="1" cellspacing="0" cellpadding="4">
+<tr><th align="left">Hora</th><th align="left">Tipo</th><th align="left">Motivo</th>
+<th align="right">Monto</th><th align="left">Registró</th><th align="left"></th></tr>
+{lineas}
+</table>
+<hr>
+<p align="center" style="font-size: 8pt; color: gray;">{e(PIE)}</p>
+</body></html>"""
