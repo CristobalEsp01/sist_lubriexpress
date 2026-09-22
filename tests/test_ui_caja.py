@@ -45,6 +45,16 @@ def cajero():
         db.commit()
 
 
+def _cifra(widget, clave: str) -> int:
+    """La cifra que muestra la pantalla, de vuelta a número.
+
+    Las pruebas comparan diferencias y no totales: la caja suma el día entero y
+    la base de desarrollo tiene movimientos de verdad, así que un total exacto
+    pasa hoy y falla mañana.
+    """
+    return int(widget._etiquetas[clave].text().replace("$", "").replace(".", ""))
+
+
 def _con_dialogo(monkeypatch, monto: int, motivo: str):
     from src.ui.caja import MovimientoDialog
 
@@ -61,17 +71,16 @@ def test_la_caja_del_dia_suma_lo_anotado_a_mano_y_anular_lo_deshace(app, cajero,
 
     monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
     widget = CajaWidget()
-    antes = int(widget._etiquetas["balance"].text().replace("$", "").replace(".", ""))
+    antes = {clave: _cifra(widget, clave) for clave in ("agregado", "egresos", "balance")}
 
     _con_dialogo(monkeypatch, 20000, MOTIVO_INGRESO)
     widget.registrar("INGRESO")
     _con_dialogo(monkeypatch, 5000, MOTIVO_GASTO)
     widget.registrar("EGRESO")
 
-    assert widget._etiquetas["agregado"].text() == "$20.000"
-    assert widget._etiquetas["egresos"].text() == "$5.000"
-    saldo = int(widget._etiquetas["balance"].text().replace("$", "").replace(".", ""))
-    assert saldo == antes + 15000
+    assert _cifra(widget, "agregado") == antes["agregado"] + 20000
+    assert _cifra(widget, "egresos") == antes["egresos"] + 5000
+    assert _cifra(widget, "balance") == antes["balance"] + 15000
 
     # Elegir una fila es lo primero que hace cualquiera: es donde se juntan los
     # connect, y sin esto el botón de anular nunca se prueba encendido.
@@ -81,7 +90,8 @@ def test_la_caja_del_dia_suma_lo_anotado_a_mano_y_anular_lo_deshace(app, cajero,
 
     widget.anular()
 
-    assert widget._etiquetas["egresos"].text() == "$0"
+    assert _cifra(widget, "egresos") == antes["egresos"]
+    assert _cifra(widget, "balance") == antes["balance"] + 20000
     # El par anulado sigue en la lista, apagado: la caja es de solo agregado.
     motivos = [widget.tabla.item(f, 2).text() for f in range(widget.tabla.rowCount())]
     assert MOTIVO_GASTO in motivos and f"Anula: {MOTIVO_GASTO}" in motivos
