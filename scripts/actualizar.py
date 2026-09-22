@@ -24,9 +24,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from sqlalchemy import text  # noqa: E402
+from sqlalchemy import select, text  # noqa: E402
 
 from scripts.respaldar import respaldar  # noqa: E402
+from src.models import Producto, Ubicacion  # noqa: E402
+from src.ubicaciones import detectar  # noqa: E402
 
 
 @dataclass(frozen=True)
@@ -93,6 +95,33 @@ def aplicar(conexion, paso: Paso) -> None:
     conexion.exec_driver_sql(paso.sql)
 
 
+def rellenar_ubicaciones(db, aplicar: bool) -> tuple[int, set[str]]:
+    """Copia a su columna la ubicación de bodega que el sistema viejo dejó
+    escrita en la descripción del producto.
+
+    Solo mira productos que no tengan ubicación, así que correrlo dos veces no
+    cambia nada. Con `aplicar` en falso recorre y cuenta sin escribir, que es
+    lo que hace falta para mirar la lista antes de aceptarla.
+    """
+    existentes = {u.descripcion: u for u in db.scalars(select(Ubicacion))}
+    encontradas, tocados = set(), 0
+    for producto in db.scalars(select(Producto).where(Producto.ubicacion_id.is_(None))):
+        donde, descripcion = detectar(producto.descripcion)
+        if donde is None:
+            continue
+        encontradas.add(donde)
+        tocados += 1
+        if not aplicar:
+            continue
+        if donde not in existentes:
+            existentes[donde] = Ubicacion(descripcion=donde)
+            db.add(existentes[donde])
+            db.flush()
+        producto.ubicacion = existentes[donde]
+        producto.descripcion = descripcion
+    return tocados, encontradas
+
+
 def conteos(conexion) -> dict[str, int]:
     return {tabla: conexion.execute(text(f'SELECT count(*) FROM "{tabla}"')).scalar()
             for tabla in TABLAS_VERIFICADAS}
@@ -101,20 +130,30 @@ def conteos(conexion) -> dict[str, int]:
 def main(argv: list[str]) -> int:
     from src.database import engine
 
+    from src.database import SessionLocal
+
+    simular = "--simular" in argv
     print("Lubri-Express — actualización de la base de datos\n")
     with engine.connect() as conexion:
         falta = pendientes(conexion)
         antes = conteos(conexion)
 
-    if not falta:
-        print("El esquema ya está al día. No hay nada que hacer.")
+    with SessionLocal() as db:
+        cuantos, donde = rellenar_ubicaciones(db, aplicar=False)
+
+    if not falta and not cuantos:
+        print("El esquema ya está al día y no hay ubicaciones por rellenar.")
         return 0
 
-    print(f"{len(falta)} cambio(s) por aplicar:")
+    print(f"{len(falta)} cambio(s) de esquema por aplicar:")
     for paso in falta:
         print(f"  - {paso.nombre}")
+    if cuantos:
+        print(f"Y {cuantos} producto(s) con la ubicación escrita en la descripción, "
+              f"en {len(donde)} ubicaciones:")
+        print("  " + ", ".join(sorted(donde)))
 
-    if "--simular" in argv:
+    if simular:
         print("\n--simular: no se escribió nada.")
         return 0
 
@@ -127,8 +166,20 @@ def main(argv: list[str]) -> int:
         for paso in falta:
             aplicar(conexion, paso)
             print(f"   + {paso.nombre}")
+    if not falta:
+        print("   ya estaba al día")
 
-    print("\n3. Verificación")
+    if cuantos:
+        print("\n3. Ubicaciones desde la descripción")
+        if input(f"   ¿Copiar {cuantos} ubicación(es) a su columna? [s/N] ").strip().lower() == "s":
+            with SessionLocal() as db:
+                tocados, creadas = rellenar_ubicaciones(db, aplicar=True)
+                db.commit()
+            print(f"   + {tocados} producto(s) en {len(creadas)} ubicaciones")
+        else:
+            print("   Se dejó como estaba. Se puede correr después.")
+
+    print("\n4. Verificación")
     with engine.connect() as conexion:
         despues, restantes = conteos(conexion), pendientes(conexion)
     for tabla, cuantas in antes.items():

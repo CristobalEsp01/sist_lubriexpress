@@ -52,9 +52,11 @@ def planillas():
         ],
         productos=[
             {"Nombre del producto": f"Aceite {SUFIJO}", "Fabricante": "Mobil", "Categoría": "Aceite",
-             "Costo": "4599", "Precio_neto": "8319.2999999999993", "stock_actual": "5"},
+             "Costo": "4599", "Precio_neto": "8319.2999999999993", "stock_actual": "5",
+             "Descripción": "Ubicación: M-4C"},
             {"Nombre del producto": f"Filtro {SUFIJO}", "Fabricante": "Mann", "Categoría": "Filtro",
-             "Costo": "1000", "Precio_neto": "2000", "stock_actual": "-3"},      # stock negativo
+             "Costo": "1000", "Precio_neto": "2000", "stock_actual": "-3",     # stock negativo
+             "Descripción": "Mann M7-B original"},
             {"Nombre del producto": f"Sin costo {SUFIJO}", "Fabricante": None, "Categoría": None,
              "Costo": None, "Precio_neto": "2000", "stock_actual": "4"},        # se rechaza
         ],
@@ -136,7 +138,13 @@ def test_la_migracion_carga_lo_que_cuadra_y_cuenta_lo_que_no(db, planillas):
     (entrada,) = db.scalars(select(KardexMovimiento).where(KardexMovimiento.producto_id == aceite.id))
     assert (entrada.tipo_movimiento, entrada.cantidad_movida, entrada.stock_resultante,
             entrada.usuario_id) == ("ENTRADA", 5, 5, sistema.id)
+    # La ubicación que el sistema viejo escribió en la descripción pasa a su
+    # columna. Si era lo único que decía, la descripción queda vacía; si había
+    # algo más escrito, vuelve intacta y no se pierde texto.
+    assert (aceite.ubicacion.descripcion, aceite.descripcion) == ("M4-C", None)
+
     filtro = db.scalar(select(Producto).where(Producto.nombre == f"Filtro {SUFIJO}"))
+    assert (filtro.ubicacion.descripcion, filtro.descripcion) == ("M7-B", "Mann M7-B original")
     assert filtro.stock_actual == 0
     assert db.query(KardexMovimiento).filter_by(producto_id=filtro.id).count() == 0
     assert db.scalar(select(Producto).where(Producto.nombre == f"Sin costo {SUFIJO}")) is None
@@ -146,7 +154,7 @@ def test_la_migracion_carga_lo_que_cuadra_y_cuenta_lo_que_no(db, planillas):
 
     assert informe.cargados == {
         "usuarios": 2, "clientes": 3, "vehiculos": 2, "ordenes": 4,
-        "productos": 2, "kardex (stock inicial)": 1, "servicios": 1,
+        "productos": 2, "kardex (stock inicial)": 1, "servicios": 1, "ubicaciones": 2,
     }
     assert dict(informe.descartes) == {
         ("clientes", "homónimo fundido con otro teléfono (se conservó el primero)"): 1,
@@ -159,6 +167,7 @@ def test_la_migracion_carga_lo_que_cuadra_y_cuenta_lo_que_no(db, planillas):
         ("ordenes", "sin kilometraje (queda vacío)"): 1,
         ("ordenes", "cancelada en el sistema antiguo"): 1,
         ("productos", "stock negativo (cargado en 0, revisar)"): 1,
+        ("productos", "ubicación leída de la descripción"): 2,
         ("productos", "sin costo (precio_costo es obligatorio)"): 1,
     }
     assert informe.stock_esperado == 5

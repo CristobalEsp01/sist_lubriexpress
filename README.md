@@ -183,6 +183,7 @@ sist_lubriexpress/
 │   ├── patente.py                   # Patente chilena: formato y normalización
 │   ├── texto.py                     # Normalización para buscar (sin tildes ni puntuación)
 │   ├── precios.py                   # IVA: los precios del catálogo son netos
+│   ├── ubicaciones.py               # La ubicación de bodega escondida en la descripción
 │   ├── rutas.py                     # Dónde van el .env y los respaldos cuando va empaquetada
 │   ├── xlsx.py                      # Leer y escribir .xlsx con la biblioteca estándar
 │   ├── carga_excel.py               # Carga masiva de inventario por plantilla

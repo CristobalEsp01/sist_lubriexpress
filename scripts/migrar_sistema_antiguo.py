@@ -57,10 +57,11 @@ from sqlalchemy import func, select  # noqa: E402
 from src.auth import hash_password  # noqa: E402
 from src.database import SessionLocal  # noqa: E402
 from src.models import (  # noqa: E402
-    Cliente, KardexMovimiento, Orden, Producto, Servicio, Usuario, Vehiculo,
+    Cliente, KardexMovimiento, Orden, Producto, Servicio, Ubicacion, Usuario, Vehiculo,
 )
 from src.patente import PATENTE, normalizar_patente  # noqa: E402
 from src.texto import normalizar, sin_tildes  # noqa: E402
+from src.ubicaciones import detectar as detectar_ubicacion  # noqa: E402
 from src.xlsx import leer_xlsx  # noqa: E402
 
 PLANILLAS = {
@@ -462,6 +463,9 @@ def _stock_inicial(texto, informe: Informe, nombre: str) -> int:
 def _productos(db, filas, usuario_migracion: Usuario, informe: Informe) -> None:
     nombres = Counter()
     productos = []
+    # El sistema viejo no tenía campo de ubicación y el mostrador la escribió en
+    # la descripción; `src/ubicaciones.py` la saca y unifica cómo se escribió.
+    ubicaciones: dict[str, Ubicacion] = {}
     categorias = canonizar_categorias(
         (fila.get("Categoría") for fila in filas), informe, "productos",
     )
@@ -485,7 +489,7 @@ def _productos(db, filas, usuario_migracion: Usuario, informe: Informe) -> None:
             marca=recortar(informe, "productos", "marca", fila.get("Fabricante"), 50, nombre),
             categoria=recortar(informe, "productos", "categoría",
                                categorias.get(limpio(fila.get("Categoría"))), 50, nombre),
-            descripcion=limpio(fila.get("Descripción")),
+            **_ubicacion_y_descripcion(fila, ubicaciones, informe, nombre),
             precio_costo=costo, precio_venta=neto,
         )
         productos.append(producto)
@@ -501,6 +505,18 @@ def _productos(db, filas, usuario_migracion: Usuario, informe: Informe) -> None:
             informe.stock_esperado += stock
     db.add_all(productos)
     informe.cargados["productos"] = nombres.total()
+    informe.cargados["ubicaciones"] = len(ubicaciones)
+
+
+def _ubicacion_y_descripcion(fila, ubicaciones: dict, informe: Informe, nombre: str) -> dict:
+    """La ubicación sale de la descripción y queda en su propia columna."""
+    donde, descripcion = detectar_ubicacion(limpio(fila.get("Descripción")))
+    if donde is None:
+        return {"descripcion": descripcion}
+    if donde not in ubicaciones:
+        ubicaciones[donde] = Ubicacion(descripcion=donde)
+    informe.descartar("productos", "ubicación leída de la descripción", f"{nombre}: {donde}")
+    return {"descripcion": descripcion, "ubicacion": ubicaciones[donde]}
 
 
 def _servicios(db, filas, informe: Informe) -> None:

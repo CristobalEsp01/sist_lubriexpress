@@ -8,6 +8,7 @@
 - `src/patente.py` — patente chilena, con el mismo criterio que `rut.py`.
 - `src/precios.py` — el IVA. Los precios del catálogo son netos; el impuesto se calcula al cobrar y se guarda en el documento.
 - `src/permisos.py` — qué puede hacer cada rol, una acción por entrada. La sesión sigue en `src/auth.py`.
+- `src/ubicaciones.py` — la ubicación de bodega que el sistema viejo dejó escrita en la descripción del producto. Sin dependencias de base de datos ni de UI: la usan la migración y el relleno de una base ya en producción.
 - `src/rutas.py` — dónde están los archivos que la aplicación lee y escribe. Empaquetada, el `.env` y los respaldos van **junto al ejecutable**, no dentro del bundle: ahí `Path(__file__)` es un temporal que el sistema borra al cerrar.
 - `src/xlsx.py` — leer y escribir `.xlsx` con la biblioteca estándar. Lo usan la migración y la carga masiva; no se suma pandas ni openpyxl por esto.
 - `src/carga_excel.py` — carga masiva de inventario por plantilla, sin UI. Todo o nada: una fila rechazada no deja escribir ninguna.

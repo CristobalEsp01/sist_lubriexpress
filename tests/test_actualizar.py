@@ -73,3 +73,30 @@ def test_si_el_respaldo_falla_no_se_toca_el_esquema(monkeypatch):
         A.main([])
 
     assert aplicados == []
+
+
+def test_la_ubicacion_escrita_en_la_descripcion_pasa_a_su_columna(db):
+    """Los datos ya están migrados en producción, así que esto no puede vivir
+    solo en el script de migración: el relleno lee las descripciones de la base
+    que ya está en uso."""
+    from src.models import Producto
+
+    solo_ubicacion = Producto(nombre="QA ubicacion", descripcion="Ubicación: M-4C",
+                              precio_costo=1, precio_venta=2)
+    mezclada = Producto(nombre="QA mezclada", descripcion="Mann M7-B original",
+                        precio_costo=1, precio_venta=2)
+    sin_nada = Producto(nombre="QA sin nada", descripcion="Toyota Hilux 2.8",
+                        precio_costo=1, precio_venta=2)
+    db.add_all([solo_ubicacion, mezclada, sin_nada])
+    db.flush()
+
+    A.rellenar_ubicaciones(db, aplicar=True)
+    db.flush()
+
+    assert (solo_ubicacion.ubicacion.descripcion, solo_ubicacion.descripcion) == ("M4-C", None)
+    assert (mezclada.ubicacion.descripcion, mezclada.descripcion) == ("M7-B", "Mann M7-B original")
+    assert sin_nada.ubicacion_id is None
+
+    # Correrlo de nuevo no toca lo que ya tiene ubicación.
+    tocados, _ = A.rellenar_ubicaciones(db, aplicar=True)
+    assert solo_ubicacion.ubicacion.descripcion == "M4-C"
