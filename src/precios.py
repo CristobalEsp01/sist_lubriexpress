@@ -22,3 +22,19 @@ def con_iva(neto) -> int:
 def clp(valor) -> str:
     """20000.00 -> '$20.000'. En Chile no se usan decimales en caja."""
     return f"${int(valor):,}".replace(",", ".")
+
+def redondear_decena(monto) -> int:
+    """
+    Aplica la ley de redondeo chilena.
+    Terminaciones de 1 a 5 bajan al cero anterior.
+    Terminaciones de 6 a 9 suben a la decena superior.
+    """
+    monto_entero = int(monto)
+    unidad = monto_entero % 10
+    
+    if unidad == 0:
+        return monto_entero
+    elif unidad <= 5:
+        return monto_entero - unidad
+    else:
+        return monto_entero + (10 - unidad)

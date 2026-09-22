@@ -123,6 +123,7 @@ class Orden(Base):
     # subtotal es neto; total_final = subtotal - descuento + impuesto.
     subtotal = Column(Numeric(10, 2), default=0, nullable=False)
     impuesto = Column(Numeric(10, 2), default=0, nullable=False)
+    ajuste_redondeo = Column(Numeric(10, 2), default=0, nullable=False) # <- NUEVO, redondea segun la ley de redondeo chilena
     total_final = Column(Numeric(10, 2), default=0, nullable=False)
     numero_boleta = Column(String(50), unique=True)
     estado = Column(String(20), nullable=False, server_default="ENTREGADA")
@@ -197,7 +198,8 @@ class Venta(Base):
     fecha_venta = Column(DateTime, server_default=func.now(), nullable=False)
     numero_boleta = Column(String(50), unique=True)
     impuesto = Column(Numeric(10, 2), default=0, nullable=False)
-    total_final = Column(Numeric(10, 2), nullable=False)  # neto + impuesto
+    ajuste_redondeo = Column(Numeric(10, 2), default=0, nullable=False) # <- NUEVO, redondea segun la ley de redondeo chilena
+    total_final = Column(Numeric(10, 2), nullable=False)  # neto + impuesto + ajuste
 
     usuario = relationship("Usuario")
     cliente = relationship("Cliente")

@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
 from shiboken6 import isValid
 
 from ..permisos import puede
-from ..precios import clp, iva_de  # noqa: F401  (clp se re-exporta desde acá)
+from ..precios import clp, iva_de, redondear_decena  # noqa: F401  (clp se re-exporta desde acá)
 from ..texto import normalizar
 from .tema import (
     ACENTO_FONDO, ACENTO_OSCURO, ALERTA, ALERTA_FONDO, ALTERNA, ALTO_FILA,
@@ -337,51 +337,57 @@ def con_aviso_vacio(tabla: QTableWidget, mensaje: str) -> QTableWidget:
 
 
 class Totales:
-    """Las cifras del pie de una pantalla de cobro: neto, descuento, IVA y total.
+    """Las cifras del pie de una pantalla de cobro: neto, descuento, IVA, ajuste y total.
 
     La aritmética vive acá y no en cada pantalla para que órdenes y ventas
-    cobren igual. La fila de descuento solo se muestra cuando hay uno.
+    cobren igual. La fila de descuento y la de ajuste solo se muestran cuando aplican.
     """
 
-    def __init__(self, neto: QLabel, descuento: QLabel, iva: QLabel, total: QLabel):
-        self.neto, self.descuento, self.iva, self.total = neto, descuento, iva, total
+    def __init__(self, neto: QLabel, descuento: QLabel, iva: QLabel, ajuste: QLabel, total: QLabel):
+        self.neto, self.descuento, self.iva, self.ajuste, self.total = neto, descuento, iva, ajuste, total
         self.fila_descuento: list = []  # los widgets de la fila, para esconderla
+        self.fila_ajuste: list = []     # los widgets de la fila de redondeo
 
-    def fijar(self, neto, descuento, impuesto, total) -> None:
+    def fijar(self, neto, descuento, impuesto, ajuste, total) -> None:
         """Muestra cifras ya guardadas, sin recalcular nada."""
         self.neto.setText(clp(neto))
         self.descuento.setText(f"- {clp(descuento)}")
         for w in self.fila_descuento:
             w.setVisible(int(descuento) > 0)
+            
         self.iva.setText(clp(impuesto))
+        
+        # Formatear el ajuste con su signo (+ o -)
+        texto_ajuste = clp(abs(ajuste))
+        if ajuste < 0:
+            texto_ajuste = f"- {texto_ajuste}"
+        elif ajuste > 0:
+            texto_ajuste = f"+ {texto_ajuste}"
+        self.ajuste.setText(texto_ajuste)
+        
+        for w in self.fila_ajuste:
+            w.setVisible(int(ajuste) != 0)
+            
         self.total.setText(clp(total))
 
-    def calcular(self, neto: int, descuento: int = 0) -> tuple[int, int]:
-        """Calcula el IVA sobre lo que efectivamente se cobra y muestra todo.
-        Devuelve (impuesto, total), que es lo que se guarda en el documento."""
+    def calcular(self, neto: int, descuento: int = 0) -> tuple[int, int, int]:
+        """Calcula el IVA, aplica la ley de redondeo y muestra todo.
+        Devuelve (impuesto, ajuste, total_redondeado)."""
         impuesto = iva_de(neto - descuento)
-        total = neto - descuento + impuesto
-        self.fijar(neto, descuento, impuesto, total)
-        return impuesto, total
+        total_bruto = neto - descuento + impuesto
+        total_redondeado = redondear_decena(total_bruto)
+        ajuste = total_redondeado - total_bruto
+        
+        self.fijar(neto, descuento, impuesto, ajuste, total_redondeado)
+        return impuesto, ajuste, total_redondeado
 
 
-def bloque_total(rotulo: str = "Total", menor: bool = False) -> tuple[QFrame, Totales]:
-    """El pie de una pantalla de cobro: neto, IVA y total, rótulo a la
-    izquierda y cifra a la derecha.
-
-    Va sobre su propia superficie y separado por una línea porque es el
-    resultado de la pantalla, no un campo más del formulario. Devuelve el marco,
-    para meterlo en el layout, y las cifras (ver `Totales`).
-    """
+def bloque_total(rotulo: str = "Total a Pagar", menor: bool = False) -> tuple[QFrame, Totales]:
+    """El pie de una pantalla de cobro: neto, IVA, ajuste y total."""
     marco = QFrame()
     marco.setProperty("clase", "total")
-    # No se encoge nunca: en una ventana al mínimo, Qt le quitaba alto y la
-    # cifra —el resultado de la pantalla— quedaba cortada a la mitad.
     marco.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
     columna = QVBoxLayout(marco)
-    # Las etiquetas aceptan que Qt las recorte, así que el mínimo del marco
-    # tiene que venir del layout: sin esto la cifra medía 7 px de los 35 que
-    # necesita cuando la ventana estaba en su tamaño mínimo.
     columna.setSizeConstraint(QLayout.SetMinimumSize)
     columna.setContentsMargins(2, 10, 2, 0)
     columna.setSpacing(2)
@@ -402,13 +408,14 @@ def bloque_total(rotulo: str = "Total", menor: bool = False) -> tuple[QFrame, To
     _, neto = fila("Neto", "total-cifra-desglose")
     rotulo_descuento, descuento = fila("Descuento", "total-cifra-desglose")
     _, iva = fila("IVA 19 %", "total-cifra-desglose")
+    rotulo_ajuste, ajuste = fila("Ajuste por Redondeo", "total-cifra-desglose")
     _, total = fila(rotulo, "total-cifra-menor" if menor else "total-cifra")
 
-    totales = Totales(neto, descuento, iva, total)
+    totales = Totales(neto, descuento, iva, ajuste, total)
     totales.fila_descuento = [rotulo_descuento, descuento]
-    totales.fijar(0, 0, 0, 0)
+    totales.fila_ajuste = [rotulo_ajuste, ajuste]
+    totales.fijar(0, 0, 0, 0, 0)
     return marco, totales
-
 
 def carpeta_de_documentos(subcarpeta: str) -> Path:
     """Documentos/Lubri-Express/<subcarpeta>, creada si no existe: donde caen

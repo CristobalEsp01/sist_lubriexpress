@@ -46,7 +46,17 @@ def html_de_orden(o: dict) -> str:
     totales = [("Neto", clp(o["subtotal"]))]
     if o["descuento"]:
         totales.append(("Descuento", f"- {clp(o['descuento'])}"))
-    totales += [("IVA 19 %", clp(o["impuesto"])), ("Total", clp(o["total"]))]
+    
+    totales.append(("IVA 19 %", clp(o["impuesto"])))
+    
+    # --- NUEVO BLOQUE DE REDONDEO ---
+    if o.get("ajuste", 0) != 0:
+        ajuste = o["ajuste"]
+        texto_ajuste = f"+ {clp(abs(ajuste))}" if ajuste > 0 else f"- {clp(abs(ajuste))}"
+        totales.append(("Ajuste por Redondeo", texto_ajuste))
+    # --------------------------------
+    
+    totales.append(("Total", clp(o["total"])))
     # Lo abonado y el saldo solo salen cuando la orden quedó a medio pagar: al
     # contado serían dos filas para decir cero.
     if o["pagado"] and not o["pagada"]:

@@ -121,9 +121,10 @@ CREATE TABLE "ordenes" (
   "kilometraje_ingreso" INT CHECK ("kilometraje_ingreso" >= 0),
   "descuento_porcentaje" DECIMAL(5,2) NOT NULL DEFAULT 0 CHECK ("descuento_porcentaje" >= 0),
   "descuento_monto" DECIMAL(10,2) NOT NULL DEFAULT 0 CHECK ("descuento_monto" >= 0),
-  -- subtotal es neto; total_final = subtotal - descuento + impuesto.
+  -- subtotal es neto; total_final = subtotal - descuento + impuesto + ajuste.
   "subtotal" DECIMAL(10,2) NOT NULL DEFAULT 0,
   "impuesto" DECIMAL(10,2) NOT NULL DEFAULT 0 CHECK ("impuesto" >= 0),
+  "ajuste_redondeo" DECIMAL(10,2) NOT NULL DEFAULT 0,
   "total_final" DECIMAL(10,2) NOT NULL DEFAULT 0,
   "numero_boleta" VARCHAR(50) UNIQUE,
   "estado_pago" BOOLEAN NOT NULL DEFAULT FALSE,
@@ -179,8 +180,9 @@ CREATE TABLE "ventas" (
   "cliente_id" INT REFERENCES "clientes"("id"),
   "fecha_venta" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "numero_boleta" VARCHAR(50) UNIQUE,
-  -- total_final = neto + impuesto; el neto se obtiene restando.
+  -- total_final = neto + impuesto + ajuste; el neto se obtiene restando.
   "impuesto" DECIMAL(10,2) NOT NULL DEFAULT 0 CHECK ("impuesto" >= 0),
+  "ajuste_redondeo" DECIMAL(10,2) NOT NULL DEFAULT 0,
   "total_final" DECIMAL(10,2) NOT NULL CHECK ("total_final" >= 0)
 );
 

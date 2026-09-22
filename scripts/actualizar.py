@@ -202,6 +202,30 @@ ALTER TABLE "kardex_movimientos"
         sql=ESTADO_PAGO_AL_CAMBIAR_TOTAL,
         declara=(ESTADO_PAGO_AL_CAMBIAR_TOTAL,),
     ),
+    Paso(
+        nombre="ventas.ajuste_redondeo",
+        comprobacion="""
+            SELECT EXISTS (SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'ventas' AND column_name = 'ajuste_redondeo')
+        """,
+        sql='''
+ALTER TABLE "ventas"
+  ADD COLUMN "ajuste_redondeo" DECIMAL(10,2) NOT NULL DEFAULT 0;
+''',
+        declara=('"ajuste_redondeo" DECIMAL(10,2) NOT NULL DEFAULT 0',),
+    ),
+    Paso(
+        nombre="ordenes.ajuste_redondeo",
+        comprobacion="""
+            SELECT EXISTS (SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'ordenes' AND column_name = 'ajuste_redondeo')
+        """,
+        sql='''
+ALTER TABLE "ordenes"
+  ADD COLUMN "ajuste_redondeo" DECIMAL(10,2) NOT NULL DEFAULT 0;
+''',
+        declara=('"ajuste_redondeo" DECIMAL(10,2) NOT NULL DEFAULT 0',),
+    ),
 ]
 
 # Lo que se cuenta antes y después. Un cambio de esquema no borra filas; si la

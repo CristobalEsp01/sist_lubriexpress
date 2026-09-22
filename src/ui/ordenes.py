@@ -103,7 +103,8 @@ def guardar_pdf_de_orden(orden_id: int, ruta) -> None:
             "lineas": [((d.producto or d.servicio).nombre, d.cantidad, int(d.precio_unitario_cobrado))
                        for d in orden.detalles],
             "subtotal": orden.subtotal, "descuento": orden.descuento_aplicado,
-            "impuesto": orden.impuesto, "total": orden.total_final,
+            "impuesto": orden.impuesto, "ajuste": orden.ajuste_redondeo,
+            "total": orden.total_final,
             "pagada": orden.estado_pago, "pagado": orden.monto_pagado,
             "folio": orden.folio_mercado_publico, "notas": orden.notas,
         }
@@ -1054,7 +1055,7 @@ class OrdenesWidget(QTabWidget):
             self.tabla_carrito.item(fila, 3).data(Qt.UserRole)
             for fila in range(self.tabla_carrito.rowCount())
         )
-        _, total = self.totales.calcular(suma_total, self._descuento(suma_total)[2])
+        _, _, total = self.totales.calcular(suma_total, self._descuento(suma_total)[2])
         # Nadie abona más de lo que vale la orden, y la orden cambia mientras
         # se arma: el tope se mueve con ella.
         self.abono.setMaximum(total)
@@ -1198,7 +1199,7 @@ class OrdenesWidget(QTabWidget):
         ]
         suma_total = sum(d["subtotal"] for d in detalles)
         porcentaje, monto, aplicado = self._descuento(suma_total)
-        impuesto, total_final = self.totales.calcular(suma_total, aplicado)
+        impuesto, ajuste, total_final = self.totales.calcular(suma_total, aplicado)
 
         # Armar las notas incluyendo el nivel de combustible
         notas_finales = f"Nivel de Combustible: {self.combo_combustible.currentText()}"
@@ -1221,6 +1222,7 @@ class OrdenesWidget(QTabWidget):
             nueva_orden.descuento_monto = monto
             nueva_orden.subtotal = suma_total
             nueva_orden.impuesto = impuesto
+            nueva_orden.ajuste_redondeo = ajuste
             nueva_orden.total_final = total_final
             nueva_orden.folio_mercado_publico = self.folio.text().strip() or None
             nueva_orden.notas = notas_finales
@@ -1365,7 +1367,7 @@ class DialogoDetalleOrden(QDialog):
                 for det in orden.detalles
             ]
             notas_guardadas = orden.notas or "Sin observaciones registradas."
-            cifras = (orden.subtotal, orden.descuento_aplicado, orden.impuesto, orden.total_final)
+            cifras = (orden.subtotal, orden.descuento_aplicado, orden.impuesto, orden.ajuste_redondeo, orden.total_final)
 
         # Tabla de productos
         tabla = con_aviso_vacio(

@@ -421,7 +421,7 @@ class PuntoVentaWidget(QWidget):
                     return
 
         neto = sum(e["cantidad"] * e["precio_unitario"] for e in self.carrito)
-        impuesto, total = self.totales.calcular(neto)
+        impuesto, ajuste, total = self.totales.calcular(neto)
         cliente_id = self.cliente.currentData()
 
         with SessionLocal() as db:
@@ -430,6 +430,7 @@ class PuntoVentaWidget(QWidget):
                 cliente_id=cliente_id,
                 numero_boleta=numero_boleta,
                 impuesto=impuesto,
+                ajuste_redondeo=ajuste,
                 total_final=total,
             )
             db.add(venta)
@@ -502,7 +503,13 @@ class DetalleVentaDialog(QDialog):
     def _cargar_detalle(self, venta_id: int) -> None:
         with SessionLocal() as db:
             venta = db.get(Venta, venta_id)
-            cifras = (venta.total_final - venta.impuesto, 0, venta.impuesto, venta.total_final)
+            cifras = (
+                venta.total_final - venta.impuesto - venta.ajuste_redondeo, 
+                0, 
+                venta.impuesto, 
+                venta.ajuste_redondeo, 
+                venta.total_final
+            )
             detalles = db.scalars(
                 select(DetalleVenta)
                 .options(joinedload(DetalleVenta.producto))  # sin esto, un SELECT por fila
