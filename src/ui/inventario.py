@@ -24,8 +24,8 @@ from .carga_excel import CargaExcelDialog
 from .tema import ALERTA, CANAL_PANEL, ESPACIO_BARRA, EXITO, TINTA_SUAVE, fuente_tabular
 
 COLUMNAS_PRODUCTO = ["Nombre", "Marca", "Categoría", "Ubicación", "Stock", "Mín.", "Costo", "Venta neto"]
-COLUMNAS_KARDEX = ["Fecha", "Tipo", "Cantidad", "Saldo", "Usuario", "Origen"]
-COLUMNAS_INGRESO = ["Producto", "Stock Actual", "Ingreso", "Nuevo Stock"]
+COLUMNAS_KARDEX = ["Fecha", "Tipo", "Cantidad", "Saldo", "Costo unit.", "Usuario", "Origen"]
+COLUMNAS_INGRESO = ["Producto", "Stock Actual", "Ingreso", "Nuevo Stock", "Costo unit."]
 MAX_CLP = 99_999_999
 
 ETIQUETAS_MOVIMIENTO = {
@@ -57,6 +57,7 @@ def movimientos_de(db, producto_id: int) -> list[tuple]:
             KardexMovimiento.tipo_movimiento,
             KardexMovimiento.cantidad_movida,
             KardexMovimiento.stock_resultante,
+            KardexMovimiento.costo_unitario,
             Usuario.nombre,
             KardexMovimiento.orden_id,
             Venta.numero_boleta,
@@ -68,9 +69,9 @@ def movimientos_de(db, producto_id: int) -> list[tuple]:
         .order_by(KardexMovimiento.fecha_movimiento.desc(), KardexMovimiento.id.desc())
     ).all()
     return [
-        (fecha, ETIQUETAS_MOVIMIENTO.get(tipo, tipo), cantidad, saldo, usuario,
+        (fecha, ETIQUETAS_MOVIMIENTO.get(tipo, tipo), cantidad, saldo, costo, usuario,
          origen_de(orden_id, boleta, venta_id))
-        for fecha, tipo, cantidad, saldo, usuario, orden_id, boleta, venta_id in filas
+        for fecha, tipo, cantidad, saldo, costo, usuario, orden_id, boleta, venta_id in filas
     ]
 
 
@@ -247,6 +248,13 @@ class IngresoMercaderiaDialog(QDialog):
         self.spin_cantidad = QSpinBox()
         self.spin_cantidad.setRange(1, 10000)
 
+        # La mercadería llega con precios distintos cada vez. Al elegir el
+        # producto se propone el costo que tiene hoy: casi siempre no cambió, y
+        # obligar a retipearlo invita a dejarlo en cero.
+        self.spin_costo = FormularioProducto._campo_pesos()
+        self.spin_costo.setToolTip("Lo que costó esta compra. Actualiza el costo del producto.")
+        self.combo_productos.currentIndexChanged.connect(self._proponer_costo)
+
         self.boton_agregar = QPushButton("Añadir a la lista")
         self.boton_agregar.setEnabled(False)
         self.boton_agregar.clicked.connect(self.agregar_a_lista)
@@ -259,11 +267,12 @@ class IngresoMercaderiaDialog(QDialog):
 
         barra_superior = barra(
             QLabel("Producto"), self.combo_productos,
-            QLabel("Cantidad"), self.spin_cantidad, self.boton_agregar, estira=1,
+            QLabel("Cantidad"), self.spin_cantidad,
+            QLabel("Costo unit."), self.spin_costo, self.boton_agregar, estira=1,
         )
 
         self.tabla = con_aviso_vacio(
-            crear_tabla(COLUMNAS_INGRESO, ancha=0, orden=0, numericas=(1, 2, 3)),
+            crear_tabla(COLUMNAS_INGRESO, ancha=0, orden=0, numericas=(1, 2, 3, 4)),
             "Elige un producto y una cantidad, y añádelo a la lista.",
         )
         # El orden de la tabla es el de la lista en memoria: quitar_seleccionado
@@ -309,7 +318,9 @@ class IngresoMercaderiaDialog(QDialog):
                 # el combo editable ese texto puede ser un filtro a medio
                 # escribir y quedaría guardado como nombre del producto.
                 self.combo_productos.addItem(
-                    p.nombre, {"id": p.id, "nombre": p.nombre, "stock": p.stock_actual}
+                    p.nombre,
+                    {"id": p.id, "nombre": p.nombre, "stock": p.stock_actual,
+                     "costo": int(p.precio_costo)},
                 )
         # Nace vacío, con su texto de fondo. Abrir con el primer producto del
         # catálogo ya elegido convierte un "Añadir" sin mirar en stock sumado al
@@ -317,6 +328,10 @@ class IngresoMercaderiaDialog(QDialog):
         # inventario. Ventas y órdenes ya abren así.
         self.combo_productos.setCurrentIndex(-1)
         self.combo_productos.lineEdit().setPlaceholderText("Busca por nombre o marca")
+
+    def _proponer_costo(self) -> None:
+        datos = self.combo_productos.currentData()
+        self.spin_costo.setValue(datos["costo"] if datos else 0)
 
     def agregar_a_lista(self) -> None:
         datos = self.combo_productos.currentData()
@@ -327,13 +342,17 @@ class IngresoMercaderiaDialog(QDialog):
             (item for item in self.lista_ingreso if item["producto_id"] == datos["id"]), None
         )
         if existente:
+            # Dos entradas del mismo producto se suman, y manda el último costo
+            # tecleado: es el dato más nuevo que alguien miró.
             existente["cantidad"] += self.spin_cantidad.value()
+            existente["costo"] = self.spin_costo.value()
         else:
             self.lista_ingreso.append({
                 "producto_id": datos["id"],
                 "nombre": datos["nombre"],
                 "stock_actual": datos["stock"],
                 "cantidad": self.spin_cantidad.value(),
+                "costo": self.spin_costo.value(),
             })
 
         self.spin_cantidad.setValue(1)
@@ -353,6 +372,7 @@ class IngresoMercaderiaDialog(QDialog):
             self.tabla.setItem(fila, 1, ItemNumerico(str(item["stock_actual"]), item["stock_actual"]))
             self.tabla.setItem(fila, 2, ItemNumerico(f"+{item['cantidad']}", item["cantidad"]))
             self.tabla.setItem(fila, 3, ItemNumerico(str(nuevo), nuevo))
+            self.tabla.setItem(fila, 4, ItemNumerico(clp(item["costo"]), item["costo"]))
         ajustar_columnas(self.tabla)
         hay_lista = bool(self.lista_ingreso)
         self.boton_confirmar.setEnabled(hay_lista)
@@ -373,7 +393,13 @@ class IngresoMercaderiaDialog(QDialog):
                     usuario_id=Sesion.usuario_id,
                     tipo_movimiento="ENTRADA",
                     cantidad_movida=item["cantidad"],
+                    costo_unitario=item["costo"],
                 ))
+                # El costo del catálogo pasa a ser el de esta compra; el de las
+                # anteriores queda en su movimiento, que es lo que se consulta
+                # después. No se toca el precio de venta: el margen lo decide
+                # el taller, no una regla de tres.
+                db.get(Producto, item["producto_id"]).precio_costo = item["costo"]
             try:
                 db.commit()
             except IntegrityError as e:
@@ -585,9 +611,11 @@ class InventarioWidget(QWidget):
         # Historial de kardex del producto seleccionado. Solo lectura: los
         # movimientos los escriben los triggers, nunca esta pantalla.
         self.tabla_kardex = con_aviso_vacio(
-            crear_tabla(COLUMNAS_KARDEX, ancha=5, orden=0, descendente=True, numericas=(2, 3)),
+            crear_tabla(COLUMNAS_KARDEX, ancha=6, orden=0, descendente=True, numericas=(2, 3, 4)),
             "Elige un producto para ver sus movimientos.",
         )
+        # El costo lo ven los mismos que ven la columna de costo del listado.
+        self.tabla_kardex.setColumnHidden(4, not self.supervisa)
         self.titulo_kardex = QLabel()
         self.titulo_kardex.setProperty("clase", "seccion")
 
@@ -734,7 +762,7 @@ class InventarioWidget(QWidget):
         self.tabla_kardex.aviso.setText("Este producto todavía no tiene movimientos.")
         self.tabla_kardex.setSortingEnabled(False)
         self.tabla_kardex.setRowCount(len(movimientos))
-        for fila, (fecha, tipo, cantidad, saldo, usuario, origen) in enumerate(movimientos):
+        for fila, (fecha, tipo, cantidad, saldo, costo, usuario, origen) in enumerate(movimientos):
             marca_tiempo = fecha.timestamp() if fecha else 0
             texto_fecha = fecha.strftime("%d-%m-%Y %H:%M") if fecha else ""
             # Monoespaciada para que las fechas calcen, pero a la izquierda:
@@ -760,8 +788,11 @@ class InventarioWidget(QWidget):
             self.tabla_kardex.setItem(fila, 2, celda_cant)
 
             self.tabla_kardex.setItem(fila, 3, ItemNumerico(str(saldo), saldo))
-            self.tabla_kardex.setItem(fila, 4, QTableWidgetItem(usuario))
-            self.tabla_kardex.setItem(fila, 5, QTableWidgetItem(origen))
+            # Solo las entradas traen costo; una salida o un ajuste no compran nada.
+            self.tabla_kardex.setItem(
+                fila, 4, ItemNumerico(clp(costo) if costo is not None else "—", costo or 0))
+            self.tabla_kardex.setItem(fila, 5, QTableWidgetItem(usuario))
+            self.tabla_kardex.setItem(fila, 6, QTableWidgetItem(origen))
         reordenar(self.tabla_kardex)
 
     def _id_seleccionado(self) -> int | None:

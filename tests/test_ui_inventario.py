@@ -156,12 +156,13 @@ def test_el_historial_de_kardex_ordena_y_dice_de_dónde_viene(db):
 
     # Dentro de una misma transacción CURRENT_TIMESTAMP es idéntico para ambos,
     # así que el orden lo decide el desempate por id: la venta es posterior.
-    _, tipo, cantidad, saldo, quien, origen = movimientos[0]
-    assert (tipo, cantidad, saldo) == ("Salida por venta", -2, 14)
+    _, tipo, cantidad, saldo, costo, quien, origen = movimientos[0]
+    # Una salida no compra nada: no trae costo.
+    assert (tipo, cantidad, saldo, costo) == ("Salida por venta", -2, 14, None)
     assert quien == "Bastián QA"
     assert origen == f"Boleta QA-{producto.id}"
 
-    _, tipo, cantidad, saldo, _, origen = movimientos[1]
+    _, tipo, cantidad, saldo, _, _, origen = movimientos[1]
     assert (tipo, cantidad, saldo, origen) == ("Entrada", 12, 16, "—")
 
     # Los dos orígenes que este escenario no produce.
@@ -262,8 +263,10 @@ def test_la_lista_de_ingreso_respeta_el_orden_en_que_se_agrego(app):
     assert not dialogo.boton_confirmar.isEnabled()
 
     dialogo.lista_ingreso = [
-        {"producto_id": 1, "nombre": "ZZ Agregado primero", "stock_actual": 0, "cantidad": 1},
-        {"producto_id": 2, "nombre": "AA Agregado después", "stock_actual": 0, "cantidad": 2},
+        {"producto_id": 1, "nombre": "ZZ Agregado primero", "stock_actual": 0,
+         "cantidad": 1, "costo": 100},
+        {"producto_id": 2, "nombre": "AA Agregado después", "stock_actual": 0,
+         "cantidad": 2, "costo": 200},
     ]
     dialogo._redibujar_tabla()
     assert dialogo.tabla.item(0, 0).text() == "ZZ Agregado primero"
@@ -365,3 +368,44 @@ def test_la_categoria_se_elige_de_las_que_ya_existen(app, limpiar, bodeguero_qa)
     # Y una categoría nueva sigue siendo posible: el combo no es una cárcel.
     alta.categoria.setCurrentText("QA Ampolletas")
     assert alta._categoria_elegida() == "QA Ampolletas"
+
+
+def test_el_ingreso_registra_el_costo_de_esa_compra(app, bodeguero_qa, monkeypatch):
+    """La mercadería llega con precios distintos cada vez. El costo del ingreso
+    pasa a ser el del producto y queda guardado en el movimiento, que es la
+    única forma de saber después a cuánto se compró en marzo."""
+    from PySide6.QtWidgets import QMessageBox
+
+    from src.ui.inventario import IngresoMercaderiaDialog
+
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: QMessageBox.Ok)
+
+    with SessionLocal() as db:
+        producto = Producto(nombre=NOMBRE_INGRESO, precio_costo=1000, precio_venta=2000,
+                            stock_actual=4, stock_minimo=1)
+        db.add(producto)
+        db.commit()
+        producto_id = producto.id
+
+    dialogo = IngresoMercaderiaDialog()
+    dialogo.combo_productos.setCurrentIndex(dialogo.combo_productos.findText(NOMBRE_INGRESO))
+    # Elegir el producto propone su costo actual: la mayoría de las veces no
+    # cambió, y tener que retipearlo invita a dejarlo en cero.
+    assert dialogo.spin_costo.value() == 1000
+
+    dialogo.spin_cantidad.setValue(3)
+    dialogo.spin_costo.setValue(1350)
+    dialogo.agregar_a_lista()
+    dialogo.confirmar_ingreso()
+
+    with SessionLocal() as db:
+        producto = db.get(Producto, producto_id)
+        assert producto.stock_actual == 7
+        assert producto.precio_costo == 1350
+        movimiento = db.scalar(
+            select(KardexMovimiento).where(KardexMovimiento.producto_id == producto_id)
+        )
+        assert (movimiento.cantidad_movida, movimiento.costo_unitario) == (3, 1350)
+        # Y se puede consultar después, que es para lo que se guarda.
+        from src.ui.inventario import movimientos_de
+        assert movimientos_de(db, producto_id)[0][4] == 1350
