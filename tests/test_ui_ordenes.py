@@ -448,3 +448,34 @@ def test_desde_el_historial_el_aviso_por_whatsapp_cita_el_numero_de_la_orden(app
 
     _fijar_telefono(taller.vehiculo_id, None)
     assert not ordenes.DialogoDetalleOrden(orden_id, None).boton_whatsapp.isEnabled()
+
+
+def test_el_buscador_muestra_stock_y_ubicacion_y_deja_el_producto_elegido(app, taller, monkeypatch):
+    """En el mesón hay repuestos que se llaman casi igual: el combo muestra solo
+    el nombre, así que elegir bien obligaba a abrir Inventario en paralelo."""
+    from PySide6.QtWidgets import QDialog
+
+    from src.ui import ordenes
+    from src.ui.selector_producto import COLUMNAS, SelectorProducto
+
+    selector = SelectorProducto(texto_inicial=NOMBRE_PRODUCTO)
+    assert selector.tabla.rowCount() == 1
+    fila = {COLUMNAS[c]: selector.tabla.item(0, c).text() for c in range(len(COLUMNAS))}
+    assert (fila["Nombre"], fila["Marca"], fila["Stock"]) == (NOMBRE_PRODUCTO, "Castrol", "10")
+    assert fila["Precio neto"] == "$12.900"
+
+    # Seleccionar y elegir deja el id, que es lo único que viaja de vuelta.
+    selector.tabla.selectRow(0)
+    selector.elegir()
+    assert selector.elegido == taller.producto_id
+
+    # Y la orden lo deja puesto en el combo, listo para agregar con su cantidad.
+    def elegir_ese_producto(self):
+        self.elegido = taller.producto_id
+        return QDialog.Accepted
+
+    widget = ordenes.OrdenesWidget()
+    monkeypatch.setattr(SelectorProducto, "exec", elegir_ese_producto)
+    widget.buscar_producto()
+
+    assert widget.combo_productos.currentData()["id"] == taller.producto_id

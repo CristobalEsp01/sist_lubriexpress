@@ -32,6 +32,7 @@ from .comunes import (
     carpeta_de_documentos, clp, con_aviso_vacio, crear_tabla, hacer_buscable,
     layout_de_dialogo, layout_de_pantalla, reordenar,
 )
+from .selector_producto import SelectorProducto
 from .tema import CANAL_PANEL, ESPACIO_PANTALLA, LOGO, fuente_tabular
 
 COLUMNAS_CARRITO = ["Ítem", "Cant.", "Precio Unit.", "Subtotal"]
@@ -373,6 +374,13 @@ class OrdenesWidget(QTabWidget):
         self.spin_cantidad = QSpinBox()
         self.spin_cantidad.setRange(1, 1000)
 
+        # El combo sirve a quien sabe el nombre; el buscador, a quien tiene
+        # cuatro filtros que se llaman casi igual y necesita ver stock y repisa.
+        self.boton_buscar_producto = QPushButton("Buscar…")
+        self.boton_buscar_producto.setAutoDefault(False)
+        self.boton_buscar_producto.setToolTip("Ver stock, ubicación y precio de todo el catálogo")
+        self.boton_buscar_producto.clicked.connect(self.buscar_producto)
+
         self.boton_agregar = QPushButton("Agregar")
         self.boton_agregar.setEnabled(False)
         self.boton_agregar.clicked.connect(self.agregar_desde_el_combo)
@@ -422,7 +430,7 @@ class OrdenesWidget(QTabWidget):
         layout_izq.setSpacing(ESPACIO_PANTALLA)
         layout_izq.addWidget(titulo_insumos)
         layout_izq.addLayout(barra(
-            QLabel("Producto"), self.combo_productos,
+            QLabel("Producto"), self.combo_productos, self.boton_buscar_producto,
             QLabel("Cantidad"), self.spin_cantidad, self.boton_agregar,
             self.boton_quitar, estira=1,
         ))
@@ -795,6 +803,24 @@ class OrdenesWidget(QTabWidget):
             ):
                 self.combo_servicios.addItem(s.nombre, {"id": s.id, "nombre": s.nombre})
         self.combo_servicios.setCurrentIndex(-1)
+
+    def buscar_producto(self) -> None:
+        dialogo = SelectorProducto(self, self.combo_productos.lineEdit().text().strip())
+        if dialogo.exec() != QDialog.Accepted or dialogo.elegido is None:
+            return
+        if not self._elegir_en_el_combo(dialogo.elegido):
+            # Alguien creó o reactivó el producto con esta pantalla abierta.
+            self._cargar_productos()
+            self._elegir_en_el_combo(dialogo.elegido)
+        self.spin_cantidad.setFocus()
+
+    def _elegir_en_el_combo(self, producto_id: int) -> bool:
+        for indice in range(self.combo_productos.count()):
+            datos = self.combo_productos.itemData(indice)
+            if datos and datos["id"] == producto_id:
+                self.combo_productos.setCurrentIndex(indice)
+                return True
+        return False
 
     def agregar_desde_el_combo(self) -> None:
         datos = self.combo_productos.currentData()

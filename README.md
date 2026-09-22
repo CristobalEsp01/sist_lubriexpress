@@ -16,7 +16,7 @@ Lubri-Express. Corre localmente sobre PostgreSQL.
 | Stock mínimo por categoría | Funcionando (acción masiva; cada producto puede sobrescribirlo) |
 | Mantenedor de Clientes y Vehículos | Funcionando |
 | Ventas de mostrador | Funcionando |
-| Órdenes de trabajo: insumos, servicios, descuentos, folio y estado de pago | Funcionando |
+| Órdenes de trabajo: insumos, servicios, descuentos, folio y estado de pago | Funcionando (con buscador de productos que muestra stock y ubicación) |
 | Pago parcial de una orden: abono al cerrarla y saldo cobrado después | Funcionando (el saldo se registra desde el historial) |
 | Aviso al cliente por WhatsApp | Funcionando (desde la orden abierta y desde una guardada, que cita su N° de OT) |
 | Exportación de la orden a PDF | Funcionando |
@@ -199,6 +199,7 @@ sist_lubriexpress/
 │       ├── carga_excel.py           # Diálogo de la carga masiva
 │       ├── clientes.py              # Clientes y vehículos
 │       ├── ventas.py                # Punto de venta, carrito e historial
+│       ├── selector_producto.py     # Buscar un producto viendo stock, ubicación y precio
 │       ├── ordenes.py               # Órdenes de trabajo, aviso por WhatsApp y PDF
 │       ├── reportes.py              # Pestaña de reportes con gráficos
 │       └── usuarios.py              # Alta de usuarios y asignación de roles
