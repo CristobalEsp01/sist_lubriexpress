@@ -24,9 +24,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from collections import Counter  # noqa: E402
+
 from sqlalchemy import select, text  # noqa: E402
 
 from scripts.respaldar import respaldar  # noqa: E402
+from src.convenios import recategorizar  # noqa: E402
 from src.models import Producto, Ubicacion  # noqa: E402
 from src.ubicaciones import detectar  # noqa: E402
 
@@ -114,7 +117,7 @@ PASOS = [
 CREATE TABLE "movimientos_caja" (
   "id" SERIAL PRIMARY KEY,
   "usuario_id" INT NOT NULL REFERENCES "usuarios"("id"),
-  "tipo" VARCHAR(10) NOT NULL CHECK ("tipo" IN ('INGRESO', 'EGRESO')),
+  "tipo" VARCHAR(10) NOT NULL CHECK ("tipo" IN ('APERTURA', 'INGRESO', 'EGRESO')),
   "monto" DECIMAL(10,2) NOT NULL CHECK ("monto" > 0),
   "motivo" VARCHAR(200) NOT NULL,
   "fecha" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -249,7 +252,62 @@ ALTER TABLE "pagos_orden"
   ADD COLUMN "medio_pago" VARCHAR(20) NOT NULL DEFAULT 'EFECTIVO';
 ''',
         declara=('"medio_pago" VARCHAR(20) NOT NULL DEFAULT \'EFECTIVO\'',),
-    )
+    ),
+    Paso(
+        # Mismo nombre que Postgres le da al CHECK en una instalación limpia.
+        nombre="ventas.medio_pago_valido",
+        comprobacion="""
+            SELECT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ventas_medio_pago_check')
+        """,
+        sql='''
+ALTER TABLE "ventas"
+  ADD CONSTRAINT "ventas_medio_pago_check"
+      CHECK ("medio_pago" IN ('EFECTIVO', 'TARJETA', 'TRANSFERENCIA'));
+ALTER TABLE "pagos_orden"
+  ADD CONSTRAINT "pagos_orden_medio_pago_check"
+      CHECK ("medio_pago" IN ('EFECTIVO', 'TARJETA', 'TRANSFERENCIA'));
+''',
+        declara=('''CHECK ("medio_pago" IN ('EFECTIVO', 'TARJETA', 'TRANSFERENCIA'))''',),
+    ),
+    Paso(
+        nombre="movimientos_caja.apertura",
+        comprobacion="""
+            SELECT EXISTS (SELECT 1 FROM pg_constraint
+                            WHERE conname = 'movimientos_caja_tipo_check'
+                              AND pg_get_constraintdef(oid) LIKE '%APERTURA%')
+        """,
+        sql='''
+ALTER TABLE "movimientos_caja"
+  DROP CONSTRAINT "movimientos_caja_tipo_check",
+  ADD CONSTRAINT "movimientos_caja_tipo_check"
+      CHECK ("tipo" IN ('APERTURA', 'INGRESO', 'EGRESO'));
+''',
+        declara=('''CHECK ("tipo" IN ('APERTURA', 'INGRESO', 'EGRESO'))''',),
+    ),
+    Paso(
+        nombre="ordenes.convenio",
+        comprobacion="""
+            SELECT EXISTS (SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'ordenes' AND column_name = 'convenio')
+        """,
+        sql='''
+ALTER TABLE "ordenes"
+  ADD COLUMN "convenio" VARCHAR(20) CHECK ("convenio" IN ('FLYER', 'GREMIO')),
+  ADD COLUMN "folio_flyer" INT CHECK ("folio_flyer" BETWEEN 1 AND 1000),
+  ADD CONSTRAINT flyer_con_folio
+      CHECK (("folio_flyer" IS NOT NULL) = ("convenio" IS NOT DISTINCT FROM 'FLYER'));
+CREATE UNIQUE INDEX flyer_de_un_solo_uso ON "ordenes"("folio_flyer")
+  WHERE "estado" <> 'ANULADA';
+''',
+        declara=(
+            '''"convenio" VARCHAR(20) CHECK ("convenio" IN ('FLYER', 'GREMIO'))''',
+            '"folio_flyer" INT CHECK ("folio_flyer" BETWEEN 1 AND 1000)',
+            '''CONSTRAINT flyer_con_folio
+      CHECK (("folio_flyer" IS NOT NULL) = ("convenio" IS NOT DISTINCT FROM 'FLYER'))''',
+            '''CREATE UNIQUE INDEX flyer_de_un_solo_uso ON "ordenes"("folio_flyer")
+  WHERE "estado" <> 'ANULADA';''',
+        ),
+    ),
 ]
 
 # Lo que se cuenta antes y después. Un cambio de esquema no borra filas; si la
@@ -299,6 +357,21 @@ def rellenar_ubicaciones(db, aplicar: bool) -> tuple[int, set[str]]:
     return tocados, encontradas
 
 
+def recategorizar_productos(db, aplicar: bool) -> Counter:
+    """Da su tipo a los productos de categoría genérica cuando el nombre lo
+    dice (src/convenios.py). Repetirlo no cambia nada; sin `aplicar`, solo
+    cuenta cuántos pasan a cada categoría."""
+    cambios = Counter()
+    for producto in db.scalars(select(Producto).where(Producto.categoria.isnot(None))):
+        nueva = recategorizar(producto.categoria, producto.nombre)
+        if nueva is None:
+            continue
+        cambios[nueva] += 1
+        if aplicar:
+            producto.categoria = nueva
+    return cambios
+
+
 def conteos(conexion) -> dict[str, int]:
     return {tabla: conexion.execute(text(f'SELECT count(*) FROM "{tabla}"')).scalar()
             for tabla in TABLAS_VERIFICADAS}
@@ -317,9 +390,10 @@ def main(argv: list[str]) -> int:
 
     with SessionLocal() as db:
         cuantos, donde = rellenar_ubicaciones(db, aplicar=False)
+        categorias = recategorizar_productos(db, aplicar=False)
 
-    if not falta and not cuantos:
-        print("El esquema ya está al día y no hay ubicaciones por rellenar.")
+    if not falta and not cuantos and not categorias:
+        print("El esquema ya está al día y no hay datos por corregir.")
         return 0
 
     print(f"{len(falta)} cambio(s) de esquema por aplicar:")
@@ -329,6 +403,11 @@ def main(argv: list[str]) -> int:
         print(f"Y {cuantos} producto(s) con la ubicación escrita en la descripción, "
               f"en {len(donde)} ubicaciones:")
         print("  " + ", ".join(sorted(donde)))
+    if categorias:
+        print(f"Y {categorias.total()} producto(s) de categoría genérica (FILTRO, ACEITES) "
+              "cuyo tipo sale del nombre:")
+        for categoria, cuantas in sorted(categorias.items()):
+            print(f"  {categoria}: {cuantas}")
 
     if simular:
         print("\n--simular: no se escribió nada.")
@@ -356,7 +435,18 @@ def main(argv: list[str]) -> int:
         else:
             print("   Se dejó como estaba. Se puede correr después.")
 
-    print("\n4. Verificación")
+    if categorias:
+        print("\n4. Categorías desde el nombre")
+        pregunta = f"   ¿Recategorizar {categorias.total()} producto(s)? [s/N] "
+        if input(pregunta).strip().lower() == "s":
+            with SessionLocal() as db:
+                tocados = recategorizar_productos(db, aplicar=True)
+                db.commit()
+            print(f"   + {tocados.total()} producto(s)")
+        else:
+            print("   Se dejó como estaba. Se puede correr después.")
+
+    print("\n5. Verificación")
     with engine.connect() as conexion:
         despues, restantes = conteos(conexion), pendientes(conexion)
     for tabla, cuantas in antes.items():

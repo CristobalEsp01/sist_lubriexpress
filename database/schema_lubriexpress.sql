@@ -124,7 +124,6 @@ CREATE TABLE "ordenes" (
   -- subtotal es neto; total_final = subtotal - descuento + impuesto + ajuste.
   "subtotal" DECIMAL(10,2) NOT NULL DEFAULT 0,
   "impuesto" DECIMAL(10,2) NOT NULL DEFAULT 0 CHECK ("impuesto" >= 0),
-  "ajuste_redondeo" DECIMAL(10,2) NOT NULL DEFAULT 0,
   "total_final" DECIMAL(10,2) NOT NULL DEFAULT 0,
   "numero_boleta" VARCHAR(50) UNIQUE,
   "estado_pago" BOOLEAN NOT NULL DEFAULT FALSE,
@@ -136,8 +135,15 @@ CREATE TABLE "ordenes" (
   -- una recién instalada quedan iguales hasta en el orden de las columnas.
   "estado" VARCHAR(20) NOT NULL DEFAULT 'ENTREGADA'
       CHECK ("estado" IN ('ABIERTA', 'ENTREGADA', 'ANULADA')),
+  "ajuste_redondeo" DECIMAL(10,2) NOT NULL DEFAULT 0,
+  -- Descuento por convenio (src/convenios.py). Los pesos van en
+  -- descuento_monto; acá queda cuál fue y el folio del flyer.
+  "convenio" VARCHAR(20) CHECK ("convenio" IN ('FLYER', 'GREMIO')),
+  "folio_flyer" INT CHECK ("folio_flyer" BETWEEN 1 AND 1000),
   CONSTRAINT descuento_exclusivo_orden
-      CHECK (NOT ("descuento_porcentaje" > 0 AND "descuento_monto" > 0))
+      CHECK (NOT ("descuento_porcentaje" > 0 AND "descuento_monto" > 0)),
+  CONSTRAINT flyer_con_folio
+      CHECK (("folio_flyer" IS NOT NULL) = ("convenio" IS NOT DISTINCT FROM 'FLYER'))
 );
 
 -- ---------------------------------------------------------------------
@@ -168,8 +174,9 @@ CREATE TABLE "pagos_orden" (
   "orden_id" INT NOT NULL REFERENCES "ordenes"("id"),
   "usuario_id" INT NOT NULL REFERENCES "usuarios"("id"),
   "monto" DECIMAL(10,2) NOT NULL CHECK ("monto" > 0),
-  "medio_pago" VARCHAR(20) NOT NULL DEFAULT 'EFECTIVO',
-  "fecha_pago" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+  "fecha_pago" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "medio_pago" VARCHAR(20) NOT NULL DEFAULT 'EFECTIVO'
+      CHECK ("medio_pago" IN ('EFECTIVO', 'TARJETA', 'TRANSFERENCIA'))
 );
 
 -- ---------------------------------------------------------------------
@@ -183,9 +190,10 @@ CREATE TABLE "ventas" (
   "numero_boleta" VARCHAR(50) UNIQUE,
   -- total_final = neto + impuesto + ajuste; el neto se obtiene restando.
   "impuesto" DECIMAL(10,2) NOT NULL DEFAULT 0 CHECK ("impuesto" >= 0),
+  "total_final" DECIMAL(10,2) NOT NULL CHECK ("total_final" >= 0),
   "ajuste_redondeo" DECIMAL(10,2) NOT NULL DEFAULT 0,
-  "total_final" DECIMAL(10,2) NOT NULL CHECK ("total_final" >= 0)
   "medio_pago" VARCHAR(20) NOT NULL DEFAULT 'EFECTIVO'
+      CHECK ("medio_pago" IN ('EFECTIVO', 'TARJETA', 'TRANSFERENCIA'))
 );
 
 -- ---------------------------------------------------------------------
@@ -241,7 +249,9 @@ CREATE TABLE "kardex_movimientos" (
 CREATE TABLE "movimientos_caja" (
   "id" SERIAL PRIMARY KEY,
   "usuario_id" INT NOT NULL REFERENCES "usuarios"("id"),
-  "tipo" VARCHAR(10) NOT NULL CHECK ("tipo" IN ('INGRESO', 'EGRESO')),
+  -- APERTURA es la plata con que parte el día, contada en la mañana; INGRESO
+  -- y EGRESO, lo que se agrega o se saca después.
+  "tipo" VARCHAR(10) NOT NULL CHECK ("tipo" IN ('APERTURA', 'INGRESO', 'EGRESO')),
   -- El signo lo dice "tipo"; el monto siempre es positivo.
   "monto" DECIMAL(10,2) NOT NULL CHECK ("monto" > 0),
   "motivo" VARCHAR(200) NOT NULL,
@@ -269,6 +279,9 @@ CREATE INDEX idx_pagos_orden_orden ON "pagos_orden"("orden_id");
 CREATE INDEX idx_kardex_producto ON "kardex_movimientos"("producto_id");
 CREATE INDEX idx_kardex_fecha ON "kardex_movimientos"("fecha_movimiento");
 CREATE INDEX idx_movimientos_caja_fecha ON "movimientos_caja"("fecha");
+-- Un flyer se usa una vez. Anular la orden lo libera: el cliente no lo gastó.
+CREATE UNIQUE INDEX flyer_de_un_solo_uso ON "ordenes"("folio_flyer")
+  WHERE "estado" <> 'ANULADA';
 
 -- =====================================================================
 -- Triggers: updated_at automático

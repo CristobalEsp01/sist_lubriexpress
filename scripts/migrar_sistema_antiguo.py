@@ -61,6 +61,7 @@ from src.models import (  # noqa: E402
 )
 from src.patente import PATENTE, normalizar_patente  # noqa: E402
 from src.texto import normalizar, sin_tildes  # noqa: E402
+from src.convenios import recategorizar  # noqa: E402
 from src.ubicaciones import detectar as detectar_ubicacion  # noqa: E402
 from src.xlsx import leer_xlsx  # noqa: E402
 
@@ -484,11 +485,13 @@ def _productos(db, filas, usuario_migracion: Usuario, informe: Informe) -> None:
         nombres[nombre] += 1
         if nombres[nombre] == 2:
             informe.descartar("productos", "nombre repetido (se cargan todas las filas)", nombre)
+        # Las categorías genéricas toman su tipo del nombre (src/convenios.py).
+        categoria = categorias.get(limpio(fila.get("Categoría")))
+        categoria = recategorizar(categoria, nombre) or categoria
         producto = Producto(
             nombre=recortar(informe, "productos", "nombre", nombre, 100, nombre),
             marca=recortar(informe, "productos", "marca", fila.get("Fabricante"), 50, nombre),
-            categoria=recortar(informe, "productos", "categoría",
-                               categorias.get(limpio(fila.get("Categoría"))), 50, nombre),
+            categoria=recortar(informe, "productos", "categoría", categoria, 50, nombre),
             **_ubicacion_y_descripcion(fila, ubicaciones, informe, nombre),
             precio_costo=costo, precio_venta=neto,
         )

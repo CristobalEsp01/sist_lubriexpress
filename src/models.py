@@ -120,15 +120,18 @@ class Orden(Base):
     # La BD prohíbe usar porcentaje y monto a la vez (CHECK descuento_exclusivo_orden).
     descuento_porcentaje = Column(Numeric(5, 2), default=0, nullable=False)
     descuento_monto = Column(Numeric(10, 2), default=0, nullable=False)
-    # subtotal es neto; total_final = subtotal - descuento + impuesto.
+    # subtotal es neto; total_final = subtotal - descuento + impuesto + ajuste.
     subtotal = Column(Numeric(10, 2), default=0, nullable=False)
     impuesto = Column(Numeric(10, 2), default=0, nullable=False)
-    ajuste_redondeo = Column(Numeric(10, 2), default=0, nullable=False) # <- NUEVO, redondea segun la ley de redondeo chilena
+    ajuste_redondeo = Column(Numeric(10, 2), default=0, nullable=False)  # ley de redondeo
     total_final = Column(Numeric(10, 2), default=0, nullable=False)
     numero_boleta = Column(String(50), unique=True)
     estado = Column(String(20), nullable=False, server_default="ENTREGADA")
     estado_pago = Column(Boolean, default=False, nullable=False)
     notas = Column(Text)
+    # Flyer o gremio (src/convenios.py); los pesos van en descuento_monto.
+    convenio = Column(String(20))
+    folio_flyer = Column(Integer)   # único entre las no anuladas
 
     vehiculo = relationship("Vehiculo", back_populates="ordenes")
     usuario = relationship("Usuario")
@@ -199,9 +202,9 @@ class Venta(Base):
     fecha_venta = Column(DateTime, server_default=func.now(), nullable=False)
     numero_boleta = Column(String(50), unique=True)
     impuesto = Column(Numeric(10, 2), default=0, nullable=False)
-    ajuste_redondeo = Column(Numeric(10, 2), default=0, nullable=False) # <- NUEVO, redondea segun la ley de redondeo chilena
+    ajuste_redondeo = Column(Numeric(10, 2), default=0, nullable=False)  # ley de redondeo
     total_final = Column(Numeric(10, 2), nullable=False)  # neto + impuesto + ajuste
-    medio_pago= Column(String(20), default="EFECTIVO", nullable=False) 
+    medio_pago = Column(String(20), default="EFECTIVO", nullable=False)
 
     usuario = relationship("Usuario")
     cliente = relationship("Cliente")

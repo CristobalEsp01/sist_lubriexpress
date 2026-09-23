@@ -84,6 +84,9 @@ No se pasa `stock_resultante` ni se toca `productos`: el trigger completa ambas 
 | `UNIQUE` en `clientes.rut`, `vehiculos.patente`, `numero_boleta` | Duplicados |
 | `empresa_con_rut` | Una empresa o servicio público sin RUT, a quien después no se le puede facturar |
 | `rut_no_vacio` | Guardar `''` en vez de `NULL`, que rompería el `UNIQUE` al segundo cliente sin RUT |
+| `flyer_con_folio` | Un descuento de flyer sin folio, o un folio sin flyer |
+| `flyer_de_un_solo_uso` (índice único parcial) | Usar el mismo flyer en dos órdenes no anuladas |
+| `CHECK` de `medio_pago` | Un medio que no sea `EFECTIVO`, `TARJETA` o `TRANSFERENCIA`: la caja cuenta el efectivo por este valor |
 
 El CHECK de stock no negativo es el que hace el trabajo pesado: al ser el trigger
 parte de la misma transacción que el `INSERT` del detalle, un intento de sobreventa
@@ -117,8 +120,15 @@ y queda guardado en el documento: `ordenes.impuesto` y `ventas.impuesto`. Así
 el historial no depende de la tasa vigente y una factura puede desglosarse sin
 recalcular nada.
 
-- `ordenes`: `total_final = subtotal − descuento + impuesto`, con `subtotal` neto.
-- `ventas`: `total_final = neto + impuesto`; el neto se obtiene restando.
+- `ordenes`: `total_final = subtotal − descuento + impuesto + ajuste_redondeo`, con `subtotal` neto.
+- `ventas`: `total_final = neto + impuesto + ajuste_redondeo`; el neto se obtiene restando.
+
+`ajuste_redondeo` es la ley de redondeo a la decena (de −5 a +4). Se aplica a
+todo pago, no solo al efectivo: decisión del taller.
+
+Los descuentos por convenio (flyer 10 %, gremio/sindicato 15 %) guardan sus pesos
+en `descuento_monto` y cuál fue en `convenio` y `folio_flyer`. Qué categorías
+entran está en [`src/convenios.py`](../src/convenios.py).
 
 Es la misma convención del sistema antiguo, cuyos datos migrados traen las
 tres cifras por separado.
@@ -148,13 +158,14 @@ El día de una caja es su fecha. No hay fila de "caja", ni estado abierta/cerrad
 ni nada que alguien pueda dejar abierto un viernes: la caja del día abre y cierra
 sola porque el calendario avanza.
 
-`movimientos_caja` guarda **solo lo que no está en otra parte**: el efectivo que
-se deja en la mañana para dar vuelto (`INGRESO`) y los gastos del día (`EGRESO`).
-Lo que entra por una venta o por el abono de una orden **no se copia**: se suma de
-`ventas` y `pagos_orden`, que ya lo tienen.
+`movimientos_caja` guarda **solo lo que no está en otra parte**: la plata contada
+en la mañana (`APERTURA`, una vigente por día), lo que se agrega (`INGRESO`) y lo
+que se saca (`EGRESO`). Lo que entra por una venta o por el pago de una orden **no
+se copia**: se suma de `ventas` y `pagos_orden`, que ya lo tienen, y solo si
+`medio_pago = 'EFECTIVO'`.
 
 ```
-BALANCE del día = agregado a mano + ventas y abonos del día − gastos del día
+DEBE HABER EN CAJA = apertura + (efectivo cobrado + agregado) − salidas
 ```
 
 Dos registros del mismo dinero es la forma más segura de terminar con dos cifras
@@ -163,11 +174,9 @@ stock. `monto` siempre es positivo; el signo lo dice `tipo`. Una fila mal teclea
 no se borra: se anula insertando su inversa con `anula_id` apuntando a ella, igual
 que un `AJUSTE_MANUAL` corrige un stock.
 
-**Lo que no distingue:** efectivo de tarjeta. El sistema no guarda método de pago
-—el anterior tampoco— así que el balance del día cuenta todo lo cobrado. La salida,
-si algún día hace falta el arqueo fino, es una columna `metodo_pago` en `ventas` y
-`pagos_orden`. Y las órdenes migradas no traen abonos detrás, porque el sistema
-viejo no los guardaba: un día de 2024 se ve con ingresos en $0.
+Lo cobrado con tarjeta o transferencia se informa aparte y no entra a la cuenta.
+Las órdenes migradas no traen pagos detrás, porque el sistema viejo no los
+guardaba: un día de 2024 se ve con entradas en $0.
 
 ## Vistas
 

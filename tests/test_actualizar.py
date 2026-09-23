@@ -45,6 +45,26 @@ def test_lo_que_agrega_el_actualizador_es_texto_del_esquema():
             )
 
 
+def test_el_esquema_se_instala_en_una_base_vacia():
+    """El `.sql` es lo que corre en un PC nuevo. Llegó a `main` con una coma de
+    menos y ninguna prueba lo ejecutaba: la de arriba solo compara texto. Se
+    instala en un esquema de paso dentro de una transacción que se revierte."""
+    exigir_base_de_datos()
+    from src.database import engine
+
+    with engine.connect() as conexion:
+        conexion.exec_driver_sql("CREATE SCHEMA instalacion_de_prueba")
+        conexion.exec_driver_sql("SET LOCAL search_path TO instalacion_de_prueba")
+        # El cursor del driver, sin parámetros: el `19 %` de un comentario del
+        # esquema, pasado por SQLAlchemy, se lee como un marcador de psycopg2.
+        conexion.connection.cursor().execute(SQL)
+        tablas = set(conexion.exec_driver_sql(
+            "SELECT table_name FROM information_schema.tables"
+            " WHERE table_schema = 'instalacion_de_prueba'").scalars())
+        conexion.rollback()
+    assert set(columnas_del_esquema()) <= tablas
+
+
 def test_correrlo_dos_veces_no_deja_nada_pendiente():
     """Idempotencia contra PostgreSQL de verdad: es lo único que prueba que la
     comprobación de cada paso mira lo que ese paso realmente crea. De paso deja
@@ -105,3 +125,24 @@ def test_la_ubicacion_escrita_en_la_descripcion_pasa_a_su_columna(db):
     # Correrlo de nuevo no toca lo que ya tiene ubicación.
     tocados, _ = A.rellenar_ubicaciones(db, aplicar=True)
     assert solo_ubicacion.ubicacion.descripcion == "M4-C"
+
+
+def test_los_productos_genericos_toman_su_tipo_del_nombre(db):
+    """172 productos del sistema antiguo quedaron en "FILTRO" a secas, y el
+    descuento de gremios necesita saber cuáles son de polen, aire o aceite. Ya
+    están en producción, así que el arreglo lee la base en uso."""
+    from src.models import Producto
+
+    polen = Producto(nombre="QA Filtro Polen MANN CUK 20027", categoria="FILTRO",
+                     precio_costo=1, precio_venta=2)
+    pack = Producto(nombre="QA Pack Filtros Nissan NP300", categoria="FILTRO",
+                    precio_costo=1, precio_venta=2)
+    db.add_all([polen, pack])
+    db.flush()
+
+    assert A.recategorizar_productos(db, aplicar=False)["Filtro Polen"] >= 1
+    assert polen.categoria == "FILTRO"          # contar no escribe
+    A.recategorizar_productos(db, aplicar=True)
+    assert (polen.categoria, pack.categoria) == ("Filtro Polen", "FILTRO")
+    # Una segunda pasada ya no encuentra nada de lo que tocó.
+    assert A.recategorizar_productos(db, aplicar=True)["Filtro Polen"] == 0
