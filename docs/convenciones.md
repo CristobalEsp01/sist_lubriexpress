@@ -17,7 +17,7 @@
 - `scripts/actualizar.py` — lleva una base con datos reales a la versión nueva del esquema. Un cambio de esquema son tres cosas juntas: el `.sql`, el modelo y un paso acá (ver `docs/base-de-datos.md`).
 - `lubriexpress.spec` — el empaquetado con PyInstaller para el PC del taller, que **no tiene Python**: de ahí salen `lubriexpress.exe`, `actualizar.exe` y `respaldar.exe`. Se construyen en Windows.
 - `src/ui/caja.py` — la pestaña de Caja: las cuatro cifras, los movimientos del día y el PDF.
-- `src/ui/selector_producto.py` — la ventana para buscar un producto viendo stock, ubicación y precio. La abre Órdenes; sirve para cualquier pantalla que elija un producto.
+- `src/ui/catalogo.py` — el buscador con stock, ubicación y precio que comparten Órdenes y Ventas. Filtra en memoria, sin ir a la base en cada tecla.
 - `src/ui/` — un módulo por mantenedor. `comunes.py` tiene lo que comparten y `tema.py` la identidad visual.
 - `main.py` — solo arranca la aplicación y avisa si la base no responde.
 

@@ -202,7 +202,7 @@ sist_lubriexpress/
 │       ├── carga_excel.py           # Diálogo de la carga masiva
 │       ├── clientes.py              # Clientes y vehículos
 │       ├── ventas.py                # Punto de venta, carrito e historial
-│       ├── selector_producto.py     # Buscar un producto viendo stock, ubicación y precio
+│       ├── catalogo.py              # Buscador de productos y servicios de Órdenes y Ventas
 │       ├── ordenes.py               # Órdenes de trabajo, aviso por WhatsApp y PDF
 │       ├── caja.py                  # Pestaña de Caja
 │       ├── reportes.py              # Pestaña de reportes con gráficos
