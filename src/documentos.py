@@ -7,6 +7,7 @@ se recalcula nada, se muestra lo que se cobró.
 """
 from html import escape
 
+from .caja import NOMBRES
 from .precios import clp
 
 # El membrete y el pie del informe técnico que el taller ya usaba en papel.
@@ -45,17 +46,11 @@ def html_de_orden(o: dict) -> str:
     ) or "<tr><td colspan='4'>Orden sin detalle de insumos.</td></tr>"
     totales = [("Neto", clp(o["subtotal"]))]
     if o["descuento"]:
-        totales.append(("Descuento", f"- {clp(o['descuento'])}"))
-    
+        rotulo = f"Descuento {e(o['convenio'])}" if o.get("convenio") else "Descuento"
+        totales.append((rotulo, f"- {clp(o['descuento'])}"))
     totales.append(("IVA 19 %", clp(o["impuesto"])))
-    
-    # --- NUEVO BLOQUE DE REDONDEO ---
-    if o.get("ajuste", 0) != 0:
-        ajuste = o["ajuste"]
-        texto_ajuste = f"+ {clp(abs(ajuste))}" if ajuste > 0 else f"- {clp(abs(ajuste))}"
-        totales.append(("Ajuste por Redondeo", texto_ajuste))
-    # --------------------------------
-    
+    if ajuste := o.get("ajuste", 0):
+        totales.append(("Ajuste por Redondeo", f"{'-' if ajuste < 0 else '+'} {clp(abs(ajuste))}"))
     totales.append(("Total", clp(o["total"])))
     # Lo abonado y el saldo solo salen cuando la orden quedó a medio pagar: al
     # contado serían dos filas para decir cero.
@@ -104,24 +99,23 @@ def html_de_orden(o: dict) -> str:
 
 
 def html_de_caja(dia, cifras: dict, filas: list) -> str:
-    """La caja de un día para archivar: las cuatro cifras y el detalle de lo
-    que se movió a mano. Las ventas no se listan —están en su propia pantalla—
-    pero su total sí, que es lo que hace cuadrar el cajón."""
+    """La caja de un día para archivar, igual que en pantalla."""
     e = escape
     lineas = "".join(
         f"<tr><td>{f.hora:%H:%M}</td>"
-        f"<td>{'Ingreso' if f.tipo == 'INGRESO' else 'Gasto'}</td>"
+        f"<td>{NOMBRES[f.tipo]}</td>"
         f"<td>{e(f.motivo)}</td><td align='right'>{clp(f.monto)}</td>"
         f"<td>{e(f.usuario)}</td>"
-        f"<td>{'anulado' if f.anulado else ''}</td></tr>"
+        f"<td>{'anulado' if f.anulado else '' if f.en_cajon else 'no entra al cajón'}</td></tr>"
         for f in filas
-    ) or "<tr><td colspan='6'>Sin movimientos registrados a mano.</td></tr>"
+    ) or "<tr><td colspan='6'>Nada pasó por la caja este día.</td></tr>"
     resumen = "".join(
         f"<tr><td align='right'><b>{rotulo}</b></td><td align='right'>"
-        f"{'<b>' if rotulo == 'Balance' else ''}{clp(cifras[clave])}"
-        f"{'</b>' if rotulo == 'Balance' else ''}</td></tr>"
-        for clave, rotulo in (("agregado", "Agregado a mano"), ("ingresos", "Ventas y abonos"),
-                              ("egresos", "Gastos"), ("balance", "Balance"))
+        f"{'<b>' if clave == 'balance' else ''}{clp(cifras[clave])}"
+        f"{'</b>' if clave == 'balance' else ''}</td></tr>"
+        for clave, rotulo in (("apertura", "Apertura"), ("entradas", "+ Entradas en efectivo"),
+                              ("salidas", "− Salidas"), ("balance", "= Debe haber en caja"),
+                              ("otros_medios", "Tarjeta y transferencia (no pasa por el cajón)"))
     )
     return f"""<html><body style="font-family: sans-serif; font-size: 10pt;">
 <table width="100%" cellpadding="0">
@@ -135,7 +129,7 @@ def html_de_caja(dia, cifras: dict, filas: list) -> str:
 </table>
 <hr>
 <table width="100%" cellpadding="3">{resumen}</table>
-<h3>Movimientos registrados a mano</h3>
+<h3>Lo que pasó por la caja</h3>
 <table width="100%" border="1" cellspacing="0" cellpadding="4">
 <tr><th align="left">Hora</th><th align="left">Tipo</th><th align="left">Motivo</th>
 <th align="right">Monto</th><th align="left">Registró</th><th align="left"></th></tr>

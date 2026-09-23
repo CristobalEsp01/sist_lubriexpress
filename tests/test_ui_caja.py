@@ -71,15 +71,15 @@ def test_la_caja_del_dia_suma_lo_anotado_a_mano_y_anular_lo_deshace(app, cajero,
 
     monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
     widget = CajaWidget()
-    antes = {clave: _cifra(widget, clave) for clave in ("agregado", "egresos", "balance")}
+    antes = {clave: _cifra(widget, clave) for clave in ("entradas", "salidas", "balance")}
 
     _con_dialogo(monkeypatch, 20000, MOTIVO_INGRESO)
     widget.registrar("INGRESO")
     _con_dialogo(monkeypatch, 5000, MOTIVO_GASTO)
     widget.registrar("EGRESO")
 
-    assert _cifra(widget, "agregado") == antes["agregado"] + 20000
-    assert _cifra(widget, "egresos") == antes["egresos"] + 5000
+    assert _cifra(widget, "entradas") == antes["entradas"] + 20000
+    assert _cifra(widget, "salidas") == antes["salidas"] + 5000
     assert _cifra(widget, "balance") == antes["balance"] + 15000
 
     # Elegir una fila es lo primero que hace cualquiera: es donde se juntan los
@@ -90,7 +90,7 @@ def test_la_caja_del_dia_suma_lo_anotado_a_mano_y_anular_lo_deshace(app, cajero,
 
     widget.anular()
 
-    assert _cifra(widget, "egresos") == antes["egresos"]
+    assert _cifra(widget, "salidas") == antes["salidas"]
     assert _cifra(widget, "balance") == antes["balance"] + 20000
     # El par anulado sigue en la lista, apagado: la caja es de solo agregado.
     motivos = [widget.tabla.item(f, 2).text() for f in range(widget.tabla.rowCount())]
@@ -112,3 +112,34 @@ def test_la_caja_se_guarda_en_pdf(app, cajero, monkeypatch, tmp_path):
 
     archivo = tmp_path / f"caja-{date.today():%Y-%m-%d}.pdf"
     assert archivo.is_file() and archivo.read_bytes()[:4] == b"%PDF"
+
+
+def test_la_apertura_se_pide_hasta_que_se_registra_y_los_dias_pasados_solo_se_miran(
+        app, cajero, monkeypatch):
+    """Fabián: en la mañana se cuenta el cajón y se anota. Sin apertura, lo
+    que "debe haber" no cuenta el fondo, así que la pantalla la pide."""
+    from PySide6.QtCore import QDate
+
+    from src import caja
+    from src.ui.caja import CajaWidget
+
+    with SessionLocal() as db:
+        habia = caja.tiene_apertura(db, date.today())
+    widget = CajaWidget()
+    assert widget.aviso_apertura.isVisibleTo(widget) == (not habia)
+    assert widget.boton_apertura.isEnabled() == (not habia)
+    if habia:
+        pytest.skip("hoy ya tiene apertura en la base de desarrollo")
+
+    antes = _cifra(widget, "apertura")
+    _con_dialogo(monkeypatch, 40000, "QA apertura")
+    widget.registrar("APERTURA")
+    assert _cifra(widget, "apertura") == antes + 40000
+    assert not widget.aviso_apertura.isVisibleTo(widget)
+    assert not widget.boton_apertura.isEnabled()      # una sola por día
+
+    # Un día pasado se mira y se anula, pero no se le anota nada nuevo.
+    widget.fecha.setDate(QDate.currentDate().addDays(-1))
+    assert not (widget.boton_dinero.isEnabled() or widget.boton_gasto.isEnabled()
+                or widget.boton_apertura.isEnabled())
+    assert widget.boton_pdf.isEnabled() and not widget.aviso_apertura.isVisibleTo(widget)

@@ -9,6 +9,7 @@ logo queda para el logo, que es donde identifica al taller.
 
 Los colores y medidas viven solo acá: ningún widget escribe un hex a mano.
 """
+from functools import cache
 from pathlib import Path
 
 from PySide6.QtCore import QLibraryInfo, QLocale, QTranslator
@@ -176,6 +177,11 @@ QLineEdit:disabled, QSpinBox:disabled, QComboBox:disabled, QPlainTextEdit:disabl
     color: {APAGADO};
     border-color: {BORDE};
 }}
+/* Lista hacia abajo y con tope de filas: con Fusion se centraba en la opción
+   elegida y crecía hasta el alto de la pantalla. */
+QComboBox {{
+    combobox-popup: 0;
+}}
 QComboBox::drop-down {{
     border: none;
     width: 26px;
@@ -192,6 +198,10 @@ QComboBox QAbstractItemView {{
     selection-color: {TINTA};
     padding: 4px;
     border-radius: 4px;
+}}
+QComboBox QAbstractItemView::item {{
+    min-height: 26px;
+    padding: 0 6px;
 }}
 QSpinBox {{
     padding-right: 22px;
@@ -317,6 +327,12 @@ QLabel[clase="resumen"] {{
     font-size: 12px;
     padding: 3px 2px;
 }}
+QLabel[clase="aviso"] {{
+    background: {ALERTA_FONDO};
+    color: {ALERTA};
+    border-radius: 6px;
+    padding: 8px 12px;
+}}
 QLabel[clase="aviso-vacio"] {{
     background: transparent;
     color: {TINTA_SUAVE};
@@ -431,7 +447,13 @@ QToolTip {{
 
 
 def fuente_tabular(negrita: bool = False) -> QFont:
-    """Monoespaciada para columnas numéricas: los dígitos quedan alineados."""
+    """Monoespaciada para cifras: los dígitos quedan alineados. Copia de una
+    cacheada (armarla por celda costaba ~130 ms en el catálogo)."""
+    return QFont(_fuente_tabular(negrita))
+
+
+@cache
+def _fuente_tabular(negrita: bool) -> QFont:
     fuente = QFont()
     fuente.setFamilies(MONOESPACIADAS)
     fuente.setStyleHint(QFont.Monospace)
