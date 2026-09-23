@@ -183,6 +183,7 @@ class PagoOrden(Base):
     orden_id = Column(Integer, ForeignKey("ordenes.id"), nullable=False)
     usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
     monto = Column(Numeric(10, 2), nullable=False)
+    medio_pago = Column(String(20), default="EFECTIVO", nullable=False)
     fecha_pago = Column(DateTime, server_default=func.now(), nullable=False)
 
     orden = relationship("Orden", back_populates="pagos")
@@ -200,6 +201,7 @@ class Venta(Base):
     impuesto = Column(Numeric(10, 2), default=0, nullable=False)
     ajuste_redondeo = Column(Numeric(10, 2), default=0, nullable=False) # <- NUEVO, redondea segun la ley de redondeo chilena
     total_final = Column(Numeric(10, 2), nullable=False)  # neto + impuesto + ajuste
+    medio_pago= Column(String(20), default="EFECTIVO", nullable=False) 
 
     usuario = relationship("Usuario")
     cliente = relationship("Cliente")

@@ -528,6 +528,10 @@ class OrdenesWidget(QTabWidget):
         self.abono.setToolTip("Lo que el cliente paga al cerrar la orden; el saldo se "
                               "cobra después, desde el historial.")
 
+        #Selector del medio de pago
+        self.combo_medio_pago = QComboBox()
+        self.combo_medio_pago.addItems(["Efectivo", "Tarjeta", "Transferencia"])
+
         marco_total, self.totales = bloque_total()
         self.total = self.totales.total
 
@@ -568,7 +572,8 @@ class OrdenesWidget(QTabWidget):
         layout_der.addLayout(barra(self.tipo_descuento, self.valor_descuento, estira=1))
         # Los tres en una fila y no en dos: el lateral no da para otra, y la
         # que sobraba empujaba el bloque del total fuera de la ventana chica.
-        layout_der.addLayout(barra(self.folio, self.pagada, self.abono, estira=0))
+        # NUEVO: Agregado el medio de pago a la barra
+        layout_der.addLayout(barra(self.folio, self.pagada, self.abono, self.combo_medio_pago, estira=0))
         layout_der.addStretch()
         layout_der.addWidget(marco_total)
         layout_der.addLayout(barra(self.boton_cancelar, self.boton_dejar_abierta,
@@ -1248,10 +1253,13 @@ class OrdenesWidget(QTabWidget):
                 # Lo pagado al cerrar la orden es un abono más. Quien decide si
                 # con eso queda pagada es el trigger, no esta pantalla.
                 pagado = total_final if self.pagada.isChecked() else self.abono.value()
+                medio = self.combo_medio_pago.currentText().upper()
+
                 if pagado:
                     db.add(PagoOrden(
-                        orden_id=nueva_orden.id, usuario_id=Sesion.usuario_id, monto=pagado,
+                        orden_id=nueva_orden.id, usuario_id=Sesion.usuario_id, monto=pagado, medio_pago=medio,
                     ))
+
                 # Al confirmar, los triggers descuentan el stock y escriben el
                 # kardex. No queda ningún Producto vivo en esta sesión al que
                 # refrescarle el saldo: la pantalla relee el catálogo entero al
@@ -1461,9 +1469,19 @@ class DialogoDetalleOrden(QDialog):
         )
         if not confirmado:
             return
+        # NUEVO: Pedimos el medio de pago inmediatamente después
+        medio, ok = QInputDialog.getItem(
+            self, "Medio de Pago",
+            "¿Cómo se realizó este pago?",
+            ["Efectivo", "Tarjeta", "Transferencia"],
+            0, False
+        )
+        if not ok:
+            return
+        
         with SessionLocal() as db:
             db.add(PagoOrden(
-                orden_id=self.orden_id, usuario_id=Sesion.usuario_id, monto=monto,
+                orden_id=self.orden_id, usuario_id=Sesion.usuario_id, monto=monto, medio_pago=medio.upper(),
             ))
             db.commit()
         self._refrescar_pago()

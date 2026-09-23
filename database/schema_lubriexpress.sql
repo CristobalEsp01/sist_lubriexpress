@@ -168,6 +168,7 @@ CREATE TABLE "pagos_orden" (
   "orden_id" INT NOT NULL REFERENCES "ordenes"("id"),
   "usuario_id" INT NOT NULL REFERENCES "usuarios"("id"),
   "monto" DECIMAL(10,2) NOT NULL CHECK ("monto" > 0),
+  "medio_pago" VARCHAR(20) NOT NULL DEFAULT 'EFECTIVO',
   "fecha_pago" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -184,6 +185,7 @@ CREATE TABLE "ventas" (
   "impuesto" DECIMAL(10,2) NOT NULL DEFAULT 0 CHECK ("impuesto" >= 0),
   "ajuste_redondeo" DECIMAL(10,2) NOT NULL DEFAULT 0,
   "total_final" DECIMAL(10,2) NOT NULL CHECK ("total_final" >= 0)
+  "medio_pago" VARCHAR(20) NOT NULL DEFAULT 'EFECTIVO'
 );
 
 -- ---------------------------------------------------------------------

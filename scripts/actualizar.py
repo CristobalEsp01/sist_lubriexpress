@@ -226,6 +226,30 @@ ALTER TABLE "ordenes"
 ''',
         declara=('"ajuste_redondeo" DECIMAL(10,2) NOT NULL DEFAULT 0',),
     ),
+    Paso(
+        nombre="ventas.medio_pago",
+        comprobacion="""
+            SELECT EXISTS (SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'ventas' AND column_name = 'medio_pago')
+        """,
+        sql='''
+ALTER TABLE "ventas"
+  ADD COLUMN "medio_pago" VARCHAR(20) NOT NULL DEFAULT 'EFECTIVO';
+''',
+        declara=('"medio_pago" VARCHAR(20) NOT NULL DEFAULT \'EFECTIVO\'',),
+    ),
+    Paso(
+        nombre="pagos_orden.medio_pago",
+        comprobacion="""
+            SELECT EXISTS (SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'pagos_orden' AND column_name = 'medio_pago')
+        """,
+        sql='''
+ALTER TABLE "pagos_orden"
+  ADD COLUMN "medio_pago" VARCHAR(20) NOT NULL DEFAULT 'EFECTIVO';
+''',
+        declara=('"medio_pago" VARCHAR(20) NOT NULL DEFAULT \'EFECTIVO\'',),
+    )
 ]
 
 # Lo que se cuenta antes y después. Un cambio de esquema no borra filas; si la

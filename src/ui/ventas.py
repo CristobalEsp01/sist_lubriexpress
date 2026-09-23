@@ -122,6 +122,9 @@ class PuntoVentaWidget(QWidget):
         self.boleta = QLineEdit(placeholderText="Ej: B-1043")
         self.boleta.returnPressed.connect(self.generar_venta)
 
+        self.combo_medio_pago = QComboBox()
+        self.combo_medio_pago.addItems(["Efectivo", "Tarjeta", "Transferencia"])
+
         marco_total, self.totales = bloque_total()
         self.total = self.totales.total
 
@@ -145,6 +148,8 @@ class PuntoVentaWidget(QWidget):
         layout_carrito.addWidget(self.cliente)
         layout_carrito.addWidget(QLabel("N.º de boleta *"))
         layout_carrito.addWidget(self.boleta)
+        layout_carrito.addWidget(QLabel("Medio de pago:"))
+        layout_carrito.addWidget(self.combo_medio_pago)
         layout_carrito.addWidget(marco_total)
         layout_carrito.addLayout(barra(self.boton_vaciar, self.boton_cobrar, estira=1))
 
@@ -424,6 +429,8 @@ class PuntoVentaWidget(QWidget):
         impuesto, ajuste, total = self.totales.calcular(neto)
         cliente_id = self.cliente.currentData()
 
+        medio = self.combo_medio_pago.currentText().upper()
+
         with SessionLocal() as db:
             venta = Venta(
                 usuario_id=Sesion.usuario_id,
@@ -432,6 +439,7 @@ class PuntoVentaWidget(QWidget):
                 impuesto=impuesto,
                 ajuste_redondeo=ajuste,
                 total_final=total,
+                medio_pago=medio, 
             )
             db.add(venta)
             try:
