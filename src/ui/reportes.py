@@ -47,7 +47,7 @@ class Definicion:
 REPORTES = [
     Definicion(
         "Ingresos por período", "Ventas de mostrador y órdenes de trabajo, día por día.",
-        reportes.COLUMNAS_INGRESOS, {2, 4, 5, 6, 7}, (1, 2, 3, 4, 5, 6, 7), 0, 7,
+        reportes.COLUMNAS_INGRESOS, {2, 4, 5, 6, 7, 8}, (1, 2, 3, 4, 5, 6, 7, 8), 0, 8,
         reportes.ingresos_por_periodo),
     Definicion(
         "Ventas por producto", "Qué se vendió y por cuánto, sumando mostrador y órdenes.",

@@ -20,7 +20,9 @@ def test_los_cuatro_reportes_cuadran_con_lo_guardado(db, app, tmp_path):
     vehiculo = Vehiculo(cliente=Cliente(nombre_completo="Cliente reporte"), patente=patente_de_prueba())
     db.add_all([usuario, producto, vehiculo])
     db.flush()
-    venta = Venta(usuario=usuario, fecha_venta=datetime(2019, 3, 10, 23, 30), impuesto=3800, total_final=23800)
+    # 20.000 neto + 3.800 de IVA = 23.800... menos 2 del redondeo a la decena.
+    venta = Venta(usuario=usuario, fecha_venta=datetime(2019, 3, 10, 23, 30), impuesto=3800,
+                  ajuste_redondeo=-2, total_final=23798)
     orden = Orden(vehiculo=vehiculo, usuario=usuario, fecha_creacion=datetime(2019, 3, 10, 9),
                   kilometraje_ingreso=1, subtotal=10000, impuesto=1900, total_final=11900)
     fuera = Orden(vehiculo=vehiculo, usuario=usuario, fecha_creacion=datetime(2019, 3, 11),
@@ -34,14 +36,15 @@ def test_los_cuatro_reportes_cuadran_con_lo_guardado(db, app, tmp_path):
     # La fecha sale como date, no como texto: una columna de fechas ordenada
     # alfabéticamente pone el 01 de octubre antes del 02 de septiembre.
     filas, por_mes = reportes.ingresos_por_periodo(db, DIA, DIA)
-    assert filas == [(DIA, 1, 23800, 1, 11900, 30000, 5700, 35700)] and not por_mes
+    # El ajuste va en su columna y no en el neto: Neto + IVA + Ajuste = Total.
+    assert filas == [(DIA, 1, 23798, 1, 11900, 30000, 5700, -2, 35698)] and not por_mes
     assert reportes.rotulo_de_fecha(DIA, por_mes) == "10-03-2019"
     assert reportes.rotulo_de_fecha(DIA, True) == "03-2019"
     # El día `hasta` entra completo, y un rango largo se agrupa por mes.
-    assert reportes.ingresos_por_periodo(db, DIA, date(2019, 3, 11))[0][1][7] == 5950
+    assert reportes.ingresos_por_periodo(db, DIA, date(2019, 3, 11))[0][1][8] == 5950
     assert reportes.ingresos_por_periodo(db, DIA, date(2019, 12, 31))[1] is True
     assert reportes.ventas_por_producto(db, DIA, DIA) == [(producto.nombre, "Mobil", 3, 30000)]
-    assert reportes.por_usuario(db, DIA, DIA) == [(usuario.nombre, 1, 23800, 1, 11900, 35700)]
+    assert reportes.por_usuario(db, DIA, DIA) == [(usuario.nombre, 1, 23798, 1, 11900, 35698)]
     db.refresh(producto)
     assert (producto.nombre, "Mobil", "", 7, 20, 13) in reportes.reabastecimiento(db)  # 10 - 3 vendidos
 
@@ -66,8 +69,8 @@ def test_los_cuatro_reportes_cuadran_con_lo_guardado(db, app, tmp_path):
     # bug que se reportó —la columna de fechas ordenada como texto pone el 01 de
     # octubre antes del 02 de septiembre—.
     widget.filas = [
-        (date(2019, 10, 1), 1, 1000, 0, 0, 840, 160, 1000),
-        (date(2019, 9, 2), 2, 5000, 1, 3000, 6723, 1277, 8000),
+        (date(2019, 10, 1), 1, 1000, 0, 0, 840, 160, 0, 1000),
+        (date(2019, 9, 2), 2, 5000, 1, 3000, 6723, 1277, 0, 8000),
     ]
     widget._llenar_tabla(widget.definicion())
     assert [widget.tabla.item(f, 0).text() for f in range(2)] == ["02-09-2019", "01-10-2019"]
@@ -91,6 +94,6 @@ def test_los_cuatro_reportes_cuadran_con_lo_guardado(db, app, tmp_path):
     assert exportado and list(exportado[0]) == reportes.COLUMNAS_REABASTECIMIENTO
 
     widget.lista.setCurrentRow(0)
-    widget.filas = [(date(2019, 3, 10), 1, 23800, 1, 11900, 30000, 5700, 35700)]
+    widget.filas = [(date(2019, 3, 10), 1, 23800, 1, 11900, 30000, 5700, 0, 35700)]
     ruta = widget.exportar_a_carpeta(tmp_path)
     assert leer_xlsx(ruta)[0]["Fecha"] == "10-03-2019"   # exportada formateada

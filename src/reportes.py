@@ -18,7 +18,8 @@ from .models import DetalleOrden, DetalleVenta, Orden, Producto, Usuario, Venta
 VIGENTE = Orden.estado != "ANULADA"
 
 
-COLUMNAS_INGRESOS = ["Fecha", "Ventas", "Total ventas", "Órdenes", "Total órdenes", "Neto", "IVA", "Total"]
+COLUMNAS_INGRESOS = ["Fecha", "Ventas", "Total ventas", "Órdenes", "Total órdenes", "Neto", "IVA",
+                     "Ajuste", "Total"]
 COLUMNAS_PRODUCTOS = ["Producto", "Marca", "Cantidad", "Monto neto"]
 COLUMNAS_USUARIOS = ["Usuario", "Ventas", "Total ventas", "Órdenes", "Total órdenes", "Total"]
 COLUMNAS_REABASTECIMIENTO = ["Producto", "Marca", "Categoría", "Stock", "Mínimo", "Faltante"]
@@ -34,25 +35,26 @@ def ingresos_por_periodo(db, desde: date, hasta: date) -> list[tuple]:
     ini, fin = _rango(desde, hasta)
     por_mes = (hasta - desde).days > 62
     clave = (lambda f: f.date().replace(day=1)) if por_mes else (lambda f: f.date())
-    dias = defaultdict(lambda: [0, 0, 0, 0, 0])  # n_ventas, $ventas, n_ordenes, $ordenes, iva
-    for fecha, total, impuesto in db.execute(
-        select(Venta.fecha_venta, Venta.total_final, Venta.impuesto)
+    # n_ventas, $ventas, n_ordenes, $ordenes, iva, ajuste (el redondeo no es neto).
+    dias = defaultdict(lambda: [0, 0, 0, 0, 0, 0])
+    for fecha, total, impuesto, ajuste in db.execute(
+        select(Venta.fecha_venta, Venta.total_final, Venta.impuesto, Venta.ajuste_redondeo)
         .where(Venta.fecha_venta >= ini, Venta.fecha_venta < fin)
     ):
         d = dias[clave(fecha)]
-        d[0] += 1; d[1] += int(total); d[4] += int(impuesto)
-    for fecha, total, impuesto in db.execute(
-        select(Orden.fecha_creacion, Orden.total_final, Orden.impuesto)
+        d[0] += 1; d[1] += int(total); d[4] += int(impuesto); d[5] += int(ajuste)
+    for fecha, total, impuesto, ajuste in db.execute(
+        select(Orden.fecha_creacion, Orden.total_final, Orden.impuesto, Orden.ajuste_redondeo)
         .where(Orden.fecha_creacion >= ini, Orden.fecha_creacion < fin, VIGENTE)
     ):
         d = dias[clave(fecha)]
-        d[2] += 1; d[3] += int(total); d[4] += int(impuesto)
+        d[2] += 1; d[3] += int(total); d[4] += int(impuesto); d[5] += int(ajuste)
     # La fecha viaja como `date`, no como texto: una columna de fechas ordenada
     # alfabéticamente pone el 01 de octubre antes del 02 de septiembre. Quien
     # muestra o exporta la formatea con `rotulo_de_fecha`.
     return [
-        (dia, nv, tv, no, to, tv + to - iva, iva, tv + to)
-        for dia, (nv, tv, no, to, iva) in sorted(dias.items())
+        (dia, nv, tv, no, to, tv + to - iva - ajuste, iva, ajuste, tv + to)
+        for dia, (nv, tv, no, to, iva, ajuste) in sorted(dias.items())
     ], por_mes
 
 
