@@ -9,15 +9,19 @@ triggers de Postgres los que descuentan el stock y dejan el rastro en el Kardex:
 este módulo nunca toca "stock_actual" (ver database/schema_lubriexpress.sql).
 """
 from PySide6.QtCore import Qt, QUrl
-from PySide6.QtGui import QDesktopServices, QImage, QPageSize, QPdfWriter, QTextDocument
+from PySide6.QtGui import (
+    QDesktopServices, QImage, QKeySequence, QPageSize, QPdfWriter, QShortcut, QTextDocument,
+)
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QInputDialog, QLabel,
+    QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QInputDialog,
+    QLabel,
     QLineEdit, QMessageBox, QPushButton, QSpinBox, QSplitter, QStackedWidget, QTabWidget,
     QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
 )
 from sqlalchemy import String, cast, func, select
 from sqlalchemy.exc import IntegrityError
 
+from .. import convenios
 from ..auth import Sesion
 from ..database import SessionLocal
 from ..documentos import estado_de_pago, html_de_orden
@@ -27,14 +31,14 @@ from ..models import (
 from ..texto import filtro_busqueda
 from ..whatsapp import PLANTILLAS, describir_vehiculo, enlace_whatsapp, redactar
 from .clientes import FormularioCliente, FormularioVehiculo
+from .catalogo import Catalogo
 from .comunes import (
     BADGE_ACENTO, BADGE_ALERTA, BADGE_EXITO, BADGE_INFO, BADGE_NEUTRAL, ROL_INSIGNIA,
-    ItemNumerico, barra, bloque_total,
-    carpeta_de_documentos, clp, con_aviso_vacio, crear_tabla, hacer_buscable,
-    layout_de_dialogo, layout_de_pantalla, reordenar,
+    ItemNumerico, barra, bloque_total, botonera,
+    carpeta_de_documentos, clp, combo_medio_pago, con_aviso_vacio, crear_tabla, hacer_buscable,
+    layout_de_dialogo, layout_de_pantalla, medio_elegido, reordenar,
 )
-from .selector_producto import SelectorProducto
-from .tema import CANAL_PANEL, ESPACIO_PANTALLA, LOGO, fuente_tabular
+from .tema import ALTO_FILA, CANAL_PANEL, ESPACIO_BARRA, ESPACIO_PANTALLA, LOGO, fuente_tabular
 
 COLUMNAS_CARRITO = ["Ítem", "Cant.", "Precio Unit.", "Subtotal"]
 COLUMNAS_DETALLE = ["Ítem", "Cant.", "Precio Unit.", "Subtotal"]
@@ -54,7 +58,10 @@ ESTADOS = {
 NIVELES_COMBUSTIBLE = ["No registrado", "Reserva", "1/4", "Medio", "3/4", "Lleno"]
 # Un selector y un solo campo: la base prohíbe porcentaje y monto a la vez
 # (CHECK descuento_exclusivo_orden) y la pantalla lo hace imposible de intentar.
-TIPOS_DESCUENTO = ["Sin descuento", "Porcentaje (%)", "Monto ($)"]
+TIPOS_DESCUENTO = ["Sin descuento", "Porcentaje (%)", "Monto ($)",
+                   "Flyer (10 %)", "Gremio/Sindicato (15 %)"]
+# Convenios: descuentan solo ciertas líneas (src/convenios.py).
+CONVENIO_DEL_TIPO = {3: "FLYER", 4: "GREMIO"}
 # El filtro del historial: la propuesta pide separar lo institucional (con
 # folio de Mercado Público) de los clientes tradicionales.
 FILTROS_HISTORIAL = ["Todas", "Mercado Público", "Clientes"]
@@ -62,6 +69,8 @@ FILTROS_HISTORIAL = ["Todas", "Mercado Público", "Clientes"]
 REPOSO = "Seleccione 'Nueva Orden' para comenzar."
 # Marca las líneas del carrito que ya existen en la base.
 ROL_DETALLE = Qt.UserRole + 1
+# Categoría del producto: decide si la línea entra en un convenio.
+ROL_CATEGORIA = Qt.UserRole + 2
 
 
 def _leer_notas(notas: str) -> tuple[str, str]:
@@ -107,6 +116,7 @@ def guardar_pdf_de_orden(orden_id: int, ruta) -> None:
             "total": orden.total_final,
             "pagada": orden.estado_pago, "pagado": orden.monto_pagado,
             "folio": orden.folio_mercado_publico, "notas": orden.notas,
+            "convenio": convenios.rotulo(orden.convenio, orden.folio_flyer),
         }
     documento = QTextDocument()
     if LOGO.is_file():
@@ -410,44 +420,24 @@ class OrdenesWidget(QTabWidget):
         self.panel_trabajo.setEnabled(False)  # Bloqueado al inicio
 
         # --- Lado izquierdo: los insumos que se le aplican al vehículo ---
-        self.combo_productos = hacer_buscable(QComboBox())
-        self.combo_productos.lineEdit().setPlaceholderText("Buscar repuesto, aceite o insumo…")
-        self.spin_cantidad = QSpinBox()
-        self.spin_cantidad.setRange(1, 1000)
-
-        # El combo sirve a quien sabe el nombre; el buscador, a quien tiene
-        # cuatro filtros que se llaman casi igual y necesita ver stock y repisa.
-        self.boton_buscar_producto = QPushButton("Buscar…")
-        self.boton_buscar_producto.setAutoDefault(False)
-        self.boton_buscar_producto.setToolTip("Ver stock, ubicación y precio de todo el catálogo")
-        self.boton_buscar_producto.clicked.connect(self.buscar_producto)
-
-        self.boton_agregar = QPushButton("Agregar")
-        self.boton_agregar.setEnabled(False)
-        self.boton_agregar.clicked.connect(self.agregar_desde_el_combo)
-        self.combo_productos.currentIndexChanged.connect(
-            lambda indice: self.boton_agregar.setEnabled(indice >= 0)
-        )
-        # Enter agrega a la orden; guardarla —que mueve stock— exige un click
-        # deliberado, igual que confirmar el ingreso de mercadería.
-        self.boton_agregar.setDefault(True)
-
-        # Los servicios (mano de obra) van en su propio combo: no tienen stock
-        # y viven en otra tabla, así que no se mezclan en la lista de insumos.
-        self.combo_servicios = hacer_buscable(QComboBox())
-        self.combo_servicios.lineEdit().setPlaceholderText("Buscar servicio…")
-        self.boton_agregar_servicio = QPushButton("Agregar")
-        self.boton_agregar_servicio.setAutoDefault(False)
-        self.boton_agregar_servicio.setEnabled(False)
-        self.boton_agregar_servicio.clicked.connect(self.agregar_servicio_desde_el_combo)
-        self.combo_servicios.currentIndexChanged.connect(
-            lambda indice: self.boton_agregar_servicio.setEnabled(indice >= 0)
-        )
+        # Enter o doble clic agrega una unidad; la cantidad se corrige en la
+        # orden. Guardarla, que mueve stock, sigue exigiendo un click.
+        self.catalogo = Catalogo(self, servicios=True)
+        self.catalogo.elegido.connect(self._agregar_elegido)
+        # Hasta cinco filas: lo importante es la orden. Máximo y no fijo, para
+        # que en la ventana chica ceda en vez de encimarse.
+        tabla = self.catalogo.tabla
+        tabla.setMaximumHeight(tabla.horizontalHeader().sizeHint().height() + 5 * ALTO_FILA
+                               + 2 * tabla.frameWidth())
 
         self.tabla_carrito = con_aviso_vacio(
             crear_tabla(COLUMNAS_CARRITO, ancha=0, orden=0, numericas=(1, 2, 3)),
-            "Elige un insumo y una cantidad, y agrégalo a la orden.",
+            "Busca arriba lo que se usó y agrégalo con Enter o doble clic.",
         )
+        self.tabla_carrito.setToolTip("Doble clic en una línea para cambiar la cantidad.")
+        self.tabla_carrito.doubleClicked.connect(self.cambiar_cantidad)
+        QShortcut(QKeySequence.Delete, self.tabla_carrito, self.quitar_del_carrito,
+                  context=Qt.WidgetShortcut)
         self.tabla_carrito.itemSelectionChanged.connect(
             lambda: self.boton_quitar.setEnabled(
                 self.tabla_carrito.selectionModel().hasSelection()
@@ -464,20 +454,20 @@ class OrdenesWidget(QTabWidget):
 
         titulo_insumos = QLabel("1. Insumos y Servicios Aplicados")
         titulo_insumos.setProperty("clase", "seccion")
+        en_la_orden = QLabel("En la orden")
+        en_la_orden.setProperty("clase", "seccion")
 
         panel_izq = QWidget()
         layout_izq = QVBoxLayout(panel_izq)
         layout_izq.setContentsMargins(0, 0, CANAL_PANEL, 0)
         layout_izq.setSpacing(ESPACIO_PANTALLA)
         layout_izq.addWidget(titulo_insumos)
-        layout_izq.addLayout(barra(
-            QLabel("Producto"), self.combo_productos, self.boton_buscar_producto,
-            QLabel("Cantidad"), self.spin_cantidad, self.boton_agregar,
-            self.boton_quitar, estira=1,
-        ))
-        layout_izq.addLayout(barra(
-            QLabel("Servicio"), self.combo_servicios, self.boton_agregar_servicio, estira=1,
-        ))
+        layout_izq.addLayout(barra(self.catalogo.busqueda, self.catalogo.categoria,
+                                   self.catalogo.boton))
+        layout_izq.addLayout(barra(self.catalogo.pestanas, QWidget(), self.catalogo.resumen,
+                                   estira=1))
+        layout_izq.addWidget(self.catalogo.tabla)
+        layout_izq.addLayout(barra(en_la_orden, QWidget(), self.boton_quitar, estira=1))
         layout_izq.addWidget(self.tabla_carrito, 1)
 
         # --- Lado derecho: lo que se anota del vehículo al recibirlo ---
@@ -508,13 +498,16 @@ class OrdenesWidget(QTabWidget):
 
         self.tipo_descuento = QComboBox()
         self.tipo_descuento.addItems(TIPOS_DESCUENTO)
+        # Cerrado no pide el ancho de "Gremio/Sindicato (15 %)".
+        self.tipo_descuento.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.tipo_descuento.setMinimumContentsLength(12)
         self.valor_descuento = QSpinBox()
         self.valor_descuento.setEnabled(False)
         self.tipo_descuento.currentIndexChanged.connect(self._cambiar_tipo_descuento)
         self.valor_descuento.valueChanged.connect(self.recalcular_total)
 
-        self.folio = QLineEdit(placeholderText="Folio Mercado Público")
-        self.folio.setToolTip("Solo en las órdenes institucionales.")
+        self.folio = QLineEdit(placeholderText="Folio MP")
+        self.folio.setToolTip("Folio de Mercado Público: solo en las órdenes institucionales.")
         self.pagada = QCheckBox("Pagada")
         self.pagada.toggled.connect(self._cambiar_pago)
         # El taller cobra por partes: un abono al dejar el auto y el saldo al
@@ -528,9 +521,10 @@ class OrdenesWidget(QTabWidget):
         self.abono.setToolTip("Lo que el cliente paga al cerrar la orden; el saldo se "
                               "cobra después, desde el historial.")
 
-        #Selector del medio de pago
-        self.combo_medio_pago = QComboBox()
-        self.combo_medio_pago.addItems(["Efectivo", "Tarjeta", "Transferencia"])
+        # Solo importa si se cobra algo al cerrar: apagado hasta entonces.
+        self.combo_medio_pago = combo_medio_pago()
+        self.combo_medio_pago.setEnabled(False)
+        self.abono.valueChanged.connect(self._actualizar_medio)
 
         marco_total, self.totales = bloque_total()
         self.total = self.totales.total
@@ -562,18 +556,22 @@ class OrdenesWidget(QTabWidget):
         layout_der = QVBoxLayout(panel_der)
         layout_der.setContentsMargins(CANAL_PANEL, 0, 0, 0)
         layout_der.setSpacing(ESPACIO_PANTALLA)
-        layout_der.addWidget(QLabel("2. Kilometraje de Ingreso *"))
-        layout_der.addWidget(self.spin_kilometraje)
-        layout_der.addWidget(QLabel("3. Nivel de Combustible (Opcional)"))
-        layout_der.addWidget(self.combo_combustible)
+        # Lado a lado: en el portátil del taller (1366×768) una fila más
+        # dejaba el total tapado por los botones.
+        campos = QGridLayout()
+        campos.setHorizontalSpacing(ESPACIO_BARRA)
+        campos.addWidget(QLabel("2. Kilometraje *"), 0, 0)
+        campos.addWidget(QLabel("3. Combustible"), 0, 1)
+        campos.addWidget(self.spin_kilometraje, 1, 0)
+        campos.addWidget(self.combo_combustible, 1, 1)
+        layout_der.addLayout(campos)
         layout_der.addWidget(QLabel("4. Observaciones y Estado Visual"))
         layout_der.addWidget(self.texto_observaciones, 1)
         layout_der.addWidget(QLabel("5. Descuento, folio y pago"))
-        layout_der.addLayout(barra(self.tipo_descuento, self.valor_descuento, estira=1))
-        # Los tres en una fila y no en dos: el lateral no da para otra, y la
-        # que sobraba empujaba el bloque del total fuera de la ventana chica.
-        # NUEVO: Agregado el medio de pago a la barra
-        layout_der.addLayout(barra(self.folio, self.pagada, self.abono, self.combo_medio_pago, estira=0))
+        # El folio va con el descuento: en la fila del pago no cabe.
+        layout_der.addLayout(barra(self.tipo_descuento, self.valor_descuento, self.folio,
+                                   estira=2))
+        layout_der.addLayout(barra(self.pagada, self.abono, self.combo_medio_pago, estira=1))
         layout_der.addStretch()
         layout_der.addWidget(marco_total)
         layout_der.addLayout(barra(self.boton_cancelar, self.boton_dejar_abierta,
@@ -593,8 +591,15 @@ class OrdenesWidget(QTabWidget):
         layout_trabajo.setContentsMargins(0, ESPACIO_PANTALLA, 0, 0)
         layout_trabajo.addWidget(division)
 
+        # Oculta durante la orden (la tarjeta ya dice cuál es): en el portátil
+        # esos 45 px tapaban el total.
+        self.fila_reposo = QWidget()
+        fila = barra(self.boton_nueva_orden, self.label_contexto, estira=1)
+        fila.setContentsMargins(0, 0, 0, 0)
+        self.fila_reposo.setLayout(fila)
+
         layout_tab_1 = layout_de_pantalla(self.tab_nueva_orden)
-        layout_tab_1.addLayout(barra(self.boton_nueva_orden, self.label_contexto, estira=1))
+        layout_tab_1.addWidget(self.fila_reposo)
         layout_tab_1.addWidget(self.tarjeta)
         # El 1 es lo que hace que el alto sobrante se lo lleve la mesa de trabajo.
         # Sin él, el QLabel de contexto y el panel se reparten la ventana mitad y
@@ -842,6 +847,7 @@ class OrdenesWidget(QTabWidget):
                     + (f", con {km(self.ultimo_km)}" if self.ultimo_km is not None else "")
                 )
         self.tarjeta.show()
+        self.fila_reposo.hide()
         tiene_whatsapp = enlace_whatsapp(self.contacto_whatsapp["telefono"]) is not None
         self.boton_whatsapp.setEnabled(tiene_whatsapp)
         self.boton_whatsapp.setToolTip(
@@ -853,13 +859,13 @@ class OrdenesWidget(QTabWidget):
         )
 
         self._vaciar_formulario()
-        self._cargar_productos()
-        self._cargar_servicios()
+        # Cada orden relee el catálogo: la anterior pudo mover el stock.
+        self.catalogo.cargar()
 
         # Desbloquear el panel de trabajo y bloquear el botón de nueva orden
         self.panel_trabajo.setEnabled(True)
         self.boton_nueva_orden.setEnabled(False)
-        self.combo_productos.setFocus()
+        self.catalogo.busqueda.setFocus()
 
     def _vaciar_formulario(self) -> None:
         """Deja la pestaña 1 en blanco.
@@ -870,7 +876,6 @@ class OrdenesWidget(QTabWidget):
         """
         self.tabla_carrito.setRowCount(0)
         self.spin_kilometraje.setValue(0)
-        self.spin_cantidad.setValue(1)
         self.combo_combustible.setCurrentIndex(0)
         self.texto_observaciones.clear()
         self.tipo_descuento.setCurrentIndex(0)
@@ -878,6 +883,7 @@ class OrdenesWidget(QTabWidget):
         self.folio.clear()
         self.pagada.setChecked(False)
         self.abono.setValue(0)
+        self.combo_medio_pago.setCurrentIndex(-1)
         self.recalcular_total()
 
     def _cambiar_pago(self, pagada: bool) -> None:
@@ -885,16 +891,31 @@ class OrdenesWidget(QTabWidget):
         self.abono.setEnabled(not pagada)
         if pagada:
             self.abono.setValue(0)
+        self._actualizar_medio()
+
+    def _actualizar_medio(self, *_) -> None:
+        cobra = self.pagada.isChecked() or self.abono.value() > 0
+        self.combo_medio_pago.setEnabled(cobra)
+        if not cobra:
+            self.combo_medio_pago.setCurrentIndex(-1)
 
     def _cambiar_tipo_descuento(self, indice: int) -> None:
         """El campo cambia de forma con el tipo: tope 100 y sufijo % para el
-        porcentaje, pesos para el monto, apagado sin descuento."""
+        porcentaje, pesos para el monto, el número impreso para el flyer, y
+        apagado sin descuento o con gremio, que no pide nada."""
         self.valor_descuento.setValue(0)
-        self.valor_descuento.setEnabled(indice > 0)
+        self.valor_descuento.setEnabled(indice in (1, 2, 3))
+        self.valor_descuento.setSpecialValueText("")
         if indice == 1:
             self.valor_descuento.setRange(0, 100)
             self.valor_descuento.setPrefix("")
             self.valor_descuento.setSuffix(" %")
+        elif indice == 3:
+            self.valor_descuento.setRange(0, convenios.FOLIOS_FLYER[-1])
+            self.valor_descuento.setPrefix("N° ")
+            self.valor_descuento.setSuffix("")
+            self.valor_descuento.setGroupSeparatorShown(False)
+            self.valor_descuento.setSpecialValueText("N° del flyer")
         else:
             self.valor_descuento.setRange(0, 99_999_999)
             self.valor_descuento.setPrefix("$ ")
@@ -906,11 +927,38 @@ class OrdenesWidget(QTabWidget):
         """(porcentaje, monto, pesos aplicados) según lo elegido. Solo uno de
         los dos primeros es distinto de cero; es lo que se guarda."""
         tipo, valor = self.tipo_descuento.currentIndex(), self.valor_descuento.value()
+        if tipo in CONVENIO_DEL_TIPO:
+            # Se recalcula con las líneas de ahora: una orden retomada puede
+            # haber ganado un filtro desde que se guardó.
+            pesos = convenios.descuento(CONVENIO_DEL_TIPO[tipo], (
+                (self.tabla_carrito.item(fila, 0).data(ROL_CATEGORIA),
+                 self.tabla_carrito.item(fila, 3).data(Qt.UserRole))
+                for fila in range(self.tabla_carrito.rowCount())
+            ))
+            return 0, pesos, pesos
         if tipo == 1 and valor:
             return valor, 0, int(round(neto * valor / 100))
         if tipo == 2 and valor:
             return 0, valor, min(valor, neto)
         return 0, 0, 0
+
+    def _flyer_disponible(self, folio: int) -> bool:
+        """Cada flyer sirve una vez. La base también lo impide; acá es para
+        decir en qué orden se usó."""
+        if folio not in convenios.FOLIOS_FLYER:
+            QMessageBox.warning(self, "Falta el folio del flyer",
+                                "Anota el número impreso en el flyer, del 1 al 1000.")
+            return False
+        with SessionLocal() as db:
+            usado_en = db.scalar(select(Orden.id).where(
+                Orden.folio_flyer == folio, Orden.estado != "ANULADA",
+                Orden.id != (self.orden_abierta_id or 0),
+            ))
+        if usado_en:
+            QMessageBox.warning(self, "Flyer ya usado",
+                                f"El flyer N° {folio:04d} ya se usó en la OT #{usado_en}.")
+            return False
+        return True
 
     def avisar_por_whatsapp(self) -> None:
         """El aviso se manda sobre la orden abierta, así que sale con los datos
@@ -931,68 +979,25 @@ class OrdenesWidget(QTabWidget):
         self.panel_trabajo.setEnabled(False)
         self.boton_nueva_orden.setEnabled(True)
         self.label_contexto.setText(REPOSO)
+        self.fila_reposo.show()
 
-    def _cargar_productos(self) -> None:
-        self.combo_productos.clear()
-        with SessionLocal() as db:
-            productos = db.scalars(
-                select(Producto).where(Producto.activo.is_(True)).order_by(Producto.nombre)
-            ).all()
-            for p in productos:
-                # El nombre viaja en los datos, no se lee de currentText(): con
-                # el combo editable ese texto puede ser un filtro a medio
-                # escribir. El stock no se guarda acá a propósito: se relee al
-                # agregar, que es cuando importa.
-                self.combo_productos.addItem(p.nombre, {"id": p.id, "nombre": p.nombre})
-        self.combo_productos.setCurrentIndex(-1)
-
-    def _cargar_servicios(self) -> None:
-        self.combo_servicios.clear()
-        with SessionLocal() as db:
-            for s in db.scalars(
-                select(Servicio).where(Servicio.activo.is_(True)).order_by(Servicio.nombre)
-            ):
-                self.combo_servicios.addItem(s.nombre, {"id": s.id, "nombre": s.nombre})
-        self.combo_servicios.setCurrentIndex(-1)
-
-    def buscar_producto(self) -> None:
-        dialogo = SelectorProducto(self, self.combo_productos.lineEdit().text().strip())
-        if dialogo.exec() != QDialog.Accepted or dialogo.elegido is None:
-            return
-        if not self._elegir_en_el_combo(dialogo.elegido):
-            # Alguien creó o reactivó el producto con esta pantalla abierta.
-            self._cargar_productos()
-            self._elegir_en_el_combo(dialogo.elegido)
-        self.spin_cantidad.setFocus()
-
-    def _elegir_en_el_combo(self, producto_id: int) -> bool:
-        for indice in range(self.combo_productos.count()):
-            datos = self.combo_productos.itemData(indice)
-            if datos and datos["id"] == producto_id:
-                self.combo_productos.setCurrentIndex(indice)
-                return True
-        return False
-
-    def agregar_desde_el_combo(self) -> None:
-        datos = self.combo_productos.currentData()
-        if not datos:
-            return
-        self.agregar_al_carrito(datos["id"], self.spin_cantidad.value())
-
-    def agregar_servicio_desde_el_combo(self) -> None:
-        datos = self.combo_servicios.currentData()
-        if datos:
-            self.agregar_servicio_al_carrito(datos["id"])
+    def _agregar_elegido(self, item: dict) -> None:
+        if "producto_id" in item:
+            self.agregar_al_carrito(item["producto_id"])
+        else:
+            self.agregar_servicio_al_carrito(item["servicio_id"])
 
     def agregar_al_carrito(self, producto_id: int, cantidad: int = 1) -> None:
+        """Si ya está en la orden como línea nueva, suma a esa línea."""
+        fila = self._linea_nueva({"producto_id": producto_id})
+        previa = 0 if fila is None else self.tabla_carrito.item(fila, 1).data(Qt.UserRole)
         with SessionLocal() as db:
             producto = db.get(Producto, producto_id)
             if not producto:
                 return
 
-            # El stock se relee acá y no se cachea al llenar el combo: entre que
-            # se cargó la lista y este click pudo venderse lo que quedaba.
-            if producto.stock_actual < cantidad:
+            # Se relee acá: desde que se cargó el catálogo pudo venderse.
+            if producto.stock_actual < previa + cantidad:
                 QMessageBox.warning(
                     self, "Stock Insuficiente",
                     f"Solo quedan {producto.stock_actual} unidades de '{producto.nombre}'.",
@@ -1000,11 +1005,20 @@ class OrdenesWidget(QTabWidget):
                 return
 
             nombre, precio = producto.nombre, int(producto.precio_venta)
+            categoria = producto.categoria
 
-        self._insertar_en_carrito({"producto_id": producto_id}, nombre, precio, cantidad)
-        self.spin_cantidad.setValue(1)
+        if fila is not None:
+            self._fijar_cantidad(fila, previa + cantidad)
+        else:
+            self._insertar_en_carrito({"producto_id": producto_id}, nombre, precio, cantidad,
+                                      categoria=categoria)
 
     def agregar_servicio_al_carrito(self, servicio_id: int, cantidad: int = 1) -> None:
+        fila = self._linea_nueva({"servicio_id": servicio_id})
+        if fila is not None:
+            previa = self.tabla_carrito.item(fila, 1).data(Qt.UserRole)
+            self._fijar_cantidad(fila, previa + cantidad)
+            return
         with SessionLocal() as db:
             servicio = db.get(Servicio, servicio_id)
             if not servicio:
@@ -1012,8 +1026,60 @@ class OrdenesWidget(QTabWidget):
             nombre, precio = servicio.nombre, int(servicio.precio_venta)
         self._insertar_en_carrito({"servicio_id": servicio_id}, nombre, precio, cantidad)
 
+    def _linea_nueva(self, item: dict) -> int | None:
+        """La fila de ese ítem que aún no está en la base. Las guardadas no se
+        tocan: el trigger mueve stock al insertar y borrar, no al cambiar."""
+        for fila in range(self.tabla_carrito.rowCount()):
+            celda = self.tabla_carrito.item(fila, 0)
+            if celda.data(Qt.UserRole) == item and celda.data(ROL_DETALLE) is None:
+                return fila
+        return None
+
+    def _fijar_cantidad(self, fila: int, cantidad: int) -> None:
+        precio = self.tabla_carrito.item(fila, 2).data(Qt.UserRole)
+        # Sin ordenar mientras se escribe: Qt reubicaría la fila a mitad.
+        self.tabla_carrito.setSortingEnabled(False)
+        for columna, valor, texto in ((1, cantidad, str(cantidad)),
+                                      (3, precio * cantidad, clp(precio * cantidad))):
+            celda = ItemNumerico(texto, valor)
+            celda.setData(Qt.UserRole, valor)
+            self.tabla_carrito.setItem(fila, columna, celda)
+        reordenar(self.tabla_carrito)
+        self.recalcular_total()
+
+    def cambiar_cantidad(self) -> None:
+        """Doble clic en una línea nueva. Una guardada se quita y se agrega de
+        nuevo, que es lo que devuelve su stock."""
+        fila = self.tabla_carrito.currentRow()
+        if fila < 0:
+            return
+        celda = self.tabla_carrito.item(fila, 0)
+        if celda.data(ROL_DETALLE) is not None:
+            QMessageBox.information(
+                self, "Línea ya guardada",
+                "Esta línea ya descontó su stock. Para cambiar la cantidad, quítala y "
+                "agrégala de nuevo.",
+            )
+            return
+        item, tope = celda.data(Qt.UserRole), 1000
+        if "producto_id" in item:
+            with SessionLocal() as db:
+                tope = db.scalar(select(Producto.stock_actual)
+                                 .where(Producto.id == item["producto_id"])) or 0
+            if tope <= 0:
+                QMessageBox.warning(self, "Sin stock", f"'{celda.text()}' se quedó sin stock.")
+                return
+        actual = self.tabla_carrito.item(fila, 1).data(Qt.UserRole)
+        stock = f" (stock: {tope})" if "producto_id" in item else ""
+        nueva, ok = QInputDialog.getInt(
+            self, "Cambiar cantidad", f"Cantidad de '{celda.text()}'{stock}:",
+            min(actual, tope), 1, tope, 1,
+        )
+        if ok:
+            self._fijar_cantidad(fila, nueva)
+
     def _insertar_en_carrito(self, item: dict, nombre: str, precio: int, cantidad: int,
-                             detalle_id: int | None = None) -> None:
+                             detalle_id: int | None = None, categoria: str | None = None) -> None:
         """`detalle_id` marca las líneas que ya están en la base —las de una
         orden retomada—: su stock ya salió, así que al guardar no se insertan
         de nuevo."""
@@ -1036,6 +1102,7 @@ class OrdenesWidget(QTabWidget):
             self.tabla_carrito.setItem(fila, columna, celda)
 
         celda_nombre.setData(ROL_DETALLE, detalle_id)
+        celda_nombre.setData(ROL_CATEGORIA, categoria)
         reordenar(self.tabla_carrito)
         self.recalcular_total()
 
@@ -1096,7 +1163,7 @@ class OrdenesWidget(QTabWidget):
             lineas = [
                 ({"producto_id": d.producto_id} if d.producto_id else {"servicio_id": d.servicio_id},
                  (d.producto or d.servicio).nombre, int(d.precio_unitario_cobrado),
-                 d.cantidad, d.id)
+                 d.cantidad, d.id, d.producto.categoria if d.producto else None)
                 for d in orden.detalles
             ]
             datos = {
@@ -1104,14 +1171,15 @@ class OrdenesWidget(QTabWidget):
                 "folio": orden.folio_mercado_publico or "", "notas": orden.notas or "",
                 "porcentaje": int(orden.descuento_porcentaje),
                 "monto": int(orden.descuento_monto), "pagado": orden.monto_pagado,
+                "convenio": orden.convenio, "folio_flyer": orden.folio_flyer,
             }
 
         # Deja la tarjeta del vehículo y vacía el formulario; después se llena
         # con lo que la orden traía.
         self._iniciar_nueva_orden(datos["vehiculo_id"])
         self.orden_abierta_id = orden_id
-        for item, nombre, precio, cantidad, detalle_id in lineas:
-            self._insertar_en_carrito(item, nombre, precio, cantidad, detalle_id)
+        for item, nombre, precio, cantidad, detalle_id, categoria in lineas:
+            self._insertar_en_carrito(item, nombre, precio, cantidad, detalle_id, categoria)
 
         self.spin_kilometraje.setValue(datos["km"])
         self.folio.setText(datos["folio"])
@@ -1119,7 +1187,12 @@ class OrdenesWidget(QTabWidget):
         if nivel in NIVELES_COMBUSTIBLE:
             self.combo_combustible.setCurrentText(nivel)
         self.texto_observaciones.setPlainText(observaciones)
-        if datos["porcentaje"]:
+        # El convenio primero: leído como monto fijo dejaría de seguir a las líneas.
+        if datos["convenio"]:
+            tipo = next(t for t, c in CONVENIO_DEL_TIPO.items() if c == datos["convenio"])
+            self.tipo_descuento.setCurrentIndex(tipo)
+            self.valor_descuento.setValue(datos["folio_flyer"] or 0)
+        elif datos["porcentaje"]:
             self.tipo_descuento.setCurrentIndex(1)
             self.valor_descuento.setValue(datos["porcentaje"])
         elif datos["monto"]:
@@ -1128,7 +1201,7 @@ class OrdenesWidget(QTabWidget):
         self.recalcular_total()
 
         abonado = f" · abonado {clp(datos['pagado'])}" if datos["pagado"] else ""
-        self.label_contexto.setText(f"OT #{orden_id} abierta{abonado}")
+        self.label_servicio.setText(f"Retomando la OT #{orden_id}{abonado}")
         self.setCurrentIndex(0)
 
     def anular_orden_abierta(self) -> None:
@@ -1191,6 +1264,11 @@ class OrdenesWidget(QTabWidget):
             if seguir != QMessageBox.Yes:
                 return
 
+        convenio = CONVENIO_DEL_TIPO.get(self.tipo_descuento.currentIndex())
+        folio_flyer = self.valor_descuento.value() if convenio == "FLYER" else None
+        if folio_flyer is not None and not self._flyer_disponible(folio_flyer):
+            return
+
         # Capturar totales y empaquetar detalles
         detalles = [
             {
@@ -1204,7 +1282,25 @@ class OrdenesWidget(QTabWidget):
         ]
         suma_total = sum(d["subtotal"] for d in detalles)
         porcentaje, monto, aplicado = self._descuento(suma_total)
+        if folio_flyer is not None and not aplicado:
+            # Guardarlo así gastaría el folio del cliente sin darle nada.
+            QMessageBox.warning(
+                self, "El flyer no descuenta nada",
+                "Ningún producto de la orden entra en el flyer (aceite de motor y filtros). "
+                "Agrégalos antes, o quita el flyer para no gastar el folio.",
+            )
+            return
         impuesto, ajuste, total_final = self.totales.calcular(suma_total, aplicado)
+
+        # La caja cuenta el pago según su medio: sin medio no se guarda.
+        pagado = total_final if self.pagada.isChecked() else self.abono.value()
+        medio = medio_elegido(self.combo_medio_pago)
+        if pagado and medio is None:
+            QMessageBox.warning(
+                self, "Falta el medio de pago",
+                "Elige si el cliente pagó en efectivo, con tarjeta o por transferencia.",
+            )
+            return
 
         # Armar las notas incluyendo el nivel de combustible
         notas_finales = f"Nivel de Combustible: {self.combo_combustible.currentText()}"
@@ -1225,6 +1321,7 @@ class OrdenesWidget(QTabWidget):
             nueva_orden.kilometraje_ingreso = self.spin_kilometraje.value()
             nueva_orden.descuento_porcentaje = porcentaje
             nueva_orden.descuento_monto = monto
+            nueva_orden.convenio, nueva_orden.folio_flyer = convenio, folio_flyer
             nueva_orden.subtotal = suma_total
             nueva_orden.impuesto = impuesto
             nueva_orden.ajuste_redondeo = ajuste
@@ -1250,14 +1347,12 @@ class OrdenesWidget(QTabWidget):
                         precio_unitario_cobrado=det["precio"],
                         **det["item"],
                     ))
-                # Lo pagado al cerrar la orden es un abono más. Quien decide si
-                # con eso queda pagada es el trigger, no esta pantalla.
-                pagado = total_final if self.pagada.isChecked() else self.abono.value()
-                medio = self.combo_medio_pago.currentText().upper()
-
+                # Quien decide si con esto queda pagada es el trigger, no esta
+                # pantalla.
                 if pagado:
                     db.add(PagoOrden(
-                        orden_id=nueva_orden.id, usuario_id=Sesion.usuario_id, monto=pagado, medio_pago=medio,
+                        orden_id=nueva_orden.id, usuario_id=Sesion.usuario_id, monto=pagado,
+                        medio_pago=medio,
                     ))
 
                 # Al confirmar, los triggers descuentan el stock y escriben el
@@ -1282,7 +1377,7 @@ class OrdenesWidget(QTabWidget):
                         self, "No se pudo guardar la orden",
                         f"La base de datos rechazó la orden:\n\n{detalle}",
                     )
-                self._cargar_productos()
+                self.catalogo.cargar()
                 return
             numero = nueva_orden.id
 
@@ -1326,6 +1421,41 @@ class OrdenesWidget(QTabWidget):
         self._volver_al_reposo()
 
 
+class DialogoPago(QDialog):
+    """Monto y medio de un pago. El tope es el saldo: un pago se suma, no corrige."""
+
+    def __init__(self, saldo: int, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Registrar pago")
+        self.setModal(True)
+
+        self.monto = QSpinBox()
+        self.monto.setRange(1, saldo)
+        self.monto.setValue(saldo)
+        self.monto.setPrefix("$ ")
+        self.monto.setGroupSeparatorShown(True)
+        self.medio = combo_medio_pago()
+
+        saldo_texto = QLabel(f"Saldo pendiente: {clp(saldo)}")
+        saldo_texto.setProperty("clase", "resumen")
+        layout = layout_de_dialogo(self)
+        layout.addWidget(saldo_texto)
+        layout.addLayout(barra(QLabel("Monto"), self.monto, estira=1))
+        layout.addLayout(barra(QLabel("Medio de pago"), self.medio, estira=1))
+        layout.addWidget(botonera(self))
+        self.monto.setFocus()
+        self.monto.selectAll()
+
+    def accept(self) -> None:
+        if medio_elegido(self.medio) is None:
+            QMessageBox.warning(
+                self, "Falta el medio de pago",
+                "Elige si el cliente pagó en efectivo, con tarjeta o por transferencia.",
+            )
+            return
+        super().accept()
+
+
 class DialogoDetalleOrden(QDialog):
     """Muestra el desglose de una orden guardada, incluyendo productos y notas."""
 
@@ -1356,6 +1486,9 @@ class DialogoDetalleOrden(QDialog):
             )
             self._folio = (f" | <b>Folio MP:</b> {orden.folio_mercado_publico}"
                            if orden.folio_mercado_publico else "")
+            if orden.convenio:
+                self._folio += (f" | <b>Descuento:</b> "
+                                f"{convenios.rotulo(orden.convenio, orden.folio_flyer)}")
             # El aviso por WhatsApp sale de acá con el número de OT: esta orden
             # ya está guardada, a diferencia de la que se está armando al lado.
             self._contacto = {
@@ -1392,6 +1525,9 @@ class DialogoDetalleOrden(QDialog):
             tabla.setItem(fila, 2, ItemNumerico(clp(precio), precio))
             tabla.setItem(fila, 3, ItemNumerico(clp(subtotal), subtotal))
         reordenar(tabla)
+        # Al menos tres filas: con la fila del redondeo en el pie, la tabla
+        # quedaba en 26 px. Así crece el diálogo, no se achica la tabla.
+        tabla.setMinimumHeight(5 * ALTO_FILA)
 
         # Observaciones y Nivel de Combustible
         notas = QTextEdit()
@@ -1431,7 +1567,7 @@ class DialogoDetalleOrden(QDialog):
         layout = layout_de_dialogo(self)
         layout.addWidget(self.info)
         layout.addWidget(titulo_insumos)
-        layout.addWidget(tabla)
+        layout.addWidget(tabla, 1)
         layout.addWidget(titulo_notas)
         layout.addWidget(notas)
         layout.addWidget(marco_total)
@@ -1462,26 +1598,13 @@ class DialogoDetalleOrden(QDialog):
         el saldo y no el total."""
         if self.saldo <= 0:
             return  # el botón está apagado; queda el atajo y las pruebas
-        monto, confirmado = QInputDialog.getInt(
-            self, "Registrar pago",
-            f"Saldo pendiente: {clp(self.saldo)}\n\nMonto que paga el cliente:",
-            self.saldo, 1, self.saldo,
-        )
-        if not confirmado:
+        dialogo = DialogoPago(self.saldo, self)
+        if dialogo.exec() != QDialog.Accepted:
             return
-        # NUEVO: Pedimos el medio de pago inmediatamente después
-        medio, ok = QInputDialog.getItem(
-            self, "Medio de Pago",
-            "¿Cómo se realizó este pago?",
-            ["Efectivo", "Tarjeta", "Transferencia"],
-            0, False
-        )
-        if not ok:
-            return
-        
         with SessionLocal() as db:
             db.add(PagoOrden(
-                orden_id=self.orden_id, usuario_id=Sesion.usuario_id, monto=monto, medio_pago=medio.upper(),
+                orden_id=self.orden_id, usuario_id=Sesion.usuario_id,
+                monto=dialogo.monto.value(), medio_pago=medio_elegido(dialogo.medio),
             ))
             db.commit()
         self._refrescar_pago()

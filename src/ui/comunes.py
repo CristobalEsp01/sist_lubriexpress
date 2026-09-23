@@ -48,10 +48,11 @@ class InsigniaDelegate(QStyledItemDelegate):
         try:
             painter.setRenderHint(QPainter.Antialiasing)
 
-            # Respetar fondo de selección o alternancia
+            # La alternancia la da la vista: con filas ocultas, index.row() no
+            # es la fila que se ve.
             if option.state & QStyle.State_Selected:
                 painter.fillRect(option.rect, QColor(ACENTO_FONDO))
-            elif index.row() % 2 == 1:
+            elif option.features & QStyleOptionViewItem.Alternate:
                 painter.fillRect(option.rect, QColor(ALTERNA))
             else:
                 painter.fillRect(option.rect, QColor(SUPERFICIE))
@@ -96,13 +97,17 @@ class InsigniaDelegate(QStyledItemDelegate):
             painter.restore()
 
 
+# Una vez y no por celda: el `|` entre enums de Qt costaba ~130 ms en el catálogo.
+A_LA_DERECHA = Qt.AlignRight | Qt.AlignVCenter
+
+
 class ItemNumerico(QTableWidgetItem):
     """Ordena por el valor real: como texto, '$3.500' quedaría antes que '$20.000'."""
 
     def __init__(self, texto: str, valor):
         super().__init__(texto)
         self.valor = valor
-        self.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.setTextAlignment(A_LA_DERECHA)
         self.setFont(fuente_tabular())
 
     def __lt__(self, otro):
@@ -285,7 +290,9 @@ class _AvisoVacio(QObject):
         if not isValid(self._tabla):
             return
         self.etiqueta.setGeometry(self._tabla.viewport().rect())
-        self.etiqueta.setVisible(self._tabla.rowCount() == 0)
+        # Vacía también con todas sus filas ocultas (así filtra el catálogo).
+        self.etiqueta.setVisible(all(self._tabla.isRowHidden(fila)
+                                     for fila in range(self._tabla.rowCount())))
 
     def eventFilter(self, objeto, evento) -> bool:
         if evento.type() == QEvent.Resize:
@@ -354,20 +361,10 @@ class Totales:
         self.descuento.setText(f"- {clp(descuento)}")
         for w in self.fila_descuento:
             w.setVisible(int(descuento) > 0)
-            
         self.iva.setText(clp(impuesto))
-        
-        # Formatear el ajuste con su signo (+ o -)
-        texto_ajuste = clp(abs(ajuste))
-        if ajuste < 0:
-            texto_ajuste = f"- {texto_ajuste}"
-        elif ajuste > 0:
-            texto_ajuste = f"+ {texto_ajuste}"
-        self.ajuste.setText(texto_ajuste)
-        
+        self.ajuste.setText(f"{'-' if ajuste < 0 else '+'} {clp(abs(ajuste))}")
         for w in self.fila_ajuste:
             w.setVisible(int(ajuste) != 0)
-            
         self.total.setText(clp(total))
 
     def calcular(self, neto: int, descuento: int = 0) -> tuple[int, int, int]:
@@ -377,17 +374,27 @@ class Totales:
         total_bruto = neto - descuento + impuesto
         total_redondeado = redondear_decena(total_bruto)
         ajuste = total_redondeado - total_bruto
-        
         self.fijar(neto, descuento, impuesto, ajuste, total_redondeado)
         return impuesto, ajuste, total_redondeado
 
 
 def bloque_total(rotulo: str = "Total a Pagar", menor: bool = False) -> tuple[QFrame, Totales]:
-    """El pie de una pantalla de cobro: neto, IVA, ajuste y total."""
+    """El pie de una pantalla de cobro: neto, IVA, ajuste y total, rótulo a la
+    izquierda y cifra a la derecha.
+
+    Va sobre su propia superficie y separado por una línea porque es el
+    resultado de la pantalla, no un campo más del formulario. Devuelve el marco,
+    para meterlo en el layout, y las cifras (ver `Totales`).
+    """
     marco = QFrame()
     marco.setProperty("clase", "total")
+    # No se encoge nunca: en una ventana al mínimo, Qt le quitaba alto y la
+    # cifra —el resultado de la pantalla— quedaba cortada a la mitad.
     marco.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
     columna = QVBoxLayout(marco)
+    # Las etiquetas aceptan que Qt las recorte, así que el mínimo del marco
+    # tiene que venir del layout: sin esto la cifra medía 7 px de los 35 que
+    # necesita cuando la ventana estaba en su tamaño mínimo.
     columna.setSizeConstraint(QLayout.SetMinimumSize)
     columna.setContentsMargins(2, 10, 2, 0)
     columna.setSpacing(2)
@@ -437,6 +444,24 @@ def exigir_permiso(accion: str, widget) -> bool:
         "Tu rol no permite esta acción. Pídesela a un supervisor o administrador.",
     )
     return False
+
+
+MEDIOS_DE_PAGO = ["Efectivo", "Tarjeta", "Transferencia"]
+
+
+def combo_medio_pago() -> QComboBox:
+    """Sin nada elegido: la caja cuenta el efectivo por este campo, y con
+    "Efectivo" por defecto un pago con tarjeta pasaba por plata del cajón."""
+    combo = QComboBox()
+    combo.addItems(MEDIOS_DE_PAGO)
+    combo.setPlaceholderText("Elegir medio de pago…")
+    combo.setCurrentIndex(-1)
+    return combo
+
+
+def medio_elegido(combo: QComboBox) -> str | None:
+    """'EFECTIVO', 'TARJETA' o 'TRANSFERENCIA', como se guarda; None sin elegir."""
+    return combo.currentText().upper() if combo.currentIndex() >= 0 else None
 
 
 def botonera(dialogo: QDialog) -> QDialogButtonBox:

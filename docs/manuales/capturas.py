@@ -156,7 +156,7 @@ def sembrar() -> dict:
 
         hoy = datetime.now()
         for tipo, monto, motivo, hora in [
-            ("INGRESO", 80000, "Efectivo para dar vuelto", 8),
+            ("APERTURA", 80000, "Apertura de caja", 8),
             ("EGRESO", 9500, "Bencina de la camioneta", 11),
             ("EGRESO", 18000, "Flete de repuestos", 15),
         ]:
@@ -173,7 +173,6 @@ def capturar(datos: dict) -> None:
     from src.ui.clientes import FormularioVehiculo
     from src.ui.inventario import AjusteStockDialog, IngresoMercaderiaDialog, MinimoPorCategoriaDialog
     from src.ui.ordenes import DialogoDetalleOrden
-    from src.ui.selector_producto import SelectorProducto
     from src.ui.ventas import PuntoVentaWidget
 
     DESTINO.mkdir(parents=True, exist_ok=True)
@@ -199,6 +198,7 @@ def capturar(datos: dict) -> None:
     v.ordenes._iniciar_nueva_orden(datos["vehiculo"])
     v.ordenes.agregar_al_carrito(datos["producto"], 1)
     v.ordenes.agregar_servicio_al_carrito(datos["servicio"])
+    v.ordenes.catalogo.busqueda.setText("filtro aceite")
     v.ordenes.spin_kilometraje.setValue(78500)
     v.ordenes.tipo_descuento.setCurrentIndex(1); v.ordenes.valor_descuento.setValue(10)
     guardar(v, "orden")
@@ -230,13 +230,8 @@ def capturar(datos: dict) -> None:
     ingreso.spin_costo.setValue(21500)   # el proveedor subió el precio
     ingreso.agregar_a_lista()
 
-    buscador = SelectorProducto()
-    buscador.busqueda.setText("filtro")
-    buscador.tabla.selectRow(0)
-
     for nombre, dialogo in [
         ("dialogo_ingreso", ingreso),
-        ("dialogo_buscar_producto", buscador),
         ("dialogo_ajuste", AjusteStockDialog(producto_id=datos["producto"])),
         ("dialogo_minimos", MinimoPorCategoriaDialog()),
         ("dialogo_excel", CargaExcelDialog()),

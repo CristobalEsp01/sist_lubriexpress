@@ -94,7 +94,7 @@ def test_el_carrito_se_llena_por_teclado_y_no_pasa_del_stock(app, producto_qa, s
     # Escribir hasta que quede un producto y apretar Enter es el camino más
     # corto para quien cobra sin soltar el teclado.
     widget.busqueda.setText(NOMBRE_PRODUCTO)
-    assert widget.tabla_catalogo.rowCount() == 1
+    assert len(widget.catalogo.visibles()) == 1
     widget.busqueda.returnPressed.emit()
     assert [e["producto_id"] for e in widget.carrito] == [producto_qa]
 
@@ -130,6 +130,14 @@ def test_el_cobro_exige_boleta_registra_la_venta_y_no_la_duplica(
     assert sin_modales == ["Falta la boleta"]
 
     widget.boleta.setText("QA-0001")
+    # El medio de pago nace sin elegir: la caja cuenta como plata del cajón
+    # lo que se cobra en efectivo, y un "Efectivo" por defecto convertía una
+    # venta con tarjeta en plata que el cajón no tiene.
+    assert widget.combo_medio_pago.currentIndex() == -1
+    assert not widget.boton_cobrar.isEnabled()
+    widget.generar_venta()
+    assert sin_modales[-1] == "Falta el medio de pago"
+    widget.combo_medio_pago.setCurrentText("Tarjeta")
     assert widget.boton_cobrar.isEnabled()
     widget.generar_venta()
 
@@ -138,6 +146,7 @@ def test_el_cobro_exige_boleta_registra_la_venta_y_no_la_duplica(
         assert venta.usuario_id == usuario_qa
         assert venta.cliente_id is None  # se cobró sin cliente, como se pidió
         assert (int(venta.impuesto), int(venta.total_final)) == (3420, 21420)  # 18.000 + 19 %
+        assert venta.medio_pago == "TARJETA"
 
         detalle = db.scalars(select(DetalleVenta).where(DetalleVenta.venta_id == venta.id)).all()
         assert len(detalle) == 1 and detalle[0].cantidad == 3
@@ -150,14 +159,17 @@ def test_el_cobro_exige_boleta_registra_la_venta_y_no_la_duplica(
         )
         assert mov.usuario_id == usuario_qa
 
-    # Queda listo para la siguiente: carrito vacío y la boleta ya sugerida.
+    # Queda listo para la siguiente: carrito vacío, la boleta ya sugerida y el
+    # medio otra vez sin elegir.
     assert widget.carrito == []
     assert widget.boleta.text() == "QA-0002"
+    assert widget.combo_medio_pago.currentIndex() == -1
 
     # Repetir el número no puede duplicar la venta: lo ataja el UNIQUE.
     repetida = PuntoVentaWidget()
     repetida.agregar_producto(producto_qa, cantidad=1)
     repetida.boleta.setText("QA-0001")
+    repetida.combo_medio_pago.setCurrentText("Efectivo")
     repetida.generar_venta()
 
     with SessionLocal() as db:
@@ -239,6 +251,7 @@ def test_no_se_cobra_un_producto_desactivado_despues_de_agregarlo(
     widget = PuntoVentaWidget()
     widget.agregar_producto(producto_qa, cantidad=2)
     widget.boleta.setText("QA-0009")
+    widget.combo_medio_pago.setCurrentText("Efectivo")
 
     with SessionLocal() as db:
         db.get(Producto, producto_qa).activo = False

@@ -9,7 +9,6 @@ módulo nunca toca "stock_actual" directamente (ver database/schema_lubriexpress
 import re
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QDialogButtonBox, QHBoxLayout, QInputDialog, QLabel,
     QLineEdit, QMessageBox, QPushButton, QSplitter, QTabWidget, QTableWidgetItem,
@@ -22,16 +21,14 @@ from sqlalchemy.orm import joinedload
 from ..auth import Sesion
 from ..database import SessionLocal
 from ..models import Cliente, DetalleVenta, Producto, Venta
-from ..texto import filtro_busqueda
+from .catalogo import Catalogo
 from .comunes import (
     ItemNumerico, ajustar_columnas, barra, bloque_total, clp, con_aviso_vacio, crear_tabla,
-    hacer_buscable, layout_de_dialogo, layout_de_pantalla, reordenar,
+    combo_medio_pago, hacer_buscable, layout_de_dialogo, layout_de_pantalla, medio_elegido,
+    reordenar,
 )
-from .tema import ALERTA, CANAL_PANEL, ESPACIO_PANTALLA
+from .tema import CANAL_PANEL, ESPACIO_PANTALLA
 
-# Sin categoría: se busca por ella igual, y en el mesón lo que se mira es
-# nombre, marca, cuánto queda y a cuánto.
-COLUMNAS_CATALOGO = ["Nombre", "Marca", "Stock", "Precio neto"]
 COLUMNAS_CARRITO = ["Producto", "Cantidad", "Precio Unit.", "Subtotal"]
 COLUMNAS_DETALLE = ["Producto", "Cantidad", "Precio Unit.", "Subtotal"]
 COLUMNAS_HISTORIAL = ["Fecha", "Nº Boleta", "Cliente", "Vendedor", "Total"]
@@ -62,30 +59,17 @@ class PuntoVentaWidget(QWidget):
         self.carrito: list[dict] = []
 
         # ---------------- Catálogo (izquierda) ----------------
-        self.busqueda = QLineEdit(placeholderText="Buscar por nombre, marca o categoría…")
-        self.busqueda.setClearButtonEnabled(True)
-        self.busqueda.textChanged.connect(self.recargar_catalogo)
-        self.busqueda.returnPressed.connect(self.agregar_desde_busqueda)
-
-        self.tabla_catalogo = con_aviso_vacio(
-            crear_tabla(COLUMNAS_CATALOGO, ancha=0, orden=0, numericas=(2, 3)),
-            "No hay productos activos en el catálogo.",
-        )
-        self.tabla_catalogo.itemSelectionChanged.connect(self._actualizar_boton_agregar)
-        self.tabla_catalogo.doubleClicked.connect(self.agregar_seleccionado)
-
-        self.boton_agregar = QPushButton("Agregar al carrito")
-        self.boton_agregar.setEnabled(False)
-        self.boton_agregar.clicked.connect(self.agregar_seleccionado)
-
-        self.resumen = QLabel()
-        self.resumen.setProperty("clase", "resumen")
+        # El mismo catálogo de Órdenes.
+        self.catalogo = Catalogo(self, boton="Agregar al carrito")
+        self.catalogo.elegido.connect(lambda item: self.agregar_producto(item["producto_id"]))
+        self.busqueda, self.tabla_catalogo = self.catalogo.busqueda, self.catalogo.tabla
+        self.boton_agregar, self.resumen = self.catalogo.boton, self.catalogo.resumen
 
         panel_catalogo = QWidget()
         layout_catalogo = QVBoxLayout(panel_catalogo)
         layout_catalogo.setContentsMargins(0, 0, CANAL_PANEL, 0)
         layout_catalogo.setSpacing(ESPACIO_PANTALLA)
-        layout_catalogo.addLayout(barra(self.busqueda, self.boton_agregar))
+        layout_catalogo.addLayout(barra(self.busqueda, self.catalogo.categoria, self.boton_agregar))
         layout_catalogo.addWidget(self.tabla_catalogo)
         layout_catalogo.addWidget(self.resumen)
 
@@ -122,8 +106,7 @@ class PuntoVentaWidget(QWidget):
         self.boleta = QLineEdit(placeholderText="Ej: B-1043")
         self.boleta.returnPressed.connect(self.generar_venta)
 
-        self.combo_medio_pago = QComboBox()
-        self.combo_medio_pago.addItems(["Efectivo", "Tarjeta", "Transferencia"])
+        self.combo_medio_pago = combo_medio_pago()
 
         marco_total, self.totales = bloque_total()
         self.total = self.totales.total
@@ -134,9 +117,10 @@ class PuntoVentaWidget(QWidget):
         self.boton_cobrar.setProperty("clase", "primario")
         self.boton_cobrar.setEnabled(False)
         self.boton_cobrar.clicked.connect(self.generar_venta)
-        # Cobrar necesita carrito Y boleta: el botón lo dice apagándose, en vez
-        # de dejarse apretar para responder con un aviso.
+        # Cobrar necesita carrito, boleta y medio de pago: el botón lo dice
+        # apagándose, en vez de dejarse apretar para responder con un aviso.
         self.boleta.textChanged.connect(self._actualizar_boton_cobrar)
+        self.combo_medio_pago.currentIndexChanged.connect(self._actualizar_boton_cobrar)
 
         panel_carrito = QWidget()
         layout_carrito = QVBoxLayout(panel_carrito)
@@ -148,7 +132,7 @@ class PuntoVentaWidget(QWidget):
         layout_carrito.addWidget(self.cliente)
         layout_carrito.addWidget(QLabel("N.º de boleta *"))
         layout_carrito.addWidget(self.boleta)
-        layout_carrito.addWidget(QLabel("Medio de pago:"))
+        layout_carrito.addWidget(QLabel("Medio de pago *"))
         layout_carrito.addWidget(self.combo_medio_pago)
         layout_carrito.addWidget(marco_total)
         layout_carrito.addLayout(barra(self.boton_vaciar, self.boton_cobrar, estira=1))
@@ -168,61 +152,7 @@ class PuntoVentaWidget(QWidget):
     # Catálogo
     # ------------------------------------------------------------------
     def recargar_catalogo(self) -> None:
-        consulta = filtro_busqueda(
-            select(Producto).where(Producto.activo.is_(True)).order_by(Producto.nombre),
-            self.busqueda.text(),
-            Producto.nombre, Producto.marca, Producto.categoria,
-        )
-
-        with SessionLocal() as db:
-            productos = db.scalars(consulta).all()
-            filas = [
-                (p.id, p.nombre, p.marca or "", p.categoria or "", p.stock_actual, p.precio_venta)
-                for p in productos
-            ]
-
-        self.tabla_catalogo.setSortingEnabled(False)
-        self.tabla_catalogo.setRowCount(len(filas))
-        for fila, (pid, nombre, marca, categoria, stock, precio) in enumerate(filas):
-            for columna, valor in enumerate([nombre, marca]):
-                item = QTableWidgetItem(valor)
-                if columna == 0:
-                    item.setData(Qt.UserRole, pid)
-                self.tabla_catalogo.setItem(fila, columna, item)
-            celda_stock = ItemNumerico(str(stock), stock)
-            if stock <= 0:
-                celda_stock.setForeground(QColor(ALERTA))
-            self.tabla_catalogo.setItem(fila, 2, celda_stock)
-            self.tabla_catalogo.setItem(fila, 3, ItemNumerico(clp(precio), precio))
-        reordenar(self.tabla_catalogo)
-        self.resumen.setText(f"{len(filas)} producto(s) a la venta")
-        if self.busqueda.text().strip():
-            self.tabla_catalogo.aviso.setText("Ningún producto coincide con la búsqueda.")
-        else:
-            self.tabla_catalogo.aviso.setText("No hay productos activos en el catálogo.")
-        self._actualizar_boton_agregar()
-
-    def _actualizar_boton_agregar(self) -> None:
-        self.boton_agregar.setEnabled(self._producto_seleccionado() is not None)
-
-    def _producto_seleccionado(self) -> int | None:
-        fila = self.tabla_catalogo.currentRow()
-        if fila < 0:
-            return None
-        return self.tabla_catalogo.item(fila, 0).data(Qt.UserRole)
-
-    def agregar_seleccionado(self) -> None:
-        producto_id = self._producto_seleccionado()
-        if producto_id is not None:
-            self.agregar_producto(producto_id)
-
-    def agregar_desde_busqueda(self) -> None:
-        """Enter en la búsqueda: agrega lo seleccionado o, si la búsqueda dejó
-        un solo producto, ese. Escribir hasta que quede uno y apretar Enter es
-        el camino más corto para quien cobra sin soltar el teclado."""
-        if self._producto_seleccionado() is None and self.tabla_catalogo.rowCount() == 1:
-            self.tabla_catalogo.selectRow(0)
-        self.agregar_seleccionado()
+        self.catalogo.cargar()
 
     # ------------------------------------------------------------------
     # Carrito
@@ -339,7 +269,8 @@ class PuntoVentaWidget(QWidget):
         self._actualizar_boton_cobrar()
 
     def _actualizar_boton_cobrar(self) -> None:
-        self.boton_cobrar.setEnabled(bool(self.carrito) and bool(self.boleta.text().strip()))
+        self.boton_cobrar.setEnabled(bool(self.carrito) and bool(self.boleta.text().strip())
+                                     and medio_elegido(self.combo_medio_pago) is not None)
 
     # ------------------------------------------------------------------
     # Cliente
@@ -395,6 +326,13 @@ class PuntoVentaWidget(QWidget):
                 "Ingresa el número de boleta antes de generar la venta.",
             )
             return
+        medio = medio_elegido(self.combo_medio_pago)
+        if medio is None:
+            QMessageBox.warning(
+                self, "Falta el medio de pago",
+                "Elige si el cliente pagó en efectivo, con tarjeta o por transferencia.",
+            )
+            return
 
         # Revalidación justo antes de cobrar: lo que se vio en el catálogo puede
         # haber quedado desactualizado mientras se armaba el carrito. El stock
@@ -429,8 +367,6 @@ class PuntoVentaWidget(QWidget):
         impuesto, ajuste, total = self.totales.calcular(neto)
         cliente_id = self.cliente.currentData()
 
-        medio = self.combo_medio_pago.currentText().upper()
-
         with SessionLocal() as db:
             venta = Venta(
                 usuario_id=Sesion.usuario_id,
@@ -439,7 +375,7 @@ class PuntoVentaWidget(QWidget):
                 impuesto=impuesto,
                 ajuste_redondeo=ajuste,
                 total_final=total,
-                medio_pago=medio, 
+                medio_pago=medio,
             )
             db.add(venta)
             try:
@@ -480,6 +416,7 @@ class PuntoVentaWidget(QWidget):
         )
         self.carrito.clear()
         self.cliente.setCurrentIndex(-1)  # la venta siguiente parte sin cliente
+        self.combo_medio_pago.setCurrentIndex(-1)  # ni medio de pago
         self._sugerir_boleta()  # deja lista la siguiente
         self._redibujar_carrito()
         self.recargar_catalogo()
@@ -511,13 +448,8 @@ class DetalleVentaDialog(QDialog):
     def _cargar_detalle(self, venta_id: int) -> None:
         with SessionLocal() as db:
             venta = db.get(Venta, venta_id)
-            cifras = (
-                venta.total_final - venta.impuesto - venta.ajuste_redondeo, 
-                0, 
-                venta.impuesto, 
-                venta.ajuste_redondeo, 
-                venta.total_final
-            )
+            cifras = (venta.total_final - venta.impuesto - venta.ajuste_redondeo, 0,
+                      venta.impuesto, venta.ajuste_redondeo, venta.total_final)
             detalles = db.scalars(
                 select(DetalleVenta)
                 .options(joinedload(DetalleVenta.producto))  # sin esto, un SELECT por fila

@@ -11,6 +11,7 @@ va a necesitar la misma regla para cruzar nombres.
 """
 import re
 import unicodedata
+from functools import lru_cache
 
 from sqlalchemy import func, or_
 
@@ -30,6 +31,8 @@ def sin_tildes(texto: str | None) -> str:
     return "".join(c for c in descompuesto if not unicodedata.combining(c)).upper()
 
 
+# Cacheada: los combos buscables normalizan cada opción en cada tecla.
+@lru_cache(maxsize=8192)
 def normalizar(texto: str | None) -> str:
     """'12.345.678-5' -> '123456785'. Además de las tildes, se come la
     puntuación con la que se escriben RUT y patentes."""

@@ -30,7 +30,9 @@ def main() -> int:
         return 0  # se cerró el login sin ingresar
 
     ventana = VentanaPrincipal()
-    ventana.show()
+    # Maximizada: en el portátil del taller (1366×768) la ventana por defecto
+    # no alcanza para la pantalla de órdenes.
+    ventana.showMaximized()
     return app.exec()
 
 

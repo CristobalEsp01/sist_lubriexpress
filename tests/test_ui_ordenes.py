@@ -18,7 +18,7 @@ from src.models import (
     Cliente, DetalleOrden, KardexMovimiento, Orden, PagoOrden, Producto, Servicio, Usuario,
     Vehiculo,
 )
-from src.ui.ordenes import COLUMNAS_HISTORIAL
+from src.ui.ordenes import COLUMNAS_HISTORIAL, TIPOS_DESCUENTO
 
 NOMBRE_PRODUCTO = "QA Aceite de motor 10W40"
 NOMBRE_SERVICIO = "QA Cambio de aceite"
@@ -139,7 +139,8 @@ def test_mirar_el_historial_no_descarta_la_orden_en_progreso(app, taller, sin_mo
     assert widget.texto_observaciones.toPlainText() == "Ingresa con raya en la puerta"
 
 
-def test_lo_que_queda_en_el_carrito_es_lo_que_se_guarda(app, taller, sin_modales, tmp_path):
+def test_lo_que_queda_en_el_carrito_es_lo_que_se_guarda(app, taller, sin_modales, tmp_path,
+                                                        monkeypatch):
     """El camino del dinero, de punta a punta y por la pantalla.
 
     `test_triggers.py` ya prueba que insertar en detalle_ordenes descuenta y
@@ -151,24 +152,39 @@ def test_lo_que_queda_en_el_carrito_es_lo_que_se_guarda(app, taller, sin_modales
     tiene al apretar Guardar es lo que termina en la base. Y el servicio
     también: se cobra en la misma orden, pero no toca el stock ni el Kardex.
     """
+    from PySide6.QtWidgets import QInputDialog
+
     from src.ui import ordenes
 
     widget = ordenes.OrdenesWidget()
     widget._iniciar_nueva_orden(taller.vehiculo_id)
+    widget.agregar_servicio_al_carrito(taller.servicio_id)
     widget.agregar_al_carrito(taller.producto_id, 5)  # cantidad equivocada
-    widget.agregar_al_carrito(taller.producto_id, 3)
+    widget.agregar_al_carrito(taller.producto_id, 1)  # el mismo otra vez: suma a su línea
+    assert widget.tabla_carrito.rowCount() == 2
 
-    # Ordenar antes de quitar: así la fila visible deja de ser la de inserción,
-    # que es exactamente como el ingreso de mercadería llegó a quitar el
-    # producto equivocado. Acá los datos viajan en la fila, no en una lista
+    # Ordenar antes de tocar una fila: así la visible deja de ser la de
+    # inserción, que es exactamente como el ingreso de mercadería llegó a quitar
+    # el producto equivocado. Acá los datos viajan en la fila, no en una lista
     # paralela, y por eso no se descalza.
     widget.tabla_carrito.sortItems(1, Qt.DescendingOrder)
-    widget.tabla_carrito.selectRow(0)                 # la de 5
+    widget.tabla_carrito.selectRow(0)                 # la de 6
+    monkeypatch.setattr(QInputDialog, "getInt", staticmethod(lambda *a, **k: (3, True)))
+    widget.cambiar_cantidad()
+    assert widget.totales.neto.text() == "$53.700"    # 3 x 12.900 + 15.000
+    assert widget.total.text() == "$63.900"           # 63.903 con IVA, a la decena
+
+    def fila_del_servicio():
+        return next(f for f in range(widget.tabla_carrito.rowCount())
+                    if "servicio_id" in widget.tabla_carrito.item(f, 0).data(Qt.UserRole))
+
+    widget.tabla_carrito.selectRow(fila_del_servicio())
     assert widget.boton_quitar.isEnabled()
     widget.quitar_del_carrito()
     assert widget.tabla_carrito.rowCount() == 1
-    assert widget.totales.neto.text() == "$38.700"    # 3 x 12.900, no 5
-    assert widget.total.text() == "$46.053"           # con el 19 % de IVA
+    assert widget.totales.neto.text() == "$38.700"    # quedó el aceite, y con 3
+    # 46.053 con el 19 % de IVA; la ley de redondeo lo lleva a la decena.
+    assert widget.total.text() == "$46.050"
 
     widget.agregar_servicio_al_carrito(taller.servicio_id)
     assert widget.tabla_carrito.rowCount() == 2
@@ -178,14 +194,15 @@ def test_lo_que_queda_en_el_carrito_es_lo_que_se_guarda(app, taller, sin_modales
     # coincidir (la base lo prohíbe). El IVA se calcula sobre lo descontado.
     widget.tipo_descuento.setCurrentIndex(2)          # monto
     widget.valor_descuento.setValue(5000)
-    assert widget.total.text() == "$57.953"           # (53.700 - 5.000) x 1,19
+    assert widget.total.text() == "$57.950"           # (53.700 - 5.000) x 1,19 = 57.953
     widget.tipo_descuento.setCurrentIndex(1)          # porcentaje: el campo se reinicia
     assert widget.valor_descuento.value() == 0
     widget.valor_descuento.setValue(10)
     assert widget.totales.descuento.text() == "- $5.370"
-    assert widget.total.text() == "$57.513"           # 48.330 + 9.183
+    assert widget.total.text() == "$57.510"           # 48.330 + 9.183 = 57.513
     widget.folio.setText("MP-2026-001")
     widget.pagada.setChecked(True)
+    widget.combo_medio_pago.setCurrentText("Efectivo")
 
     # Soltar la selección apaga el botón. Qt conserva la celda actual, así que
     # preguntar por currentRow() lo dejaba encendido sobre una fila que ya no
@@ -212,7 +229,8 @@ def test_lo_que_queda_en_el_carrito_es_lo_que_se_guarda(app, taller, sin_modales
         assert orden.kilometraje_ingreso == 120000
         # El IVA se calcula al cobrar y queda en la orden, no se re-deriva.
         assert (int(orden.subtotal), int(orden.descuento_porcentaje), int(orden.descuento_monto),
-                int(orden.impuesto), int(orden.total_final)) == (53700, 10, 0, 9183, 57513)
+                int(orden.impuesto), int(orden.ajuste_redondeo), int(orden.total_final)
+                ) == (53700, 10, 0, 9183, -3, 57510)
         assert orden.descuento_aplicado == 5370
         assert (orden.folio_mercado_publico, orden.estado_pago) == ("MP-2026-001", True)
 
@@ -380,7 +398,7 @@ def test_la_orden_se_cierra_con_un_abono_y_el_saldo_se_cobra_despues(app, taller
     formulario, mientras la orden se arma, y el saldo en el detalle del
     historial, que es donde se busca una orden que ya se guardó.
     """
-    from PySide6.QtWidgets import QInputDialog
+    from PySide6.QtWidgets import QDialog
 
     from src.ui import ordenes
 
@@ -388,16 +406,23 @@ def test_la_orden_se_cierra_con_un_abono_y_el_saldo_se_cobra_despues(app, taller
     widget._iniciar_nueva_orden(taller.vehiculo_id)
     widget.agregar_al_carrito(taller.producto_id, 1)   # 12.900 + IVA
     widget.spin_kilometraje.setValue(120000)
+    # Sin nada que cobrar el medio de pago no importa y se ve apagado.
+    assert not widget.combo_medio_pago.isEnabled()
     # Nadie abona más de lo que vale la orden, y la orden cambia mientras se arma.
-    assert widget.abono.maximum() == 15351
+    assert widget.abono.maximum() == 15350             # 15.351, redondeado
     widget.abono.setValue(10000)
+    assert widget.combo_medio_pago.isEnabled()
+    # Con un abono, el medio se elige: la caja cuenta el efectivo por él.
+    widget.guardar_orden()
+    assert sin_modales[-1] == "Falta el medio de pago"
+    widget.combo_medio_pago.setCurrentText("Efectivo")
     widget.guardar_orden()
 
     with SessionLocal() as db:
         orden = db.scalar(select(Orden).where(Orden.vehiculo_id == taller.vehiculo_id))
         # Lo decide el trigger con la suma de los abonos, no la pantalla.
         assert not orden.estado_pago
-        assert (orden.monto_pagado, orden.saldo) == (10000, 5351)
+        assert (orden.monto_pagado, orden.saldo) == (10000, 5350)
         orden_id = orden.id
 
     # En el historial no es ni "Pagada" ni "No pagada": el mesón tiene que ver
@@ -405,25 +430,36 @@ def test_la_orden_se_cierra_con_un_abono_y_el_saldo_se_cobra_despues(app, taller
     widget.setCurrentIndex(2)
     estado = widget.tabla_historial.item(0, COLUMNAS_HISTORIAL.index("Pago"))
     assert estado.text() == "Abonada"
-    assert "saldo $5.351" in estado.toolTip()
+    assert "saldo $5.350" in estado.toolTip()
 
     dialogo = ordenes.DialogoDetalleOrden(orden_id, widget)
-    assert dialogo.saldo == 5351 and dialogo.boton_pago.isEnabled()
-    assert "Abonada $10.000 · saldo $5.351" in dialogo.info.text()
+    assert dialogo.saldo == 5350 and dialogo.boton_pago.isEnabled()
+    assert "Abonada $10.000 · saldo $5.350" in dialogo.info.text()
+
+    # Monto y medio en una sola ventana, y el medio sin elegir no pasa.
+    pago = ordenes.DialogoPago(5350)
+    pago.accept()
+    assert sin_modales[-1] == "Falta el medio de pago"
 
     # El tope del abono es el saldo, no el total: un pago se suma, no corrige.
     argumentos = {}
-    monkeypatch.setattr(QInputDialog, "getInt", staticmethod(
-        lambda *a, **k: argumentos.update(valor=a[3], minimo=a[4], maximo=a[5]) or (5351, True),
-    ))
+
+    def pagar_con_tarjeta(self):
+        argumentos.update(valor=self.monto.value(), minimo=self.monto.minimum(),
+                          maximo=self.monto.maximum())
+        self.medio.setCurrentText("Tarjeta")
+        return QDialog.Accepted
+
+    monkeypatch.setattr(ordenes.DialogoPago, "exec", pagar_con_tarjeta)
     dialogo.registrar_pago()
-    assert (argumentos["valor"], argumentos["minimo"], argumentos["maximo"]) == (5351, 1, 5351)
+    assert (argumentos["valor"], argumentos["minimo"], argumentos["maximo"]) == (5350, 1, 5350)
     assert dialogo.saldo == 0 and not dialogo.boton_pago.isEnabled()
     assert "Pagada" in dialogo.info.text()
 
     with SessionLocal() as db:
         orden = db.get(Orden, orden_id)
-        assert orden.estado_pago and orden.monto_pagado == 15351
+        assert orden.estado_pago and orden.monto_pagado == 15350
+        assert [p.medio_pago for p in orden.pagos] == ["EFECTIVO", "TARJETA"]
 
 
 def test_desde_el_historial_el_aviso_por_whatsapp_cita_el_numero_de_la_orden(app, taller,
@@ -454,35 +490,151 @@ def test_desde_el_historial_el_aviso_por_whatsapp_cita_el_numero_de_la_orden(app
     assert not ordenes.DialogoDetalleOrden(orden_id, None).boton_whatsapp.isEnabled()
 
 
-def test_el_buscador_muestra_stock_y_ubicacion_y_deja_el_producto_elegido(app, taller, monkeypatch):
-    """En el mesón hay repuestos que se llaman casi igual: el combo muestra solo
-    el nombre, así que elegir bien obligaba a abrir Inventario en paralelo."""
-    from PySide6.QtWidgets import QDialog
+def test_el_detalle_deja_ver_las_lineas_de_la_orden(app, taller):
+    """Fabián abrió una orden y la tabla de insumos medía menos de una fila: el
+    pie de totales ganó la fila del redondeo y se comió el alto que quedaba."""
+    from PySide6.QtWidgets import QTableWidget
 
     from src.ui import ordenes
-    from src.ui.selector_producto import COLUMNAS, SelectorProducto
+    from src.ui.tema import ALTO_FILA
 
-    selector = SelectorProducto(texto_inicial=NOMBRE_PRODUCTO)
-    assert selector.tabla.rowCount() == 1
-    fila = {COLUMNAS[c]: selector.tabla.item(0, c).text() for c in range(len(COLUMNAS))}
-    assert (fila["Nombre"], fila["Marca"], fila["Stock"]) == (NOMBRE_PRODUCTO, "Castrol", "10")
-    assert fila["Precio neto"] == "$12.900"
+    with SessionLocal() as db:
+        orden = Orden(vehiculo_id=taller.vehiculo_id, usuario_id=taller.usuario_id,
+                      subtotal=0, total_final=0)
+        db.add(orden)
+        db.commit()
+        orden_id = orden.id
 
-    # Seleccionar y elegir deja el id, que es lo único que viaja de vuelta.
-    selector.tabla.selectRow(0)
-    selector.elegir()
-    assert selector.elegido == taller.producto_id
+    dialogo = ordenes.DialogoDetalleOrden(orden_id, None)
+    dialogo.show()
+    app.processEvents()
+    assert dialogo.findChild(QTableWidget).viewport().height() >= 3 * ALTO_FILA
+    dialogo.close()
 
-    # Y la orden lo deja puesto en el combo, listo para agregar con su cantidad.
-    def elegir_ese_producto(self):
-        self.elegido = taller.producto_id
-        return QDialog.Accepted
+
+def test_el_catalogo_se_filtra_tecleando_y_enter_agrega_a_la_orden(app, taller, sin_modales,
+                                                                   monkeypatch):
+    """Productos y servicios en un solo buscador, con marca, stock, repisa y
+    precio a la vista. Enter agrega; si ya estaba, suma a la misma línea."""
+    from PySide6.QtCore import QEvent
+    from PySide6.QtGui import QKeyEvent
+
+    from src.ui import catalogo as modulo_catalogo
+    from src.ui import ordenes
+    from src.ui.catalogo import COLUMNAS
 
     widget = ordenes.OrdenesWidget()
-    monkeypatch.setattr(SelectorProducto, "exec", elegir_ese_producto)
-    widget.buscar_producto()
+    widget._iniciar_nueva_orden(taller.vehiculo_id)
+    catalogo = widget.catalogo
 
-    assert widget.combo_productos.currentData()["id"] == taller.producto_id
+    # Filtrar no vuelve a la base: era ir a buscar y rearmar la tabla en cada
+    # tecla lo que trababa la pantalla.
+    def sin_base():
+        raise AssertionError("filtrar no consulta la base")
+    monkeypatch.setattr(modulo_catalogo, "SessionLocal", sin_base)
+
+    catalogo.busqueda.setText("qa castrol 10w40")         # palabras sueltas, en desorden
+    (fila,) = catalogo.visibles()
+    celdas = {COLUMNAS[c]: catalogo.tabla.item(fila, c).text() for c in range(len(COLUMNAS))}
+    assert (celdas["Nombre"], celdas["Marca"]) == (NOMBRE_PRODUCTO, "Castrol")
+    assert celdas["Stock"] == "10"
+    assert celdas["Precio neto"] == "$12.900"
+
+    catalogo.busqueda.returnPressed.emit()                  # uno solo: Enter lo agrega
+    catalogo.busqueda.returnPressed.emit()                  # otra vez: suma, no duplica
+    assert widget.tabla_carrito.rowCount() == 1
+    assert widget.tabla_carrito.item(0, 1).text() == "2"
+
+    # Dos resultados y nada elegido: Enter no adivina. La flecha elige sin
+    # sacar el cursor del campo, y ahí Enter agrega.
+    catalogo.busqueda.setText("qa aceite")                 # el producto y el servicio
+    assert len(catalogo.visibles()) == 2
+    catalogo.busqueda.returnPressed.emit()
+    assert widget.tabla_carrito.rowCount() == 1
+    for _ in range(2):                                      # el aceite, y después el servicio
+        catalogo.eventFilter(catalogo.busqueda,
+                             QKeyEvent(QEvent.KeyPress, Qt.Key_Down, Qt.NoModifier))
+    assert catalogo.seleccionado() == {"servicio_id": taller.servicio_id}
+    catalogo.busqueda.returnPressed.emit()
+    assert widget.tabla_carrito.rowCount() == 2
+
+    catalogo.busqueda.setText("zzz nada se llama así zzz")
+    assert catalogo.visibles() == [] and catalogo.tabla.aviso.isVisibleTo(catalogo.tabla)
+
+
+def test_las_pestanas_y_la_categoria_filtran_junto_con_lo_escrito(app, taller):
+    """Todo / Productos / Servicios y la categoría acotan lo que deja la
+    búsqueda; no la reemplazan. Y el catálogo de la orden no pasa de su alto:
+    lo importante de la pantalla es lo que lleva la orden."""
+    from src.ui import ordenes
+    from src.ui.catalogo import TODAS
+    from src.ui.tema import ALTO_FILA
+
+    with SessionLocal() as db:
+        db.get(Producto, taller.producto_id).categoria = "QA Aceites"
+        db.get(Servicio, taller.servicio_id).categoria = "QA Mano de obra"
+        db.commit()
+
+    widget = ordenes.OrdenesWidget()
+    widget._iniciar_nueva_orden(taller.vehiculo_id)
+    catalogo = widget.catalogo
+
+    def elegidos():
+        return [catalogo.tabla.item(f, 0).data(Qt.UserRole) for f in catalogo.visibles()]
+
+    def categorias():
+        return [catalogo.categoria.itemText(i) for i in range(catalogo.categoria.count())]
+
+    catalogo.busqueda.setText("qa aceite")                    # el producto y el servicio
+    assert len(elegidos()) == 2
+    catalogo.pestanas.setCurrentIndex(2)                      # Servicios
+    assert elegidos() == [{"servicio_id": taller.servicio_id}]
+    assert "QA Mano de obra" in categorias() and "QA Aceites" not in categorias()
+
+    catalogo.pestanas.setCurrentIndex(0)                      # Todo
+    catalogo.categoria.setCurrentText("QA Aceites")
+    assert elegidos() == [{"producto_id": taller.producto_id}]
+    # Una categoría que la pestaña no tiene se suelta, en vez de dejar la
+    # lista vacía sin que se entienda por qué.
+    catalogo.pestanas.setCurrentIndex(2)
+    assert catalogo.categoria.currentText() == TODAS
+
+    assert catalogo.tabla.maximumHeight() < 7 * ALTO_FILA
+
+
+def test_en_la_ventana_minima_el_total_no_queda_tapado(taller):
+    """En el portátil del taller (1366×768) la ventana sin maximizar tapaba el
+    total con los botones. Se prueba en el mínimo de la ventana, 960×640, en
+    otro proceso y con el tema aplicado, que es lo que decide las alturas."""
+    import subprocess
+    import sys
+
+    from conftest import RAIZ
+
+    script = f"""
+import os
+os.environ["QT_QPA_PLATFORM"] = "offscreen"
+from types import SimpleNamespace
+from PySide6.QtWidgets import QApplication
+app = QApplication([])
+from src.ui import tema
+tema.aplicar(app)
+from src.auth import Sesion
+Sesion.iniciar(SimpleNamespace(id={taller.usuario_id}, nombre="QA", rol="ADMINISTRADOR"))
+from src.ui import VentanaPrincipal
+v = VentanaPrincipal()
+v.resize(960, 640)
+v.show()
+v.pestanias.setCurrentWidget(v.ordenes)
+v.ordenes._iniciar_nueva_orden({taller.vehiculo_id})
+app.processEvents()
+total, boton = v.ordenes.totales.total, v.ordenes.boton_guardar
+print(total.mapTo(v, total.rect().bottomLeft()).y(), boton.mapTo(v, boton.rect().topLeft()).y())
+"""
+    salida = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True,
+                            cwd=RAIZ, timeout=60)
+    total_abajo, botones_arriba = map(int, salida.stdout.split()[-2:])
+    assert total_abajo < botones_arriba, salida.stderr
 
 
 def test_una_orden_se_deja_abierta_se_retoma_y_se_entrega(app, taller, sin_modales, monkeypatch):
@@ -530,6 +682,81 @@ def test_una_orden_se_deja_abierta_se_retoma_y_se_entrega(app, taller, sin_modal
         assert len(orden.detalles) == 2
         # Y el producto se descontó una sola vez en todo el recorrido.
         assert db.get(Producto, taller.producto_id).stock_actual == 8
+
+
+def test_el_flyer_descuenta_aceite_y_filtros_y_sirve_una_vez(app, taller, sin_modales, monkeypatch):
+    """Flyer 10 % y gremio 15 %, solo sobre los productos de su convenio: el
+    servicio va incluido en el precio del bidón y no se descuenta. El flyer
+    viene foliado del 0001 al 1000 y cada papel se usa una vez."""
+    from PySide6.QtWidgets import QMessageBox
+
+    from src.ui import ordenes
+
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
+    with SessionLocal() as db:
+        db.get(Producto, taller.producto_id).categoria = "Aceite motor"
+        db.commit()
+        usados = set(db.scalars(select(Orden.folio_flyer).where(Orden.folio_flyer.isnot(None))))
+    folio = max(set(range(1, 1001)) - usados)
+
+    widget = ordenes.OrdenesWidget()
+    widget._iniciar_nueva_orden(taller.vehiculo_id)
+    widget.agregar_al_carrito(taller.producto_id, 1)          # 12.900, entra
+    widget.agregar_servicio_al_carrito(taller.servicio_id)    # 15.000, no entra
+    widget.spin_kilometraje.setValue(50000)
+    widget.tipo_descuento.setCurrentIndex(TIPOS_DESCUENTO.index("Flyer (10 %)"))
+    assert widget.totales.descuento.text() == "- $1.290"
+
+    widget.guardar_orden("ABIERTA")
+    assert sin_modales[-1] == "Falta el folio del flyer"
+    widget.valor_descuento.setValue(folio)
+
+    # Sin nada que descontar, el folio no se gasta.
+    fila_aceite = next(f for f in range(widget.tabla_carrito.rowCount())
+                       if "producto_id" in widget.tabla_carrito.item(f, 0).data(Qt.UserRole))
+    widget.tabla_carrito.selectRow(fila_aceite)
+    widget.quitar_del_carrito()
+    widget.guardar_orden("ABIERTA")
+    assert sin_modales[-1] == "El flyer no descuenta nada"
+    widget.agregar_al_carrito(taller.producto_id, 1)
+    widget.guardar_orden("ABIERTA")
+
+    with SessionLocal() as db:
+        orden = db.scalar(select(Orden).where(Orden.vehiculo_id == taller.vehiculo_id))
+        assert (orden.convenio, orden.folio_flyer) == ("FLYER", folio)
+        assert orden.descuento_aplicado == 1290
+        orden_id = orden.id
+
+    # Retomada, vuelve con su flyer, y el descuento sigue a las líneas nuevas.
+    widget.setCurrentIndex(1)
+    filas = [widget.tabla_abiertas.item(f, 0).text() for f in range(widget.tabla_abiertas.rowCount())]
+    widget.tabla_abiertas.selectRow(filas.index(str(orden_id)))
+    widget.retomar_orden()
+    assert widget.valor_descuento.value() == folio
+    widget.agregar_al_carrito(taller.producto_id, 1)
+    assert widget.totales.descuento.text() == "- $2.580"
+    widget.guardar_orden("ENTREGADA")
+    with SessionLocal() as db:
+        assert db.get(Orden, orden_id).descuento_aplicado == 2580
+
+    # El mismo papel no sirve para otra orden.
+    widget._iniciar_nueva_orden(taller.vehiculo_id)
+    widget.agregar_al_carrito(taller.producto_id, 1)
+    widget.spin_kilometraje.setValue(60000)
+    widget.tipo_descuento.setCurrentIndex(TIPOS_DESCUENTO.index("Flyer (10 %)"))
+    widget.valor_descuento.setValue(folio)
+    widget.guardar_orden()
+    assert sin_modales[-1] == "Flyer ya usado"
+
+    widget.tipo_descuento.setCurrentIndex(TIPOS_DESCUENTO.index("Gremio/Sindicato (15 %)"))
+    assert not widget.valor_descuento.isEnabled()
+    assert widget.totales.descuento.text() == "- $1.935"
+    widget.guardar_orden()
+    with SessionLocal() as db:
+        gremio = db.scalar(select(Orden).where(Orden.vehiculo_id == taller.vehiculo_id,
+                                               Orden.id != orden_id))
+        assert (gremio.convenio, gremio.folio_flyer) == ("GREMIO", None)
+        assert gremio.descuento_aplicado == 1935
 
 
 def test_anular_una_orden_abierta_devuelve_todo_a_la_bodega(app, taller, sin_modales, monkeypatch):
