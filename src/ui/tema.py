@@ -126,6 +126,28 @@ QTabBar::tab:selected {{
     font-weight: 600;
 }}
 
+/* La lista de reportes: se lee como navegación, no como una tabla más. */
+QListWidget[clase="navegacion"] {{
+    background: transparent;
+    border: none;
+    outline: none;
+}}
+QListWidget[clase="navegacion"]::item {{
+    padding: 8px 12px;
+    margin-bottom: 2px;
+    border-radius: 5px;
+    color: {TINTA_SUAVE};
+}}
+QListWidget[clase="navegacion"]::item:hover {{
+    background: {BORDE_SUAVE};
+    color: {TINTA};
+}}
+QListWidget[clase="navegacion"]::item:selected {{
+    background: {ACENTO_FONDO};
+    color: {ACENTO_OSCURO};
+    font-weight: 600;
+}}
+
 QTableWidget {{
     background: {SUPERFICIE};
     alternate-background-color: {ALTERNA};

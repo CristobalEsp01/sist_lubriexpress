@@ -12,7 +12,7 @@ from datetime import date, timedelta
 from PySide6.QtCharts import (
     QBarCategoryAxis, QBarSeries, QBarSet, QChart, QChartView, QHorizontalBarSeries, QValueAxis,
 )
-from PySide6.QtCore import QDate, QUrl, Qt
+from PySide6.QtCore import QDate, QLocale, QUrl, Qt
 from PySide6.QtGui import QColor, QDesktopServices, QFont, QPainter
 from PySide6.QtWidgets import (
     QComboBox, QDateEdit, QFrame, QHBoxLayout, QLabel, QLayout, QListWidget, QMessageBox,
@@ -27,10 +27,12 @@ from .comunes import (
     ItemNumerico, barra, carpeta_de_documentos, clp, con_aviso_vacio, crear_tabla,
     layout_de_pantalla, reordenar,
 )
+from .ordenes import DialogoDetalleOrden
 from .tema import ACENTO, CANAL_PANEL, ESPACIO_PANTALLA, TINTA_SUAVE
 
 CARPETA = "Reportes"
-MAX_BARRAS = 12  # más barras que eso no se leen; el detalle está en la tabla
+MAX_BARRAS = 12  # más barras de nombres que eso no se leen; el detalle está en la tabla
+CHILE = QLocale(QLocale.Spanish, QLocale.Chile)
 
 
 class Definicion:
@@ -51,22 +53,28 @@ REPORTES = [
         "Ingresos por período", "Ventas de mostrador y órdenes de trabajo, día por día.",
         reportes.COLUMNAS_INGRESOS, {2, 4, 5, 6, 7, 8}, (1, 2, 3, 4, 5, 6, 7, 8), 0, 8,
         reportes.ingresos_por_periodo),
+    # Sin gráfico: con nombres de producto largos el eje los dejaba en "...",
+    # y el orden por monto de la tabla ya es el ranking.
     Definicion(
         "Ventas por producto", "Qué se vendió y por cuánto, sumando mostrador y órdenes.",
-        reportes.COLUMNAS_PRODUCTOS, {3}, (2, 3), 3, 3,
-        reportes.ventas_por_producto, horizontal=True),
+        reportes.COLUMNAS_PRODUCTOS, {3}, (2, 3, 4), 3, 3,
+        reportes.ventas_por_producto, grafico=False),
     Definicion(
         "Por usuario", "Cuánto movió cada persona en el período.",
         reportes.COLUMNAS_USUARIOS, {2, 4, 5}, (1, 2, 3, 4, 5), 5, 5,
         reportes.por_usuario, horizontal=True),
     Definicion(
+        "Por mecánico", "Órdenes que trabajó cada mecánico en el período.",
+        reportes.COLUMNAS_MECANICOS, {2}, (1, 2), 2, 2,
+        reportes.por_mecanico, horizontal=True),
+    Definicion(
         "Órdenes con descuento", "Toda orden con descuento general, flyer o gremio, y quién la ingresó.",
         reportes.COLUMNAS_DESCUENTOS, {6, 7}, (0, 6, 7), 0, 6,
         reportes.descuentos, grafico=False),
     Definicion(
-        "Reabastecimiento", "Productos en su stock mínimo o por debajo. No depende del período.",
+        "Reabastecimiento", "Productos con mínimo que están en él o por debajo. No depende del período.",
         reportes.COLUMNAS_REABASTECIMIENTO, set(), (3, 4, 5), 5, 5,
-        reportes.reabastecimiento, fechas=False, horizontal=True),
+        reportes.reabastecimiento, fechas=False, grafico=False),
 ]
 
 
@@ -120,6 +128,7 @@ class ReportesWidget(QWidget):
         # Una lista y no pestañas dentro de otra pestaña: se ven todos de una
         # vez y cuál está elegido, sin dos filas de solapas apiladas.
         self.lista = QListWidget()
+        self.lista.setProperty("clase", "navegacion")
         self.lista.addItems([d.titulo for d in self.definiciones])
         self.lista.setCurrentRow(0)
         self.lista.setFixedWidth(190)
@@ -141,6 +150,7 @@ class ReportesWidget(QWidget):
             crear_tabla(self.definiciones[0].columnas, ancha=0, orden=0,
                         numericas=self.definiciones[0].numericas),
             "Sin datos en el período elegido.")
+        self.tabla.doubleClicked.connect(self.abrir_orden)
         self.grafico = QChartView()
         self.grafico.setRenderHint(QPainter.Antialiasing)
         self.grafico.setMinimumHeight(150)
@@ -227,6 +237,8 @@ class ReportesWidget(QWidget):
         self.tabla.setColumnCount(len(definicion.columnas))
         self.tabla.setHorizontalHeaderLabels(definicion.columnas)
         self._ajustar_cabecera(definicion)
+        self.tabla.setToolTip("Doble clic abre la orden."
+                              if definicion.funcion is reportes.descuentos else "")
         self.recargar()
 
     def _ajustar_cabecera(self, definicion: Definicion) -> None:
@@ -254,6 +266,7 @@ class ReportesWidget(QWidget):
     def recargar(self) -> None:
         definicion = self.definicion()
         desde, hasta = self._fechas()
+        ayuda = definicion.ayuda
         with SessionLocal() as db:
             if not definicion.fechas:
                 self.filas, self.por_mes = definicion.funcion(db), False
@@ -261,8 +274,15 @@ class ReportesWidget(QWidget):
                 self.filas, self.por_mes = definicion.funcion(db, desde, hasta)
             else:
                 self.filas, self.por_mes = definicion.funcion(db, desde, hasta), False
+            if definicion.funcion is reportes.reabastecimiento:
+                # Sin esto, una lista vacía se lee como "no falta nada".
+                if sin_minimo := reportes.productos_sin_minimo(db):
+                    ayuda += (f" {sin_minimo:,} productos sin mínimo no entran: se fija en "
+                              "Inventario → Mínimo por categoría.").replace(",", ".")
 
-        self.ayuda.setText(definicion.ayuda)
+        self.ayuda.setText(ayuda)
+        self.tabla.aviso.setText("Sin datos en el período elegido." if definicion.fechas
+                                 else "Nada por reponer entre los productos con mínimo.")
         self._llenar_tabla(definicion)
         self._llenar_resumen(definicion)
         self.grafico.setVisible(definicion.grafico)
@@ -272,11 +292,16 @@ class ReportesWidget(QWidget):
     def _texto(self, definicion: Definicion, columna: int, valor) -> str:
         if isinstance(valor, date):
             return reportes.rotulo_de_fecha(valor, self.por_mes)
+        # Los únicos decimales de los reportes son participaciones.
+        if isinstance(valor, float):
+            return f"{valor:.1f} %".replace(".", ",")
         if isinstance(valor, (int, float)) and columna in definicion.pesos:
             return clp(valor)
         return str(valor)
 
     def _llenar_tabla(self, definicion: Definicion) -> None:
+        if definicion.funcion is reportes.ingresos_por_periodo:
+            self.tabla.horizontalHeaderItem(0).setText("Mes" if self.por_mes else "Fecha")
         self.tabla.setSortingEnabled(False)
         self.tabla.setRowCount(len(self.filas))
         for f, fila in enumerate(self.filas):
@@ -315,11 +340,17 @@ class ReportesWidget(QWidget):
             cifras = [(clp(total), "total del período"),
                       (clp(sum(f[6] for f in self.filas)), "IVA"),
                       (f"{sum(f[1] + f[3] for f in self.filas)}", "documentos")]
+        elif definicion.funcion is reportes.ventas_por_producto:
+            cifras = [(clp(total), "vendido en el período"),
+                      (f"{sum(f[2] for f in self.filas)}", "unidades"),
+                      (f"{len(self.filas)}", "productos distintos")]
         elif definicion.funcion is reportes.descuentos:
-            cifras = [(clp(total), "descontado"),
-                      (f"{len(self.filas)}", "órdenes con descuento")]
+            por_tipo = [sum(f[5].startswith(tipo) for f in self.filas)
+                        for tipo in ("General", "Flyer", "Gremio")]
+            cifras = [(clp(total), "descontado"), (f"{len(self.filas)}", "órdenes"),
+                      *zip(map(str, por_tipo), ("generales", "con flyer", "gremio/sindicato"))]
         elif definicion.funcion is reportes.reabastecimiento:
-            cifras = [(f"{len(self.filas)}", "productos bajo el mínimo"),
+            cifras = [(f"{len(self.filas)}", "productos por reponer"),
                       (f"{total}", "unidades que faltan")]
         else:
             cifras = [(clp(total), "total del período"),
@@ -365,6 +396,9 @@ class ReportesWidget(QWidget):
         chart.legend().hide()
         chart.setBackgroundVisible(False)
         chart.setMargins(chart.margins().__class__(0, 0, 0, 0))
+        # Pesos chilenos en el eje: $13.005.390, no $13,005,390.
+        chart.setLocalizeNumbers(True)
+        chart.setLocale(CHILE)
         if definicion.horizontal and len(self.filas) > MAX_BARRAS:
             chart.setTitle(f"Los {MAX_BARRAS} mayores de {len(self.filas)}")
 
@@ -379,14 +413,22 @@ class ReportesWidget(QWidget):
         categorias.append([etiqueta(fila[0]) for fila in filas] or ["—"])
         categorias.setLabelsColor(QColor(TINTA_SUAVE))
         valores = QValueAxis()
-        valores.setLabelFormat("$%'.0f" if definicion.graficada in definicion.pesos else "%.0f")
+        valores.setLabelFormat("$%.0f" if definicion.graficada in definicion.pesos else "%.0f")
         valores.setLabelsColor(QColor(TINTA_SUAVE))
         for eje, lado in ((categorias, Qt.AlignLeft if definicion.horizontal else Qt.AlignBottom),
                           (valores, Qt.AlignBottom if definicion.horizontal else Qt.AlignLeft)):
             eje.setLabelsFont(QFont("", 8))
             chart.addAxis(eje, lado)
             serie.attachAxis(eje)
+        valores.applyNiceNumbers()   # marcas redondas: $5.000.000 y no $3.251.348
         self.grafico.setChart(chart)
+
+    def abrir_orden(self, indice) -> None:
+        """Desde el reporte de descuentos, la orden entera: qué se le
+        descontó y a qué."""
+        if self.definicion().funcion is not reportes.descuentos:
+            return
+        DialogoDetalleOrden(int(self.tabla.item(indice.row(), 0).text()), self).exec()
 
     # ------------------------------------------------------------------
     # Exportar

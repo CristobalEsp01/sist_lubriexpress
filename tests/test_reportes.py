@@ -9,7 +9,9 @@ from sqlalchemy import select
 from conftest import patente_de_prueba, rut_de_prueba
 from src import reportes
 from src.auth import Sesion
-from src.models import Cliente, DetalleOrden, DetalleVenta, Orden, Producto, Usuario, Vehiculo, Venta
+from src.models import (
+    Cliente, DetalleOrden, DetalleVenta, Mecanico, Orden, Producto, Usuario, Vehiculo, Venta,
+)
 from src.xlsx import leer_xlsx
 
 DIA = date(2019, 3, 10)  # antes de los datos migrados: no choca con nada
@@ -47,7 +49,8 @@ def test_los_cuatro_reportes_cuadran_con_lo_guardado(db, app, tmp_path, monkeypa
     # El día `hasta` entra completo, y un rango largo se agrupa por mes.
     assert reportes.ingresos_por_periodo(db, DIA, date(2019, 3, 11))[0][1][8] == 5950
     assert reportes.ingresos_por_periodo(db, DIA, date(2019, 12, 31))[1] is True
-    assert reportes.ventas_por_producto(db, DIA, DIA) == [(producto.nombre, "Mobil", 3, 30000)]
+    # Con un solo producto vendido, es el 100 % de lo vendido.
+    assert reportes.ventas_por_producto(db, DIA, DIA) == [(producto.nombre, "Mobil", 3, 30000, 100.0)]
     assert reportes.por_usuario(db, DIA, DIA) == [(usuario.nombre, 1, 23798, 1, 11900, 35698)]
     db.refresh(producto)
     assert (producto.nombre, "Mobil", "", 7, 20, 13) in reportes.reabastecimiento(db)  # 10 - 3 vendidos
@@ -93,6 +96,7 @@ def test_los_cuatro_reportes_cuadran_con_lo_guardado(db, app, tmp_path, monkeypa
     widget.lista.setCurrentRow(titulos.index("Reabastecimiento"))   # no usa fechas
     assert not widget.rango.isEnabled()
     assert widget.tabla.columnCount() == len(reportes.COLUMNAS_REABASTECIMIENTO)
+    widget.filas = [("Aceite 10W40", "Mobil", "Aceite motor", 1, 3, 2)]
     ruta = widget.exportar_a_carpeta(tmp_path)
     assert ruta.name == "reabastecimiento_20190301_20190331.xlsx"
     exportado = leer_xlsx(ruta)
@@ -175,3 +179,102 @@ def test_al_abrir_se_ve_el_resumen_y_la_serie_en_el_tiempo_va_entera(app, monkey
     barras = widget.grafico.chart().series()[0].barSets()[0]
     assert barras.count() == 20 and barras.at(19) == 20000
     assert widget.grafico.chart().title() == ""
+
+
+def test_por_mecanico_cuenta_las_ordenes_de_cada_uno(db):
+    """Quién trabajó más autos. Las órdenes de antes del mecánico salen como
+    'Sin asignar', y una anulada no se trabajó."""
+    usuario = Usuario(nombre=f"Mesón {rut_de_prueba()}", username=f"qa_rep_{rut_de_prueba()}",
+                      password_hash="x", rol="USUARIO_NORMAL")
+    mecanico = Mecanico(nombre=f"QA Mecánico reporte {rut_de_prueba()}")
+    vehiculo = Vehiculo(cliente=Cliente(nombre_completo="Cliente mecánico"),
+                        patente=patente_de_prueba())
+    db.add_all([usuario, mecanico, vehiculo])
+    db.flush()
+    for mec, total, estado in ((mecanico, 10000, "ENTREGADA"), (mecanico, 5000, "ENTREGADA"),
+                               (None, 2000, "ENTREGADA"), (mecanico, 9999, "ANULADA")):
+        db.add(Orden(vehiculo=vehiculo, usuario=usuario, mecanico=mec, estado=estado,
+                     fecha_creacion=datetime(2019, 3, 10, 12), subtotal=total, total_final=total))
+    db.flush()
+
+    assert reportes.por_mecanico(db, DIA, DIA) == [
+        (mecanico.nombre, 2, 15000), ("Sin asignar", 1, 2000),
+    ]
+
+
+def test_reabastecimiento_lista_solo_lo_que_tiene_minimo(db):
+    """Sin mínimo no hay a qué reponer: con el mínimo en 0 de lo migrado, la
+    lista traía 991 productos y decía que faltaban 0 unidades."""
+    sin_minimo_antes = reportes.productos_sin_minimo(db)
+    bajo = Producto(nombre=f"QA bajo el mínimo {rut_de_prueba()}", precio_costo=1, precio_venta=2,
+                    stock_actual=1, stock_minimo=3)
+    justo = Producto(nombre=f"QA en el mínimo {rut_de_prueba()}", precio_costo=1, precio_venta=2,
+                     stock_actual=3, stock_minimo=3)
+    sin_minimo = Producto(nombre=f"QA sin mínimo {rut_de_prueba()}", precio_costo=1, precio_venta=2,
+                          stock_actual=0, stock_minimo=0)
+    db.add_all([bajo, justo, sin_minimo])
+    db.flush()
+
+    nombres = [fila[0] for fila in reportes.reabastecimiento(db)]
+    assert bajo.nombre in nombres and justo.nombre in nombres
+    assert sin_minimo.nombre not in nombres
+    assert nombres.index(bajo.nombre) < nombres.index(justo.nombre)   # lo que más falta, primero
+    assert reportes.productos_sin_minimo(db) == sin_minimo_antes + 1
+
+
+def test_la_pantalla_grafica_solo_lo_que_se_lee(app, monkeypatch):
+    """Un gráfico de 12 productos con el nombre cortado en '...' no decía nada
+    que la tabla no dijera mejor."""
+    from src.ui import reportes as pantalla
+
+    monkeypatch.setattr(Sesion, "rol", "ADMINISTRADOR")
+    widget = pantalla.ReportesWidget()
+
+    titulos = [d.titulo for d in widget.definiciones]
+    assert titulos == ["Ingresos por período", "Ventas por producto", "Por usuario",
+                       "Por mecánico", "Órdenes con descuento", "Reabastecimiento"]
+    con_grafico = {d.titulo for d in widget.definiciones if d.grafico}
+    assert con_grafico == {"Ingresos por período", "Por usuario", "Por mecánico"}
+
+    # Los ejes en pesos chilenos y con marcas redondas.
+    widget.lista.setCurrentRow(0)
+    widget.filas = [(DIA, 1, 13005390, 0, 0, 10928899, 2076491, 0, 13005390)]
+    widget._dibujar_grafico(widget.definicion())
+    chart = widget.grafico.chart()
+    eje = next(e for e in chart.axes() if e.orientation() == Qt.Vertical)
+    assert chart.localizeNumbers() and eje.labelFormat() == "$%.0f"
+    assert eje.max() == 15000000
+
+    # La participación se lee como porcentaje, con coma.
+    widget.lista.setCurrentRow(titulos.index("Ventas por producto"))
+    assert widget.grafico.isHidden()
+    widget.filas = [("Aceite", "Mobil", 3, 30000, 75.0), ("Filtro", "Mann", 1, 10000, 25.0)]
+    widget._llenar_tabla(widget.definicion())
+    assert widget.tabla.item(0, 4).text() == "75,0 %"
+
+    # Descuentos: el resumen separa los tres tipos, y doble clic abre la orden.
+    abiertas = []
+    monkeypatch.setattr(pantalla.DialogoDetalleOrden, "__init__",
+                        lambda self, orden_id, parent=None: abiertas.append(orden_id))
+    monkeypatch.setattr(pantalla.DialogoDetalleOrden, "exec", lambda self: 0)
+    widget.lista.setCurrentRow(titulos.index("Órdenes con descuento"))
+    widget.filas = [
+        (7, DIA, "Ana", "AB1234", "Paloma", "Flyer N° 0042 (10 %)", 1000, 9000),
+        (8, DIA, "Luis", "CD5678", "Paloma", "Gremio/Sindicato (15 %)", 1500, 8500),
+        (9, DIA, "Eva", "EF9012", "Paloma", "General (monto)", 500, 9500),
+        (10, DIA, "Tom", "GH3456", "Paloma", "General (10 %)", 800, 7200),
+    ]
+    widget._llenar_tabla(widget.definicion())
+    widget._llenar_resumen(widget.definicion())
+    cifras = [widget.resumen.itemAt(i).widget().findChild(QLabel).text()
+              for i in range(widget.resumen.count()) if widget.resumen.itemAt(i).widget()]
+    assert cifras == ["$3.800", "4", "2", "1", "1"]   # descontado, órdenes, general, flyer, gremio
+    fila = next(f for f in range(widget.tabla.rowCount()) if widget.tabla.item(f, 0).text() == "8")
+    widget.tabla.selectRow(fila)
+    widget.abrir_orden(widget.tabla.model().index(fila, 0))
+    assert abiertas == [8]
+
+    # Reabastecimiento sin gráfico, y dice cuántos productos no tienen mínimo.
+    widget.lista.setCurrentRow(titulos.index("Reabastecimiento"))
+    assert widget.grafico.isHidden()
+    assert "sin mínimo" in widget.ayuda.text()

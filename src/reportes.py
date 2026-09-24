@@ -1,5 +1,6 @@
 """Reportería (Propuesta 3.2, semana 3): ingresos por período, ventas por
-producto, actividad por usuario, órdenes con descuento y reabastecimiento. Sin Qt: cada función
+producto, actividad por usuario y por mecánico, órdenes con descuento y
+reabastecimiento. Sin Qt: cada función
 devuelve filas listas para una tabla o para exportar.
 
 Las cifras salen de lo guardado en los documentos (`total_final`,
@@ -12,7 +13,9 @@ from datetime import date, datetime, time, timedelta
 from sqlalchemy import func, select, text
 
 from . import convenios
-from .models import Cliente, DetalleOrden, DetalleVenta, Orden, Producto, Usuario, Vehiculo, Venta
+from .models import (
+    Cliente, DetalleOrden, DetalleVenta, Mecanico, Orden, Producto, Usuario, Vehiculo, Venta,
+)
 
 # Una orden anulada no se hizo: su stock volvió a la bodega y no puede seguir
 # contándose como ingreso ni como producto vendido.
@@ -21,8 +24,11 @@ VIGENTE = Orden.estado != "ANULADA"
 
 COLUMNAS_INGRESOS = ["Fecha", "Ventas", "Total ventas", "Órdenes", "Total órdenes", "Neto", "IVA",
                      "Ajuste", "Total"]
-COLUMNAS_PRODUCTOS = ["Producto", "Marca", "Cantidad", "Monto neto"]
+COLUMNAS_PRODUCTOS = ["Producto", "Marca", "Cantidad", "Monto neto", "% del total"]
 COLUMNAS_USUARIOS = ["Usuario", "Ventas", "Total ventas", "Órdenes", "Total órdenes", "Total"]
+COLUMNAS_MECANICOS = ["Mecánico", "Órdenes", "Total órdenes"]
+# Las órdenes guardadas antes de que existiera el mecánico.
+SIN_MECANICO = "Sin asignar"
 COLUMNAS_DESCUENTOS = ["N° OT", "Fecha", "Cliente", "Patente", "Ingresó", "Tipo de descuento",
                        "Descuento", "Total"]
 COLUMNAS_REABASTECIMIENTO = ["Producto", "Marca", "Categoría", "Stock", "Mínimo", "Faltante"]
@@ -80,8 +86,10 @@ def ventas_por_producto(db, desde: date, hasta: date) -> list[tuple]:
         for nombre, marca, cantidad, precio in db.execute(consulta):
             a = acumulado[(nombre, marca or "")]
             a[0] += cantidad; a[1] += int(cantidad * precio)
+    total = sum(monto for _, monto in acumulado.values()) or 1
     return sorted(
-        ((nombre, marca, cantidad, monto) for (nombre, marca), (cantidad, monto) in acumulado.items()),
+        ((nombre, marca, cantidad, monto, round(100 * monto / total, 1))
+         for (nombre, marca), (cantidad, monto) in acumulado.items()),
         key=lambda f: (-f[3], f[0]),
     )
 
@@ -105,6 +113,20 @@ def por_usuario(db, desde: date, hasta: date) -> list[tuple]:
         ((nombre, nv, tv, no, to, tv + to) for nombre, (nv, tv, no, to) in acumulado.items()),
         key=lambda f: (-f[5], f[0]),
     )
+
+
+def por_mecanico(db, desde: date, hasta: date) -> list[tuple]:
+    """Quién trabajó los autos: órdenes y su total. Las ventas de mostrador no
+    tienen mecánico."""
+    ini, fin = _rango(desde, hasta)
+    filas = db.execute(
+        select(Mecanico.nombre, func.count(Orden.id), func.coalesce(func.sum(Orden.total_final), 0))
+        .select_from(Orden).outerjoin(Orden.mecanico)
+        .where(Orden.fecha_creacion >= ini, Orden.fecha_creacion < fin, VIGENTE)
+        .group_by(Mecanico.nombre)
+    )
+    return sorted(((nombre or SIN_MECANICO, n, int(total)) for nombre, n, total in filas),
+                  key=lambda f: (-f[2], f[0]))
 
 
 def descuentos(db, desde: date, hasta: date) -> list[tuple]:
@@ -131,11 +153,22 @@ def descuentos(db, desde: date, hasta: date) -> list[tuple]:
 
 
 def reabastecimiento(db) -> list[tuple]:
-    """La vista `vw_stock_critico`, ordenada por lo que falta para el mínimo."""
+    """La vista `vw_stock_critico`, ordenada por lo que falta para el mínimo.
+
+    Solo lo que tiene mínimo: con el 0 que trae todo lo migrado, cualquier
+    producto agotado entraba a la lista sin que faltara nada que comprar.
+    """
     return [
         (nombre, marca or "", categoria or "", stock, minimo, minimo - stock)
         for nombre, marca, categoria, stock, minimo in db.execute(text(
             'SELECT "nombre", "marca", "categoria", "stock_actual", "stock_minimo" FROM "vw_stock_critico" '
+            'WHERE "stock_minimo" > 0 '
             'ORDER BY ("stock_minimo" - "stock_actual") DESC, "nombre"'
         ))
     ]
+
+
+def productos_sin_minimo(db) -> int:
+    """Los activos que el reabastecimiento no puede vigilar."""
+    return db.scalar(select(func.count(Producto.id))
+                     .where(Producto.activo, Producto.stock_minimo == 0))

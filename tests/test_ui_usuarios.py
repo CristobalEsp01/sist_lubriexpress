@@ -79,7 +79,7 @@ def test_el_rol_manda_en_inventario_y_en_las_pestanas(app, sesion, avisos, rol, 
 
     ventana = VentanaPrincipal()
     assert ventana.pestanias.count() == pestanas
-    assert ventana.reportes.lista.count() == (5 if administra else 1)   # solo Reabastecimiento
+    assert ventana.reportes.lista.count() == (6 if administra else 1)   # solo Reabastecimiento
     if pestanas == 7:
         assert ventana.pestanias.tabText(6) == "Usuarios"
         ventana.pestanias.setCurrentIndex(6)
