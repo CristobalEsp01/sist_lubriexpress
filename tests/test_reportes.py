@@ -147,8 +147,8 @@ def test_el_reporte_de_descuentos_junta_los_tres_tipos_y_quien_ingreso(db, app, 
 
     monkeypatch.setattr(Sesion, "rol", "SUPERVISOR")
     widget = ReportesWidget()
-    assert [d.titulo for d in widget.definiciones] == ["Reabastecimiento"]
-    assert not widget.rango.isEnabled()
+    assert [d.titulo for d in widget.definiciones] == ["Ingresos por período", "Reabastecimiento"]
+    assert widget.rango.isEnabled()                 # Ingresos, el primero, usa el período
 
     monkeypatch.setattr(Sesion, "rol", "ADMINISTRADOR")
     widget = ReportesWidget()

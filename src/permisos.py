@@ -16,9 +16,12 @@ PERMISOS = {
     "inventario": {"SUPERVISOR", "ADMINISTRADOR"},
     # El costo en los listados y el inventario valorizado: lo que vale la bodega.
     "costos": {"ADMINISTRADOR"},
-    # Los reportes de plata (ingresos, ventas, usuarios, descuentos). El de
-    # reabastecimiento lo ve cualquiera: es la lista de compras.
+    # Los reportes de plata (ventas por producto, por usuario, por mecánico,
+    # descuentos). El de reabastecimiento lo ve cualquiera: es la lista de compras.
     "reportes": {"ADMINISTRADOR"},
+    # Ingresos por período. Aparte de "reportes" para poder cerrarlo de nuevo
+    # sin tocar la pantalla: hoy lo ven todos.
+    "ingresos": {"USUARIO_NORMAL", "SUPERVISOR", "ADMINISTRADOR"},
     # Dar de alta usuarios y mecánicos, y asignar roles.
     "usuarios": {"ADMINISTRADOR"},
 }

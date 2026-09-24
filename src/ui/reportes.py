@@ -37,22 +37,24 @@ CHILE = QLocale(QLocale.Spanish, QLocale.Chile)
 
 class Definicion:
     """Un reporte: cómo se llama, qué columnas tiene, cuál resume y cómo se
-    grafica. `fechas` dice si el cálculo depende del período elegido, y
-    `grafico` si tiene uno: una lista de órdenes no tiene forma que mirar."""
+    grafica. `fechas` dice si el cálculo depende del período elegido,
+    `grafico` si tiene uno (una lista de órdenes no tiene forma que mirar) y
+    `permiso` quién lo ve (permisos.py); sin permiso, lo ve cualquiera."""
 
     def __init__(self, titulo, ayuda, columnas, pesos, numericas, orden, graficada,
-                 funcion, fechas=True, horizontal=False, grafico=True):
+                 funcion, fechas=True, horizontal=False, grafico=True, permiso="reportes"):
         self.titulo, self.ayuda, self.columnas = titulo, ayuda, columnas
         self.pesos, self.numericas, self.orden = pesos, numericas, orden
         self.graficada, self.funcion = graficada, funcion
         self.fechas, self.horizontal, self.grafico = fechas, horizontal, grafico
+        self.permiso = permiso
 
 
 REPORTES = [
     Definicion(
         "Ingresos por período", "Ventas de mostrador y órdenes de trabajo, día por día.",
         reportes.COLUMNAS_INGRESOS, {2, 4, 5, 6, 7, 8}, (1, 2, 3, 4, 5, 6, 7, 8), 0, 8,
-        reportes.ingresos_por_periodo),
+        reportes.ingresos_por_periodo, permiso="ingresos"),
     # Sin gráfico: con nombres de producto largos el eje los dejaba en "...",
     # y el orden por monto de la tabla ya es el ranking.
     Definicion(
@@ -74,7 +76,7 @@ REPORTES = [
     Definicion(
         "Reabastecimiento", "Productos con mínimo que están en él o por debajo. No depende del período.",
         reportes.COLUMNAS_REABASTECIMIENTO, set(), (3, 4, 5), 5, 5,
-        reportes.reabastecimiento, fechas=False, grafico=False),
+        reportes.reabastecimiento, fechas=False, grafico=False, permiso=None),
 ]
 
 
@@ -95,10 +97,7 @@ def rangos(hoy: date) -> list[tuple[str, date, date]]:
 class ReportesWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        # Las cifras de plata son del administrador; el resto ve solo la lista
-        # de compras (permisos.py).
-        self.definiciones = [d for d in REPORTES
-                             if puede("reportes") or d.funcion is reportes.reabastecimiento]
+        self.definiciones = [d for d in REPORTES if d.permiso is None or puede(d.permiso)]
         self.hoy = date.today()
         self.filas: list[list] = []
         self.por_mes = False
