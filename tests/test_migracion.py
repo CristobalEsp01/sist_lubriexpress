@@ -120,8 +120,10 @@ def test_la_migracion_carga_lo_que_cuadra_y_cuenta_lo_que_no(db, planillas):
     assert (con_descuento.subtotal, con_descuento.descuento_monto, con_descuento.impuesto,
             con_descuento.total_final) == (10000, 1000, 1710, 10710)
     assert con_descuento.usuario_id == tecnico.id and con_descuento.estado_pago
+    # El técnico es también el mecánico: es quien trabajó el auto.
+    assert con_descuento.mecanico.nombre == tecnico.nombre
     assert con_descuento.fecha_creacion == fecha_excel("46000")
-    assert ordenes["#2"].usuario_id == sistema.id
+    assert ordenes["#2"].usuario_id == sistema.id and ordenes["#2"].mecanico is None
     de_p2 = {o.notas.split("(")[1].split(")")[0]: o for o in
              db.scalars(select(Vehiculo).where(Vehiculo.patente == p2)).one().ordenes}
     assert set(de_p2) == {"#3", "#4"}
@@ -155,6 +157,7 @@ def test_la_migracion_carga_lo_que_cuadra_y_cuenta_lo_que_no(db, planillas):
     assert informe.cargados == {
         "usuarios": 2, "clientes": 3, "vehiculos": 2, "ordenes": 4,
         "productos": 2, "kardex (stock inicial)": 1, "servicios": 1, "ubicaciones": 2,
+        "mecanicos": 1,
     }
     assert dict(informe.descartes) == {
         ("clientes", "homónimo fundido con otro teléfono (se conservó el primero)"): 1,

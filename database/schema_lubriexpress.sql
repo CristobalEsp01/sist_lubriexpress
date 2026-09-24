@@ -108,6 +108,18 @@ CREATE TABLE "servicios" (
 );
 
 -- ---------------------------------------------------------------------
+-- Tabla de Mecánicos
+-- ---------------------------------------------------------------------
+-- Quien trabajó el auto, que no siempre es quien registró la orden: hay
+-- mecánicos sin cuenta en el sistema. Sin login, solo el nombre que sale en la
+-- orden y su PDF. Se desactivan en vez de borrarse, porque tienen órdenes.
+CREATE TABLE "mecanicos" (
+  "id" SERIAL PRIMARY KEY,
+  "nombre" VARCHAR(100) NOT NULL UNIQUE,
+  "activo" BOOLEAN NOT NULL DEFAULT TRUE
+);
+
+-- ---------------------------------------------------------------------
 -- Tabla de Órdenes de Trabajo
 -- ---------------------------------------------------------------------
 CREATE TABLE "ordenes" (
@@ -140,6 +152,8 @@ CREATE TABLE "ordenes" (
   -- descuento_monto; acá queda cuál fue y el folio del flyer.
   "convenio" VARCHAR(20) CHECK ("convenio" IN ('FLYER', 'GREMIO')),
   "folio_flyer" INT CHECK ("folio_flyer" BETWEEN 1 AND 1000),
+  -- La pantalla lo exige; NULL en las órdenes guardadas antes de que existiera.
+  "mecanico_id" INT REFERENCES "mecanicos"("id"),
   CONSTRAINT descuento_exclusivo_orden
       CHECK (NOT ("descuento_porcentaje" > 0 AND "descuento_monto" > 0)),
   CONSTRAINT flyer_con_folio

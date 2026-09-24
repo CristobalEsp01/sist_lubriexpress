@@ -28,9 +28,10 @@ from collections import Counter  # noqa: E402
 
 from sqlalchemy import select, text  # noqa: E402
 
+from scripts.migrar_sistema_antiguo import MARCA_NOTAS, USUARIO_MIGRACION  # noqa: E402
 from scripts.respaldar import respaldar  # noqa: E402
 from src.convenios import recategorizar  # noqa: E402
-from src.models import Producto, Ubicacion  # noqa: E402
+from src.models import Mecanico, Orden, Producto, Ubicacion, Usuario  # noqa: E402
 from src.ubicaciones import detectar  # noqa: E402
 
 
@@ -308,6 +309,29 @@ CREATE UNIQUE INDEX flyer_de_un_solo_uso ON "ordenes"("folio_flyer")
   WHERE "estado" <> 'ANULADA';''',
         ),
     ),
+    Paso(
+        nombre="mecanicos",
+        comprobacion="SELECT to_regclass('public.mecanicos') IS NOT NULL",
+        sql='''
+CREATE TABLE "mecanicos" (
+  "id" SERIAL PRIMARY KEY,
+  "nombre" VARCHAR(100) NOT NULL UNIQUE,
+  "activo" BOOLEAN NOT NULL DEFAULT TRUE
+);
+''',
+    ),
+    Paso(
+        nombre="ordenes.mecanico_id",
+        comprobacion="""
+            SELECT EXISTS (SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'ordenes' AND column_name = 'mecanico_id')
+        """,
+        sql='''
+ALTER TABLE "ordenes"
+  ADD COLUMN "mecanico_id" INT REFERENCES "mecanicos"("id");
+''',
+        declara=('"mecanico_id" INT REFERENCES "mecanicos"("id")',),
+    ),
 ]
 
 # Lo que se cuenta antes y después. Un cambio de esquema no borra filas; si la
@@ -372,6 +396,35 @@ def recategorizar_productos(db, aplicar: bool) -> Counter:
     return cambios
 
 
+
+
+def mecanicos_de_lo_migrado(db, aplicar: bool) -> Counter:
+    """Los técnicos del sistema antiguo como mecánicos de sus órdenes.
+
+    Las bases migradas antes de que existiera `mecanicos` los tienen solo como
+    el usuario de la orden (la migración de hoy ya pone los dos). El usuario se queda como está: quién registró
+    una orden del sistema antiguo no se sabe. Solo mira órdenes migradas sin
+    mecánico, así que repetirlo no cambia nada; sin `aplicar`, solo cuenta
+    cuántas órdenes tiene cada técnico.
+    """
+    ordenes = db.execute(
+        select(Orden, Usuario.nombre).join(Orden.usuario)
+        .where(Orden.notas.startswith(MARCA_NOTAS), Orden.mecanico_id.is_(None),
+               Usuario.username != USUARIO_MIGRACION)
+    ).all()
+    mecanicos = {m.nombre: m for m in db.scalars(select(Mecanico))}
+    cuenta = Counter()
+    for orden, nombre in ordenes:
+        cuenta[nombre] += 1
+        if aplicar:
+            if nombre not in mecanicos:
+                mecanicos[nombre] = Mecanico(nombre=nombre)
+                db.add(mecanicos[nombre])
+            orden.mecanico = mecanicos[nombre]
+    db.flush()
+    return cuenta
+
+
 def conteos(conexion) -> dict[str, int]:
     return {tabla: conexion.execute(text(f'SELECT count(*) FROM "{tabla}"')).scalar()
             for tabla in TABLAS_VERIFICADAS}
@@ -391,8 +444,12 @@ def main(argv: list[str]) -> int:
     with SessionLocal() as db:
         cuantos, donde = rellenar_ubicaciones(db, aplicar=False)
         categorias = recategorizar_productos(db, aplicar=False)
+        # Sin la columna no hay dónde enlazarlos: en ese caso se cuentan
+        # después de aplicar el esquema.
+        sin_columna = any(paso.nombre == "ordenes.mecanico_id" for paso in falta)
+        tecnicos = Counter() if sin_columna else mecanicos_de_lo_migrado(db, aplicar=False)
 
-    if not falta and not cuantos and not categorias:
+    if not falta and not cuantos and not categorias and not tecnicos:
         print("El esquema ya está al día y no hay datos por corregir.")
         return 0
 
@@ -446,7 +503,24 @@ def main(argv: list[str]) -> int:
         else:
             print("   Se dejó como estaba. Se puede correr después.")
 
-    print("\n5. Verificación")
+    if sin_columna:
+        with SessionLocal() as db:
+            tecnicos = mecanicos_de_lo_migrado(db, aplicar=False)
+    if tecnicos:
+        print("\n5. Técnicos del sistema antiguo como mecánicos")
+        for nombre, cuantas in sorted(tecnicos.items()):
+            print(f"   {nombre}: {cuantas} orden(es)")
+        pregunta = (f"   ¿Crearlos como mecánicos y enlazar sus {tecnicos.total()} "
+                    "orden(es)? [s/N] ")
+        if input(pregunta).strip().lower() == "s":
+            with SessionLocal() as db:
+                enlazadas = mecanicos_de_lo_migrado(db, aplicar=True)
+                db.commit()
+            print(f"   + {len(enlazadas)} mecánico(s), {enlazadas.total()} orden(es)")
+        else:
+            print("   Se dejó como estaba. Se puede correr después.")
+
+    print("\n6. Verificación")
     with engine.connect() as conexion:
         despues, restantes = conteos(conexion), pendientes(conexion)
     for tabla, cuantas in antes.items():

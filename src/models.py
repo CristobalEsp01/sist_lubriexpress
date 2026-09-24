@@ -108,6 +108,16 @@ class Servicio(Base):
     activo = Column(Boolean, default=True, nullable=False)
 
 
+class Mecanico(Base):
+    """Quien trabajó el auto. Sin cuenta en el sistema: solo el nombre."""
+
+    __tablename__ = "mecanicos"
+
+    id = Column(Integer, primary_key=True, index=True)
+    nombre = Column(String(100), unique=True, nullable=False)
+    activo = Column(Boolean, default=True, nullable=False)
+
+
 class Orden(Base):
     __tablename__ = "ordenes"
 
@@ -132,9 +142,12 @@ class Orden(Base):
     # Flyer o gremio (src/convenios.py); los pesos van en descuento_monto.
     convenio = Column(String(20))
     folio_flyer = Column(Integer)   # único entre las no anuladas
+    # Quien trabajó el auto; `usuario` es quien registró la orden.
+    mecanico_id = Column(Integer, ForeignKey("mecanicos.id"))
 
     vehiculo = relationship("Vehiculo", back_populates="ordenes")
     usuario = relationship("Usuario")
+    mecanico = relationship("Mecanico")
     detalles = relationship("DetalleOrden", back_populates="orden")
     pagos = relationship("PagoOrden", back_populates="orden")
 

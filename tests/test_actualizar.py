@@ -146,3 +146,29 @@ def test_los_productos_genericos_toman_su_tipo_del_nombre(db):
     assert (polen.categoria, pack.categoria) == ("Filtro Polen", "FILTRO")
     # Una segunda pasada ya no encuentra nada de lo que tocó.
     assert A.recategorizar_productos(db, aplicar=True)["Filtro Polen"] == 0
+
+
+def test_los_tecnicos_migrados_pasan_a_ser_mecanicos_de_sus_ordenes(db):
+    """La base del taller se migró cuando el técnico solo cabía como el usuario
+    de la orden. El paso lo copia a `mecanicos` y enlaza sus órdenes migradas;
+    el usuario se queda, y las órdenes del sistema nuevo no se tocan."""
+    from conftest import patente_de_prueba, rut_de_prueba
+    from src.models import Cliente, Mecanico, Orden, Usuario, Vehiculo
+
+    sufijo = rut_de_prueba()
+    tecnico = Usuario(nombre=f"QA Técnico {sufijo}", username=f"qa_tecnico_{sufijo}",
+                      password_hash="x", rol="USUARIO_NORMAL", activo=False)
+    vehiculo = Vehiculo(cliente=Cliente(nombre_completo="QA migrado"), patente=patente_de_prueba())
+    migrada = Orden(vehiculo=vehiculo, usuario=tecnico, notas=f"{A.MARCA_NOTAS} (#1).")
+    nueva = Orden(vehiculo=vehiculo, usuario=tecnico, notas="Nivel de Combustible: Lleno")
+    db.add_all([migrada, nueva])
+    db.flush()
+
+    assert A.mecanicos_de_lo_migrado(db, aplicar=False)[tecnico.nombre] == 1
+    assert migrada.mecanico_id is None          # contar no escribe
+    A.mecanicos_de_lo_migrado(db, aplicar=True)
+    assert (migrada.mecanico.nombre, migrada.usuario_id) == (tecnico.nombre, tecnico.id)
+    assert nueva.mecanico_id is None
+    # Una segunda pasada no encuentra nada ni duplica al mecánico.
+    assert A.mecanicos_de_lo_migrado(db, aplicar=True)[tecnico.nombre] == 0
+    assert db.query(Mecanico).filter_by(nombre=tecnico.nombre).count() == 1

@@ -38,8 +38,9 @@ Reglas, en orden de importancia:
   parecido sabe la diferencia. Salen listadas en el informe para que las junte
   a mano quien conozca el mostrador.
 - Los cinco técnicos pasan a ser usuarios reales, inactivos y sin contraseña
-  utilizable hasta que un administrador se la ponga. Las órdenes sin técnico
-  cuelgan de `sistema_antiguo`, también inactivo.
+  utilizable hasta que un administrador se la ponga, y además mecánicos de sus
+  órdenes. Las órdenes sin técnico cuelgan de `sistema_antiguo`, también
+  inactivo, y quedan sin mecánico.
 """
 import re
 import secrets
@@ -57,7 +58,8 @@ from sqlalchemy import func, select  # noqa: E402
 from src.auth import hash_password  # noqa: E402
 from src.database import SessionLocal  # noqa: E402
 from src.models import (  # noqa: E402
-    Cliente, KardexMovimiento, Orden, Producto, Servicio, Ubicacion, Usuario, Vehiculo,
+    Cliente, KardexMovimiento, Mecanico, Orden, Producto, Servicio, Ubicacion, Usuario,
+    Vehiculo,
 )
 from src.patente import PATENTE, normalizar_patente  # noqa: E402
 from src.texto import normalizar, sin_tildes  # noqa: E402
@@ -247,15 +249,17 @@ def migrar(db, planillas: dict[str, list[dict]]) -> Informe | None:
 
     informe = Informe()
     usuarios = _usuarios(db, planillas["ordenes"], informe)
+    mecanicos = _mecanicos(db, usuarios, informe)
     clientes = _clientes(planillas["clientes"], informe)
     vehiculos = _vehiculos(planillas["vehiculos"], planillas["ordenes"], clientes, informe)
-    _ordenes(planillas["ordenes"], vehiculos, usuarios, informe)
+    _ordenes(planillas["ordenes"], vehiculos, usuarios, mecanicos, informe)
     db.add_all(clientes.values())
     db.add_all(vehiculos.values())
     _productos(db, planillas["productos"], usuarios[None], informe)
     _servicios(db, planillas["servicios"], informe)
     db.flush()
     return informe
+
 
 
 def _username(nombre: str) -> str:
@@ -393,7 +397,18 @@ def _vehiculos(filas, ordenes, clientes: dict[str, Cliente], informe) -> dict[st
     return vehiculos
 
 
-def _ordenes(filas, vehiculos: dict[str, Vehiculo], usuarios, informe: Informe) -> None:
+def _mecanicos(db, usuarios: dict[str | None, Usuario], informe: Informe) -> dict[str, Mecanico]:
+    """Cada técnico también como mecánico de sus órdenes: el usuario dice quién
+    la registró, y eso el sistema antiguo no lo sabía."""
+    existentes = {m.nombre: m for m in db.scalars(select(Mecanico))}
+    mecanicos = {clave: existentes.get(u.nombre) or Mecanico(nombre=u.nombre)
+                 for clave, u in usuarios.items() if clave is not None}
+    informe.cargados["mecanicos"] = len(mecanicos)
+    return mecanicos
+
+
+def _ordenes(filas, vehiculos: dict[str, Vehiculo], usuarios, mecanicos,
+             informe: Informe) -> None:
     n = 0
     for fila in filas:
         ref = fila.get("id_gato") or "(sin id)"
@@ -434,6 +449,7 @@ def _ordenes(filas, vehiculos: dict[str, Vehiculo], usuarios, informe: Informe) 
         Orden(
             vehiculo=vehiculos[patente],
             usuario=usuarios[limpio(fila.get("tecnico"))],
+            mecanico=mecanicos.get(limpio(fila.get("tecnico"))),
             fecha_creacion=fecha,
             kilometraje_ingreso=None if kms is None else int(kms),
             descuento_monto=descuento or 0,
