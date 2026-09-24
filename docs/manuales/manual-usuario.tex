@@ -96,6 +96,12 @@ salida por venta o por orden, con la fecha, la cantidad, el saldo que quedó y
 quién lo hizo. Ese historial no se puede editar —es el registro auditable del
 inventario— y por eso el stock nunca se escribe a mano.
 
+Entre esos movimientos aparecen también los \textbf{cambios de precio de
+venta}, hechos desde la ficha del producto o al recibir mercadería: de cuánto a
+cuánto (sin IVA) y quién lo cambió. No mueven stock, así que no traen cantidad
+ni saldo. El historial empieza con esta versión del sistema; los cambios
+anteriores no quedaron registrados.
+
 \subsection{Recibir mercadería}
 
 \dialogo{dialogo_ingreso}{Ingreso de mercadería: se arma la lista y se confirma
@@ -103,11 +109,15 @@ una sola vez.}
 
 \begin{enumerate}
   \item \textbf{Ingresar Mercadería}.
-  \item Buscar el producto. Al elegirlo, el campo \textbf{Costo unit.} se llena
-        solo con lo que ese producto cuesta hoy.
+  \item Buscar el producto. Al elegirlo, \textbf{Costo unit.}, \textbf{Venta
+        neto} y \textbf{Ubicación} se llenan solos con lo que el producto
+        tiene hoy.
   \item Poner la cantidad que llegó y, \textbf{si el proveedor cambió el
-        precio}, corregir el costo. Después, \textbf{Añadir a la lista}. Se
-        repite por cada producto de la factura.
+        precio}, corregir el costo. Si hay que subir el precio de venta, se
+        corrige ahí mismo: es sin IVA, y al lado se ve lo que paga el cliente.
+        Si el producto no tenía ubicación, se anota la repisa donde quedó.
+        Después, \textbf{Añadir a la lista}. Se repite por cada producto de la
+        factura.
   \item Revisar la columna \emph{Nuevo Stock}, que muestra cómo quedará cada uno.
   \item \textbf{Confirmar Ingreso}.
 \end{enumerate}
@@ -118,8 +128,10 @@ producto.
 El costo que se escriba pasa a ser el del producto en el catálogo, y además
 queda guardado en esa entrada del Kardex. Por eso, meses después, el historial
 de un producto sigue diciendo a cuánto se compró cada vez. \textbf{El precio de
-venta no cambia solo}: subir el precio es una decisión del taller y se hace en
-la ficha del producto.
+venta no cambia solo}: es el que quedó escrito en su campo. Si queda bajo el
+costo, el sistema pregunta antes de agregarlo. Solo se puede ingresar
+mercadería de productos que ya existen; uno nuevo se crea antes con
+\textbf{Nuevo producto}.
 
 \subsection{Corregir el stock después de un recuento}
 
