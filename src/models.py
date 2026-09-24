@@ -90,10 +90,36 @@ class Producto(Base):
     activo = Column(Boolean, default=True, nullable=False)
 
     ubicacion = relationship("Ubicacion", back_populates="productos")
+    cambios_precio = relationship("CambioPrecio", back_populates="producto")
 
     @property
     def stock_critico(self) -> bool:
         return self.stock_actual <= self.stock_minimo
+
+    def fijar_precio_venta(self, nuevo, usuario_id: int) -> None:
+        """El precio de venta, con su rastro en `cambios_precio` si cambió.
+        Crear el producto no es un cambio: no hay precio anterior."""
+        if self.precio_venta is not None and self.precio_venta != nuevo:
+            self.cambios_precio.append(CambioPrecio(
+                usuario_id=usuario_id, precio_anterior=self.precio_venta, precio_nuevo=nuevo,
+            ))
+        self.precio_venta = nuevo
+
+
+class CambioPrecio(Base):
+    """Un cambio del precio de venta. Append-only, como el Kardex."""
+
+    __tablename__ = "cambios_precio"
+
+    id = Column(Integer, primary_key=True, index=True)
+    producto_id = Column(Integer, ForeignKey("productos.id"), nullable=False)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
+    precio_anterior = Column(Numeric(10, 2), nullable=False)
+    precio_nuevo = Column(Numeric(10, 2), nullable=False)
+    fecha = Column(DateTime, server_default=func.now(), nullable=False)
+
+    producto = relationship("Producto", back_populates="cambios_precio")
+    usuario = relationship("Usuario")
 
 
 class Servicio(Base):

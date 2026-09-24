@@ -10,7 +10,9 @@ from sqlalchemy import select
 
 from conftest import rut_de_prueba
 from src.database import SessionLocal
-from src.models import DetalleVenta, KardexMovimiento, Producto, Ubicacion, Usuario, Venta
+from src.models import (
+    CambioPrecio, DetalleVenta, KardexMovimiento, Producto, Ubicacion, Usuario, Venta,
+)
 
 NOMBRE = "QA Aceite de prueba"
 NOMBRE_INGRESO = "QA Filtro ingreso"
@@ -22,6 +24,7 @@ def limpiar():
     yield
     with SessionLocal() as db:
         for p in db.scalars(select(Producto).where(Producto.nombre == NOMBRE)):
+            db.query(CambioPrecio).filter_by(producto_id=p.id).delete()
             db.delete(p)
         for u in db.scalars(select(Ubicacion).where(Ubicacion.descripcion == "QA Repisa")):
             db.delete(u)
@@ -48,6 +51,7 @@ def bodeguero_qa():
     Sesion.cerrar()
     with SessionLocal() as db:
         db.query(KardexMovimiento).filter(KardexMovimiento.usuario_id == usuario_id).delete()
+        db.query(CambioPrecio).filter(CambioPrecio.usuario_id == usuario_id).delete()
         for p in db.scalars(select(Producto).where(Producto.nombre.startswith(NOMBRE_INGRESO))):
             db.delete(p)
         for u in db.scalars(select(Ubicacion).where(Ubicacion.descripcion == UBICACION_INGRESO)):
@@ -58,8 +62,10 @@ def bodeguero_qa():
         db.commit()
 
 
-def test_el_formulario_crea_el_producto_y_no_deja_mover_el_stock_al_editar(app, limpiar):
-    from src.ui import FormularioProducto
+def test_el_formulario_crea_el_producto_y_no_deja_mover_el_stock_al_editar(app, limpiar,
+                                                                          bodeguero_qa):
+    from src.ui import FormularioProducto, InventarioWidget
+    from src.ui.inventario import movimientos_de
 
     alta = FormularioProducto()
     alta.nombre.setText(NOMBRE)
@@ -89,6 +95,24 @@ def test_el_formulario_crea_el_producto_y_no_deja_mover_el_stock_al_editar(app, 
         p = db.get(Producto, alta.producto_id)
         assert p.stock_actual == 12  # el stock solo se mueve por el kardex
         assert int(p.precio_venta) == 40000
+
+    # El cambio de precio deja rastro: de cuánto a cuánto y quién. Crear el
+    # producto no es un cambio, y guardarlo sin tocar el precio tampoco.
+    FormularioProducto(producto_id=alta.producto_id).accept()
+    with SessionLocal() as db:
+        cambios = db.scalars(select(CambioPrecio).where(CambioPrecio.producto_id == alta.producto_id))
+        assert [(int(c.precio_anterior), int(c.precio_nuevo), c.usuario_id) for c in cambios] == [
+            (35000, 40000, bodeguero_qa)]
+        _, tipo, cantidad, _, _, quien, detalle = movimientos_de(db, alta.producto_id)[0]
+        assert (tipo, cantidad, quien, detalle) == (
+            "Cambio de precio", None, "Bodeguero QA", "Venta neto $35.000 → $40.000")
+
+    # Y se ve en los movimientos del producto, sin cantidad ni saldo.
+    inventario = InventarioWidget()
+    inventario.busqueda.setText(NOMBRE)
+    inventario.tabla.selectRow(0)
+    assert inventario.tabla_kardex.item(0, 1).text() == "Cambio de precio"
+    assert inventario.tabla_kardex.item(0, 2).text() == ""
 
 
 def test_el_listado_marca_lo_critico_sin_esconder_los_inactivos(app, limpiar, bodeguero_qa):
@@ -416,6 +440,8 @@ def test_el_ingreso_registra_el_costo_de_esa_compra(app, bodeguero_qa, monkeypat
             select(KardexMovimiento).where(KardexMovimiento.producto_id == producto_id)
         )
         assert (movimiento.cantidad_movida, movimiento.costo_unitario) == (3, 1350)
+        # El precio de venta propuesto no se tocó: no es un cambio.
+        assert db.query(CambioPrecio).filter_by(producto_id=producto_id).count() == 0
         # Y se puede consultar después, que es para lo que se guarda.
         from src.ui.inventario import movimientos_de
         assert movimientos_de(db, producto_id)[0][4] == 1350
@@ -470,3 +496,7 @@ def test_el_ingreso_fija_el_precio_de_venta_y_la_ubicacion(app, bodeguero_qa, mo
         assert filtro.ubicacion.descripcion == aceite.ubicacion.descripcion == UBICACION_INGRESO
         # Dos productos a una repisa nueva en el mismo ingreso: una sola repisa.
         assert db.query(Ubicacion).filter_by(descripcion=UBICACION_INGRESO).count() == 1
+        cambios = db.scalars(select(CambioPrecio).where(
+            CambioPrecio.producto_id.in_([filtro_id, aceite_id])).order_by(CambioPrecio.id))
+        assert [(c.producto_id, int(c.precio_anterior), int(c.precio_nuevo)) for c in cambios] == [
+            (filtro_id, 2000, 2500), (aceite_id, 5000, 7000)]

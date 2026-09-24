@@ -274,6 +274,22 @@ CREATE TABLE "movimientos_caja" (
   "anula_id" INT UNIQUE REFERENCES "movimientos_caja"("id")
 );
 
+-- ---------------------------------------------------------------------
+-- Historial de Precios de Venta — append-only
+-- ---------------------------------------------------------------------
+-- El costo de cada compra queda en su entrada del Kardex; el precio de venta
+-- no pasa por ahí. Cada cambio deja una fila: de cuánto a cuánto y quién. Lo
+-- escribe la aplicación (Producto.fijar_precio_venta), que es la que sabe qué
+-- usuario tiene la sesión.
+CREATE TABLE "cambios_precio" (
+  "id" SERIAL PRIMARY KEY,
+  "producto_id" INT NOT NULL REFERENCES "productos"("id"),
+  "usuario_id" INT NOT NULL REFERENCES "usuarios"("id"),
+  "precio_anterior" DECIMAL(10,2) NOT NULL CHECK ("precio_anterior" >= 0),
+  "precio_nuevo" DECIMAL(10,2) NOT NULL CHECK ("precio_nuevo" >= 0),
+  "fecha" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 -- =====================================================================
 -- Índices (Postgres no indexa automáticamente las FK)
 -- =====================================================================
@@ -293,6 +309,7 @@ CREATE INDEX idx_pagos_orden_orden ON "pagos_orden"("orden_id");
 CREATE INDEX idx_kardex_producto ON "kardex_movimientos"("producto_id");
 CREATE INDEX idx_kardex_fecha ON "kardex_movimientos"("fecha_movimiento");
 CREATE INDEX idx_movimientos_caja_fecha ON "movimientos_caja"("fecha");
+CREATE INDEX idx_cambios_precio_producto ON "cambios_precio"("producto_id");
 -- Un flyer se usa una vez. Anular la orden lo libera: el cliente no lo gastó.
 CREATE UNIQUE INDEX flyer_de_un_solo_uso ON "ordenes"("folio_flyer")
   WHERE "estado" <> 'ANULADA';

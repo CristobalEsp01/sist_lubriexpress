@@ -12,12 +12,12 @@ from sqlalchemy.orm import selectinload
 
 from ..auth import Sesion
 from ..database import SessionLocal
-from ..models import KardexMovimiento, Producto, Ubicacion, Usuario, Venta
+from ..models import CambioPrecio, KardexMovimiento, Producto, Ubicacion, Usuario, Venta
 from ..permisos import puede
 from ..precios import con_iva
 from ..texto import filtro_busqueda, normalizar
 from .comunes import (
-    BADGE_ACENTO, BADGE_ALERTA, BADGE_EXITO, BADGE_NEUTRAL, ROL_INSIGNIA,
+    BADGE_ACENTO, BADGE_ALERTA, BADGE_EXITO, BADGE_INFO, BADGE_NEUTRAL, ROL_INSIGNIA,
     ItemNumerico, SpinBoxConPrefijo, ajustar_columnas, barra, botonera, clp, con_aviso_vacio,
     crear_tabla,
     exigir_permiso, hacer_buscable, layout_de_dialogo, layout_de_pantalla, reordenar,
@@ -49,7 +49,9 @@ def origen_de(orden_id: int | None, boleta: str | None, venta_id: int | None) ->
 
 
 def movimientos_de(db, producto_id: int) -> list[tuple]:
-    """Historial de kardex de un producto, del más reciente al más antiguo.
+    """Historial de kardex de un producto, del más reciente al más antiguo,
+    con sus cambios de precio de venta intercalados (sin cantidad ni saldo):
+    así se ve si el precio subió el día que entró una compra más cara.
 
     Separado del widget para poder probarlo dentro de una transacción que se
     revierte: el kardex es solo de agregado y las pruebas no deben borrarlo.
@@ -71,11 +73,25 @@ def movimientos_de(db, producto_id: int) -> list[tuple]:
         .where(KardexMovimiento.producto_id == producto_id)
         .order_by(KardexMovimiento.fecha_movimiento.desc(), KardexMovimiento.id.desc())
     ).all()
-    return [
+    movimientos = [
         (fecha, ETIQUETAS_MOVIMIENTO.get(tipo, tipo), cantidad, saldo, costo, usuario,
          origen_de(orden_id, boleta, venta_id))
         for fecha, tipo, cantidad, saldo, costo, usuario, orden_id, boleta, venta_id in filas
     ]
+    precios = db.execute(
+        select(CambioPrecio.fecha, Usuario.nombre, CambioPrecio.precio_anterior,
+               CambioPrecio.precio_nuevo)
+        .join(Usuario, Usuario.id == CambioPrecio.usuario_id)
+        .where(CambioPrecio.producto_id == producto_id)
+        .order_by(CambioPrecio.fecha.desc(), CambioPrecio.id.desc())
+    ).all()
+    movimientos += [
+        (fecha, "Cambio de precio", None, None, None, usuario,
+         f"Venta neto {clp(anterior)} → {clp(nuevo)}")
+        for fecha, usuario, anterior, nuevo in precios
+    ]
+    # Estable: dentro del mismo instante se conserva el orden de cada consulta.
+    return sorted(movimientos, key=lambda m: m[0], reverse=True)
 
 
 class FormularioProducto(QDialog):
@@ -218,7 +234,7 @@ class FormularioProducto(QDialog):
             producto.categoria = self._categoria_elegida()
             producto.descripcion = self.descripcion.toPlainText().strip() or None
             producto.precio_costo = self.precio_costo.value()
-            producto.precio_venta = self.precio_venta.value()
+            producto.fijar_precio_venta(self.precio_venta.value(), Sesion.usuario_id)
             producto.stock_minimo = self.stock_minimo.value()
             producto.activo = self.activo.isChecked()
             producto.ubicacion = self._ubicacion_o_crear(db, self.ubicacion.currentText().strip())
@@ -455,7 +471,8 @@ class IngresoMercaderiaDialog(QDialog):
                 # después. El precio de venta es el que se tecleó: el margen lo
                 # decide el taller, no una regla de tres.
                 producto = db.get(Producto, item["producto_id"])
-                producto.precio_costo, producto.precio_venta = item["costo"], item["venta"]
+                producto.precio_costo = item["costo"]
+                producto.fijar_precio_venta(item["venta"], Sesion.usuario_id)
                 if item["ubicacion"] not in ubicaciones:
                     ubicaciones[item["ubicacion"]] = FormularioProducto._ubicacion_o_crear(
                         db, item["ubicacion"])
@@ -840,16 +857,20 @@ class InventarioWidget(QWidget):
                 item_tipo.setData(ROL_INSIGNIA, BADGE_ACENTO)
             elif "Salida" in tipo:
                 item_tipo.setData(ROL_INSIGNIA, BADGE_NEUTRAL)
+            elif tipo == "Cambio de precio":
+                item_tipo.setData(ROL_INSIGNIA, BADGE_INFO)
             self.tabla_kardex.setItem(fila, 1, item_tipo)
 
-            celda_cant = ItemNumerico(f"{cantidad:+d}", cantidad)
-            if cantidad < 0:
+            # Un cambio de precio no mueve stock: sin cantidad ni saldo.
+            celda_cant = ItemNumerico("" if cantidad is None else f"{cantidad:+d}", cantidad or 0)
+            if cantidad and cantidad < 0:
                 celda_cant.setForeground(QColor(ALERTA))
-            elif cantidad > 0:
+            elif cantidad and cantidad > 0:
                 celda_cant.setForeground(QColor(EXITO))
             self.tabla_kardex.setItem(fila, 2, celda_cant)
 
-            self.tabla_kardex.setItem(fila, 3, ItemNumerico(str(saldo), saldo))
+            self.tabla_kardex.setItem(
+                fila, 3, ItemNumerico("" if saldo is None else str(saldo), saldo or 0))
             # Solo las entradas traen costo; una salida o un ajuste no compran nada.
             self.tabla_kardex.setItem(
                 fila, 4, ItemNumerico(clp(costo) if costo is not None else "—", costo or 0))

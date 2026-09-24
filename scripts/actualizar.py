@@ -332,6 +332,32 @@ ALTER TABLE "ordenes"
 ''',
         declara=('"mecanico_id" INT REFERENCES "mecanicos"("id")',),
     ),
+    Paso(
+        nombre="cambios_precio",
+        comprobacion="SELECT to_regclass('public.cambios_precio') IS NOT NULL",
+        sql='''
+CREATE TABLE "cambios_precio" (
+  "id" SERIAL PRIMARY KEY,
+  "producto_id" INT NOT NULL REFERENCES "productos"("id"),
+  "usuario_id" INT NOT NULL REFERENCES "usuarios"("id"),
+  "precio_anterior" DECIMAL(10,2) NOT NULL CHECK ("precio_anterior" >= 0),
+  "precio_nuevo" DECIMAL(10,2) NOT NULL CHECK ("precio_nuevo" >= 0),
+  "fecha" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_cambios_precio_producto ON "cambios_precio"("producto_id");
+''',
+        declara=(
+            '''CREATE TABLE "cambios_precio" (
+  "id" SERIAL PRIMARY KEY,
+  "producto_id" INT NOT NULL REFERENCES "productos"("id"),
+  "usuario_id" INT NOT NULL REFERENCES "usuarios"("id"),
+  "precio_anterior" DECIMAL(10,2) NOT NULL CHECK ("precio_anterior" >= 0),
+  "precio_nuevo" DECIMAL(10,2) NOT NULL CHECK ("precio_nuevo" >= 0),
+  "fecha" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);''',
+            'CREATE INDEX idx_cambios_precio_producto ON "cambios_precio"("producto_id");',
+        ),
+    ),
 ]
 
 # Lo que se cuenta antes y después. Un cambio de esquema no borra filas; si la
