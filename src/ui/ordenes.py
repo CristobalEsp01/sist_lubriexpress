@@ -34,7 +34,7 @@ from .clientes import FormularioCliente, FormularioVehiculo
 from .catalogo import Catalogo
 from .comunes import (
     BADGE_ACENTO, BADGE_ALERTA, BADGE_EXITO, BADGE_INFO, BADGE_NEUTRAL, ROL_INSIGNIA,
-    ItemNumerico, barra, bloque_total, botonera,
+    ItemNumerico, SpinBoxConPrefijo, barra, bloque_total, botonera,
     carpeta_de_documentos, clp, combo_medio_pago, con_aviso_vacio, crear_tabla, hacer_buscable,
     layout_de_dialogo, layout_de_pantalla, medio_elegido, reordenar,
 )
@@ -501,7 +501,7 @@ class OrdenesWidget(QTabWidget):
         # Cerrado no pide el ancho de "Gremio/Sindicato (15 %)".
         self.tipo_descuento.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         self.tipo_descuento.setMinimumContentsLength(12)
-        self.valor_descuento = QSpinBox()
+        self.valor_descuento = SpinBoxConPrefijo()
         self.valor_descuento.setEnabled(False)
         self.tipo_descuento.currentIndexChanged.connect(self._cambiar_tipo_descuento)
         self.valor_descuento.valueChanged.connect(self.recalcular_total)
@@ -513,7 +513,7 @@ class OrdenesWidget(QTabWidget):
         # El taller cobra por partes: un abono al dejar el auto y el saldo al
         # retirarlo. Acá se anota lo que el cliente paga al cerrar la orden; el
         # resto se registra después, desde el historial.
-        self.abono = QSpinBox()
+        self.abono = SpinBoxConPrefijo()
         self.abono.setPrefix("$ ")
         self.abono.setGroupSeparatorShown(True)
         self.abono.setButtonSymbols(QSpinBox.NoButtons)
@@ -1429,7 +1429,7 @@ class DialogoPago(QDialog):
         self.setWindowTitle("Registrar pago")
         self.setModal(True)
 
-        self.monto = QSpinBox()
+        self.monto = SpinBoxConPrefijo()
         self.monto.setRange(1, saldo)
         self.monto.setValue(saldo)
         self.monto.setPrefix("$ ")

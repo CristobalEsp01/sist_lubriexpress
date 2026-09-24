@@ -8,7 +8,7 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QAbstractItemView, QComboBox, QCompleter, QDialog, QDialogButtonBox, QFrame,
-    QHBoxLayout, QHeaderView, QLabel, QLayout, QMessageBox, QSizePolicy, QStyle,
+    QHBoxLayout, QHeaderView, QLabel, QLayout, QMessageBox, QSizePolicy, QSpinBox, QStyle,
     QStyledItemDelegate,
     QStyleOptionViewItem, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
@@ -259,6 +259,24 @@ def hacer_buscable(combo: QComboBox, *, libre: bool = False) -> QComboBox:
 
         combo.lineEdit().editingFinished.connect(confirmar_seleccion)
     return combo
+
+
+class SpinBoxConPrefijo(QSpinBox):
+    """QSpinBox que no suelta la selección al teclear si se eligió hacia atrás.
+
+    Arrastrar el mouse desde el final del número hasta el "$" deja el cursor
+    dentro del prefijo. Antes de insertar la tecla, Qt lo mueve fuera de ahí
+    con setCursorPosition, que borra la selección: el dígito quedaba delante
+    del número ($ 512.000) en vez de reemplazarlo. Invertir la selección
+    conserva el mismo tramo con el cursor al final, donde Qt no lo toca.
+    """
+
+    def keyPressEvent(self, evento) -> None:
+        edit = self.lineEdit()
+        if evento.text() and edit.hasSelectedText() and edit.cursorPosition() < len(self.prefix()):
+            inicio = edit.selectionStart()
+            edit.setSelection(inicio, edit.selectionEnd() - inicio)
+        super().keyPressEvent(evento)
 
 
 class _AvisoVacio(QObject):

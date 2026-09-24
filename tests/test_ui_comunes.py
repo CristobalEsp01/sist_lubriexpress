@@ -1,8 +1,10 @@
 """Piezas compartidas de la interfaz, sin pantalla ni base de datos."""
 import pytest
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QComboBox, QTableWidgetItem
 
-from src.ui.comunes import ajustar_columnas, crear_tabla, hacer_buscable
+from src.ui.comunes import SpinBoxConPrefijo, ajustar_columnas, crear_tabla, hacer_buscable
 
 OPCIONES = [
     ("Venta sin cliente registrado", None),
@@ -104,3 +106,19 @@ def test_ajustar_columnas_deja_la_tabla_del_ancho_exacto(app):
     ancho_columnas = sum(tabla.columnWidth(c) for c in range(tabla.columnCount()))
     assert ancho_columnas == tabla.viewport().width()
     assert not tabla.horizontalScrollBar().isVisible()
+
+
+def test_teclear_reemplaza_el_numero_seleccionado_de_derecha_a_izquierda(app):
+    """Arrastrar el mouse desde el final hacia el "$" deja el cursor dentro del
+    prefijo. Qt lo saca de ahí antes de insertar la tecla y con eso suelta la
+    selección: el dígito quedaba delante ($ 512.000) en vez de reemplazar."""
+    campo = SpinBoxConPrefijo(maximum=10_000_000)
+    campo.setPrefix("$ ")
+    campo.setGroupSeparatorShown(True)
+    campo.setValue(12_000)
+    largo = len(campo.lineEdit().text())
+    campo.lineEdit().setSelection(largo, -largo)
+
+    QTest.keyClick(campo, Qt.Key_5)
+
+    assert campo.value() == 5

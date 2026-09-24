@@ -17,7 +17,8 @@ from ..precios import con_iva
 from ..texto import filtro_busqueda, normalizar
 from .comunes import (
     BADGE_ACENTO, BADGE_ALERTA, BADGE_EXITO, BADGE_NEUTRAL, ROL_INSIGNIA,
-    ItemNumerico, ajustar_columnas, barra, botonera, clp, con_aviso_vacio, crear_tabla,
+    ItemNumerico, SpinBoxConPrefijo, ajustar_columnas, barra, botonera, clp, con_aviso_vacio,
+    crear_tabla,
     exigir_permiso, hacer_buscable, layout_de_dialogo, layout_de_pantalla, reordenar,
 )
 from .carga_excel import CargaExcelDialog
@@ -146,8 +147,8 @@ class FormularioProducto(QDialog):
             )
 
     @staticmethod
-    def _campo_pesos() -> QSpinBox:
-        campo = QSpinBox(maximum=MAX_CLP)
+    def _campo_pesos() -> SpinBoxConPrefijo:
+        campo = SpinBoxConPrefijo(maximum=MAX_CLP)
         campo.setGroupSeparatorShown(True)
         campo.setPrefix("$ ")
         # Nadie ajusta un precio de peso en peso: las flechas solo estorban.
