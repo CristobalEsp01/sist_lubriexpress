@@ -22,7 +22,7 @@ Lubri-Express. Corre localmente sobre PostgreSQL.
 | Aviso al cliente por WhatsApp | Funcionando (desde la orden abierta y desde una guardada, que cita su N° de OT) |
 | Exportación de la orden a PDF | Funcionando |
 | Caja chica del día | Funcionando (abre y cierra sola; efectivo agregado, gastos y PDF del día) |
-| Reportería (ingresos, productos, usuarios, reabastecimiento) | Funcionando (con gráficos y exportación a Excel) |
+| Reportería (ingresos, productos, usuarios, descuentos, reabastecimiento) | Funcionando (con gráficos y exportación a Excel) |
 | Migración del sistema antiguo | Funcionando (`scripts/migrar_sistema_antiguo.py`) |
 | Respaldo automatizado local y a OneDrive | Funcionando (`scripts/respaldar.py`, con restauración probada) |
 | Aplicación empaquetada para Windows | Especificación lista (`lubriexpress.spec`); los `.exe` se construyen en Windows |
@@ -192,7 +192,7 @@ sist_lubriexpress/
 │   ├── documentos.py                # La orden de trabajo como documento para el cliente
 │   ├── whatsapp.py                  # Enlace wa.me y plantillas del aviso al cliente
 │   ├── caja.py                      # Caja chica del día: agregado, ingresos, egresos, balance
-│   ├── reportes.py                  # Los cuatro reportes, sin interfaz
+│   ├── reportes.py                  # Los reportes, sin interfaz
 │   └── ui/
 │       ├── __init__.py              # Ventana principal con pestañas
 │       ├── tema.py                  # Colores, tipografía y hoja de estilos
@@ -206,7 +206,7 @@ sist_lubriexpress/
 │       ├── ordenes.py               # Órdenes de trabajo, aviso por WhatsApp y PDF
 │       ├── caja.py                  # Pestaña de Caja
 │       ├── reportes.py              # Pestaña de reportes con gráficos
-│       └── usuarios.py              # Alta de usuarios y asignación de roles
+│       └── usuarios.py              # Usuarios, roles y mecánicos
 ├── database/
 │   └── schema_lubriexpress.sql      # Tablas, restricciones, triggers y vistas
 ├── tests/
