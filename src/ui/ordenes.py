@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QMessageBox, QPushButton, QSpinBox, QSplitter, QStackedWidget, QTabWidget,
     QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
 )
-from sqlalchemy import String, cast, func, select
+from sqlalchemy import String, cast, func, or_, select
 from sqlalchemy.exc import IntegrityError
 
 from .. import convenios
@@ -26,7 +26,7 @@ from ..auth import Sesion
 from ..database import SessionLocal
 from ..documentos import estado_de_pago, html_de_orden
 from ..models import (
-    Cliente, DetalleOrden, Orden, PagoOrden, Producto, Servicio, Usuario, Vehiculo,
+    Cliente, DetalleOrden, Mecanico, Orden, PagoOrden, Producto, Servicio, Usuario, Vehiculo,
 )
 from ..texto import filtro_busqueda
 from ..whatsapp import PLANTILLAS, describir_vehiculo, enlace_whatsapp, redactar
@@ -67,6 +67,8 @@ CONVENIO_DEL_TIPO = {3: "FLYER", 4: "GREMIO"}
 FILTROS_HISTORIAL = ["Todas", "Mercado Público", "Clientes"]
 
 REPOSO = "Seleccione 'Nueva Orden' para comenzar."
+# Las órdenes guardadas antes de que existiera el mecánico no tienen uno.
+SIN_MECANICO = "Sin asignar"
 # Marca las líneas del carrito que ya existen en la base.
 ROL_DETALLE = Qt.UserRole + 1
 # Categoría del producto: decide si la línea entra en un convenio.
@@ -99,7 +101,7 @@ def guardar_pdf_de_orden(orden_id: int, ruta) -> None:
     """La orden como PDF para el cliente (Propuesta 3.4): lo guardado, tal cual."""
     with SessionLocal() as db:
         orden = db.get(Orden, orden_id)
-        vehiculo, cliente, usuario = orden.vehiculo, orden.vehiculo.cliente, orden.usuario
+        vehiculo, cliente = orden.vehiculo, orden.vehiculo.cliente
         datos = {
             "numero": orden.id, "fecha": orden.fecha_creacion,
             "cliente": cliente.nombre_completo, "rut": cliente.rut, "telefono": cliente.telefono,
@@ -108,7 +110,9 @@ def guardar_pdf_de_orden(orden_id: int, ruta) -> None:
                 vehiculo.marca, vehiculo.modelo,
                 str(vehiculo.anio_fabricacion) if vehiculo.anio_fabricacion else None,
             ))) or "Sin marca ni modelo",
-            "kilometraje": orden.kilometraje_ingreso, "tecnico": usuario.nombre,
+            "kilometraje": orden.kilometraje_ingreso,
+            "tecnico": orden.mecanico.nombre if orden.mecanico else SIN_MECANICO,
+            "ingreso": orden.usuario.nombre,
             "lineas": [((d.producto or d.servicio).nombre, d.cantidad, int(d.precio_unitario_cobrado))
                        for d in orden.detalles],
             "subtotal": orden.subtotal, "descuento": orden.descuento_aplicado,
@@ -401,11 +405,24 @@ class OrdenesWidget(QTabWidget):
         self.boton_whatsapp.setEnabled(False)
         self.boton_whatsapp.clicked.connect(self.avisar_por_whatsapp)
 
+        # Quien trabaja el auto no siempre es quien usa el sistema: hay
+        # mecánicos sin cuenta. Sale en el PDF como técnico. Va en la tarjeta y
+        # no en el lateral porque ahí, a 640 px de alto, no cabe una fila más.
+        self.combo_mecanico = QComboBox()
+        self.combo_mecanico.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.combo_mecanico.setMinimumContentsLength(18)
+        self.combo_mecanico.currentIndexChanged.connect(self._actualizar_boton_guardar)
+        mecanico = QVBoxLayout()
+        mecanico.setSpacing(2)
+        mecanico.addWidget(QLabel("Mecánico *"))
+        mecanico.addWidget(self.combo_mecanico)
+
         fila_tarjeta = QHBoxLayout(self.tarjeta)
         fila_tarjeta.setContentsMargins(14, 10, 14, 10)
         fila_tarjeta.setSpacing(16)
         fila_tarjeta.addWidget(self.label_patente)
         fila_tarjeta.addLayout(columna, 1)
+        fila_tarjeta.addLayout(mecanico)
         fila_tarjeta.addWidget(self.boton_whatsapp)
         self.tarjeta.hide()
         self.ultimo_km: int | None = None
@@ -652,10 +669,10 @@ class OrdenesWidget(QTabWidget):
             .where(DetalleOrden.orden_id == Orden.id).scalar_subquery()
         )
         consulta = (
-            select(Orden, Cliente, Vehiculo, Usuario, cuantos_items)
+            select(Orden, Cliente, Vehiculo, Mecanico.nombre, cuantos_items)
             .join(Vehiculo, Orden.vehiculo_id == Vehiculo.id)
             .join(Cliente, Vehiculo.cliente_id == Cliente.id)
-            .join(Usuario, Orden.usuario_id == Usuario.id)
+            .outerjoin(Mecanico, Orden.mecanico_id == Mecanico.id)
             .where(Orden.estado == "ABIERTA")
             .order_by(Orden.id.desc())
         )
@@ -663,8 +680,8 @@ class OrdenesWidget(QTabWidget):
             filas = [
                 (orden.id, orden.fecha_creacion, cliente.nombre_completo, vehiculo.patente,
                  f"{vehiculo.marca or ''} {vehiculo.modelo or ''}".strip() or "S/D",
-                 usuario.nombre, int(items), orden.total_final)
-                for orden, cliente, vehiculo, usuario, items in db.execute(consulta).all()
+                 mecanico or SIN_MECANICO, int(items), orden.total_final)
+                for orden, cliente, vehiculo, mecanico, items in db.execute(consulta).all()
             ]
 
         self.tabla_abiertas.setSortingEnabled(False)
@@ -725,10 +742,10 @@ class OrdenesWidget(QTabWidget):
         )
         consulta = filtro_busqueda(
             # Unimos las 4 tablas relacionadas
-            select(Orden, Cliente, Vehiculo, Usuario, pagado_de_la_orden)
+            select(Orden, Cliente, Vehiculo, Mecanico.nombre, pagado_de_la_orden)
             .join(Vehiculo, Orden.vehiculo_id == Vehiculo.id)
             .join(Cliente, Vehiculo.cliente_id == Cliente.id)
-            .join(Usuario, Orden.usuario_id == Usuario.id)
+            .outerjoin(Mecanico, Orden.mecanico_id == Mecanico.id)
             .order_by(Orden.id.desc()),
             self.busqueda_historial.text(),
             # Con el ilike a mano, una patente tecleada con guión o un cliente
@@ -745,9 +762,9 @@ class OrdenesWidget(QTabWidget):
             filas = [
                 (orden.id, orden.fecha_creacion, cliente.nombre_completo, vehiculo.patente,
                  f"{vehiculo.marca or ''} {vehiculo.modelo or ''}".strip() or "S/D",
-                 usuario.nombre, orden.folio_mercado_publico or "", orden.estado,
+                 mecanico or SIN_MECANICO, orden.folio_mercado_publico or "", orden.estado,
                  orden.estado_pago, int(pagado), orden.total_final)
-                for orden, cliente, vehiculo, usuario, pagado in db.execute(consulta).all()
+                for orden, cliente, vehiculo, mecanico, pagado in db.execute(consulta).all()
             ]
 
         # Apagamos el ordenamiento para insertar rápido
@@ -861,11 +878,30 @@ class OrdenesWidget(QTabWidget):
         self._vaciar_formulario()
         # Cada orden relee el catálogo: la anterior pudo mover el stock.
         self.catalogo.cargar()
+        self._cargar_mecanicos()
 
         # Desbloquear el panel de trabajo y bloquear el botón de nueva orden
         self.panel_trabajo.setEnabled(True)
         self.boton_nueva_orden.setEnabled(False)
         self.catalogo.busqueda.setFocus()
+
+    def _cargar_mecanicos(self, elegido: int | None = None) -> None:
+        """Los activos, más el de la orden retomada aunque ya no lo esté: sin
+        él, guardarla la dejaría sin mecánico o con otro."""
+        with SessionLocal() as db:
+            mecanicos = db.execute(
+                select(Mecanico.id, Mecanico.nombre)
+                .where(or_(Mecanico.activo, Mecanico.id == elegido))
+                .order_by(Mecanico.nombre)
+            ).all()
+        self.combo_mecanico.clear()
+        for mecanico_id, nombre in mecanicos:
+            self.combo_mecanico.addItem(nombre, mecanico_id)
+        # Sin ninguno no se puede guardar ninguna orden: que diga dónde se arregla.
+        self.combo_mecanico.setPlaceholderText(
+            "Elegir mecánico…" if mecanicos
+            else "No hay mecánicos: un administrador los agrega en Usuarios")
+        self.combo_mecanico.setCurrentIndex(self.combo_mecanico.findData(elegido))
 
     def _vaciar_formulario(self) -> None:
         """Deja la pestaña 1 en blanco.
@@ -875,6 +911,7 @@ class OrdenesWidget(QTabWidget):
         mirar el historial.
         """
         self.tabla_carrito.setRowCount(0)
+        self.combo_mecanico.setCurrentIndex(-1)
         self.spin_kilometraje.setValue(0)
         self.combo_combustible.setCurrentIndex(0)
         self.texto_observaciones.clear()
@@ -1134,8 +1171,9 @@ class OrdenesWidget(QTabWidget):
         self._actualizar_boton_guardar()
 
     def _actualizar_boton_guardar(self) -> None:
-        """Guardar exige insumos Y kilometraje, y lo dice apagándose."""
-        listo = self.tabla_carrito.rowCount() > 0 and self.spin_kilometraje.value() > 0
+        """Guardar exige insumos, mecánico y kilometraje, y lo dice apagándose."""
+        listo = (self.tabla_carrito.rowCount() > 0 and self.combo_mecanico.currentIndex() >= 0
+                 and self.spin_kilometraje.value() > 0)
         self.boton_guardar.setEnabled(listo)
         self.boton_dejar_abierta.setEnabled(listo)
 
@@ -1172,6 +1210,7 @@ class OrdenesWidget(QTabWidget):
                 "porcentaje": int(orden.descuento_porcentaje),
                 "monto": int(orden.descuento_monto), "pagado": orden.monto_pagado,
                 "convenio": orden.convenio, "folio_flyer": orden.folio_flyer,
+                "mecanico_id": orden.mecanico_id,
             }
 
         # Deja la tarjeta del vehículo y vacía el formulario; después se llena
@@ -1181,6 +1220,7 @@ class OrdenesWidget(QTabWidget):
         for item, nombre, precio, cantidad, detalle_id, categoria in lineas:
             self._insertar_en_carrito(item, nombre, precio, cantidad, detalle_id, categoria)
 
+        self._cargar_mecanicos(datos["mecanico_id"])
         self.spin_kilometraje.setValue(datos["km"])
         self.folio.setText(datos["folio"])
         nivel, observaciones = _leer_notas(datos["notas"])
@@ -1243,6 +1283,12 @@ class OrdenesWidget(QTabWidget):
         if self.tabla_carrito.rowCount() == 0:
             QMessageBox.warning(
                 self, "Orden vacía", "La orden no tiene repuestos ni servicios cargados."
+            )
+            return
+        if self.combo_mecanico.currentIndex() < 0:
+            QMessageBox.warning(
+                self, "Falta el mecánico",
+                "Elige quién trabaja el vehículo: sale en la orden como técnico.",
             )
             return
         if self.spin_kilometraje.value() == 0:
@@ -1318,6 +1364,7 @@ class OrdenesWidget(QTabWidget):
                 db.add(nueva_orden)
             # `estado_pago` no se vuelve a escribir al actualizar: sale de los
             # abonos contra el total, y de eso se encargan los triggers.
+            nueva_orden.mecanico_id = self.combo_mecanico.currentData()
             nueva_orden.kilometraje_ingreso = self.spin_kilometraje.value()
             nueva_orden.descuento_porcentaje = porcentaje
             nueva_orden.descuento_monto = monto
@@ -1471,6 +1518,7 @@ class DialogoDetalleOrden(QDialog):
             vehiculo = db.get(Vehiculo, orden.vehiculo_id)
             cliente = db.get(Cliente, vehiculo.cliente_id)
             usuario = db.get(Usuario, orden.usuario_id)
+            mecanico = orden.mecanico.nombre if orden.mecanico else SIN_MECANICO
 
             # Cabecera de contexto. El estado de pago se arma aparte porque
             # cambia sin cerrar el diálogo: acá adentro se registran los abonos.
@@ -1480,7 +1528,7 @@ class DialogoDetalleOrden(QDialog):
                 f"({vehiculo.patente})<br>"
                 f"<b>Kilometraje:</b> "
                 f"{'sin registrar' if orden.kilometraje_ingreso is None else f'{orden.kilometraje_ingreso} km'}<br>"
-                f"<b>Mecánico:</b> {usuario.nombre} | "
+                f"<b>Mecánico:</b> {mecanico} | <b>Ingresó:</b> {usuario.nombre}<br>"
                 f"<b>Fecha:</b> {orden.fecha_creacion.strftime('%d-%m-%Y %H:%M')}<br>"
                 f"<b>Estado:</b> "
             )

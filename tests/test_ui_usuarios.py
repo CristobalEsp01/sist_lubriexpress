@@ -1,4 +1,4 @@
-"""Control de acceso por rol y el mantenedor de usuarios.
+"""Control de acceso por rol y el mantenedor de usuarios y mecánicos.
 
 Las pantallas escriben con su propia SessionLocal(), así que los usuarios de
 apoyo se crean con commit y se limpian al final, como en el resto de la UI.
@@ -11,7 +11,7 @@ from sqlalchemy import select
 from conftest import rut_de_prueba
 from src.auth import Sesion, verificar_password
 from src.database import SessionLocal
-from src.models import Usuario
+from src.models import Mecanico, Usuario
 
 PREFIJO = "qa_roles_"
 
@@ -142,3 +142,47 @@ def test_el_administrador_da_de_alta_y_edita_sin_poder_desactivarse(app, sesion,
     widget.tabla.selectRow(filas[username])
     assert widget.boton_editar.isEnabled()
     assert widget.tabla.item(filas[username], 2).text() == "Usuario normal"
+
+
+def test_el_administrador_da_de_alta_mecanicos_sin_cuenta(app, sesion, avisos):
+    """Hay mecánicos que no usan el computador: se registran solo con el nombre
+    que sale en la orden, y se desactivan en vez de borrarse."""
+    from src.ui.usuarios import FormularioMecanico, UsuariosWidget
+
+    sesion("ADMINISTRADOR")
+    nombre = f"QA Francisco {rut_de_prueba()}"
+    try:
+        vacio = FormularioMecanico()
+        vacio.nombre.setText("   ")
+        vacio.accept()
+        assert avisos == ["Falta el nombre"]
+
+        alta = FormularioMecanico()
+        alta.nombre.setText(f"  {nombre}  ")
+        alta.accept()
+        with SessionLocal() as db:
+            mecanico = db.scalar(select(Mecanico).where(Mecanico.nombre == nombre))
+            assert mecanico.activo
+
+        repetido = FormularioMecanico()
+        repetido.nombre.setText(nombre)
+        repetido.accept()
+        assert avisos[-1] == "Mecánico repetido"
+
+        edicion = FormularioMecanico(mecanico_id=mecanico.id)
+        assert edicion.nombre.text() == nombre
+        edicion.activo.setChecked(False)
+        edicion.accept()
+        with SessionLocal() as db:
+            assert not db.get(Mecanico, mecanico.id).activo
+
+        widget = UsuariosWidget()
+        filas = {widget.tabla_mecanicos.item(f, 0).text(): f
+                 for f in range(widget.tabla_mecanicos.rowCount())}
+        assert widget.tabla_mecanicos.item(filas[nombre], 1).text() == "Inactivo"
+        widget.tabla_mecanicos.selectRow(filas[nombre])
+        assert widget.boton_editar_mecanico.isEnabled()
+    finally:
+        with SessionLocal() as db:
+            db.query(Mecanico).filter(Mecanico.nombre == nombre).delete()
+            db.commit()

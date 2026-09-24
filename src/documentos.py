@@ -36,8 +36,9 @@ def estado_de_pago(pagada: bool, pagado: int, total: int) -> str:
 
 def html_de_orden(o: dict) -> str:
     """`o` trae: numero, fecha, cliente, rut, telefono, patente, vehiculo,
-    kilometraje, tecnico, lineas [(nombre, cantidad, precio_unitario)],
-    subtotal, descuento, impuesto, total, pagada, pagado, folio, notas."""
+    kilometraje, tecnico (el mecánico), ingreso (quien registró la orden),
+    lineas [(nombre, cantidad, precio_unitario)], subtotal, descuento,
+    impuesto, total, pagada, pagado, folio, notas."""
     e = escape
     filas = "".join(
         f"<tr><td>{e(nombre)}</td><td align='right'>{cantidad}</td>"
@@ -67,13 +68,15 @@ def html_de_orden(o: dict) -> str:
     estado = estado_de_pago(o["pagada"], o["pagado"], int(o["total"]))
     folio = f"<br><b>Folio Mercado Público:</b> {e(o['folio'])}" if o["folio"] else ""
     contacto = " · ".join(filter(None, (o.get("rut"), o.get("telefono"))))
+    ingreso = (f"<p style='margin: 2px 0 0 0; font-size: 8pt; color: gray;'>"
+               f"Ingresada por {e(o['ingreso'])}</p>") if o.get("ingreso") else ""
     # El logo va como recurso del documento (ver guardar_pdf_de_orden); si no se
     # cargó, la celda queda vacía y el resto del membrete no cambia.
     return f"""<html><body style="font-family: sans-serif; font-size: 10pt;">
 <table width="100%" cellpadding="0">
 <tr>
   <td valign="top"><h2 style="margin: 0;">ORDEN DE TRABAJO</h2>
-      <p style="margin: 2px 0 0 0;"><b>N° {o['numero']}</b> | {o['fecha']:%d-%m-%Y %H:%M}</p></td>
+      <p style="margin: 2px 0 0 0;"><b>N° {o['numero']}</b> | {o['fecha']:%d-%m-%Y %H:%M}</p>{ingreso}</td>
   <td align="right" valign="top" style="font-size: 8pt; color: gray;">
       {e(TALLER)}<br>{e(DIRECCION)}<br>{e(TELEFONO)}<br>{e(SITIO)}<br>{e(CORREO)}</td>
   <td align="right" valign="top" width="90"><img src="logo" width="80"></td>

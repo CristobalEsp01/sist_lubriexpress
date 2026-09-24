@@ -15,14 +15,15 @@ from conftest import patente_de_prueba, rut_de_prueba
 from src.auth import Sesion
 from src.database import SessionLocal
 from src.models import (
-    Cliente, DetalleOrden, KardexMovimiento, Orden, PagoOrden, Producto, Servicio, Usuario,
-    Vehiculo,
+    Cliente, DetalleOrden, KardexMovimiento, Mecanico, Orden, PagoOrden, Producto, Servicio,
+    Usuario, Vehiculo,
 )
 from src.ui.ordenes import COLUMNAS_HISTORIAL, TIPOS_DESCUENTO
 
 NOMBRE_PRODUCTO = "QA Aceite de motor 10W40"
 NOMBRE_SERVICIO = "QA Cambio de aceite"
 NOMBRE_CLIENTE = "QA Dueño del taller"
+PREFIJO_MECANICO = "QA Mecánico sin cuenta"
 
 
 @pytest.fixture
@@ -50,13 +51,15 @@ def limpiar():
         db.query(Servicio).filter_by(nombre=NOMBRE_SERVICIO).delete()
         for usuario in db.scalars(select(Usuario).where(Usuario.username.like("qa_mecanico_%"))):
             db.delete(usuario)
+        for mecanico in db.scalars(select(Mecanico).where(Mecanico.nombre.like(f"{PREFIJO_MECANICO}%"))):
+            db.delete(mecanico)
         db.commit()
 
 
 @pytest.fixture
 def taller(limpiar):
-    """Mecánico con sesión iniciada, un producto con 10 unidades, un servicio
-    y un vehículo."""
+    """Usuario con sesión iniciada, un mecánico sin cuenta, un producto con 10
+    unidades, un servicio y un vehículo."""
     with SessionLocal() as db:
         usuario = Usuario(
             nombre="Mecánico QA", username=f"qa_mecanico_{rut_de_prueba()}",
@@ -67,19 +70,24 @@ def taller(limpiar):
             precio_venta=12900, stock_actual=10, stock_minimo=2,
         )
         servicio = Servicio(nombre=NOMBRE_SERVICIO, precio_venta=15000)
+        mecanico = Mecanico(nombre=f"{PREFIJO_MECANICO} {rut_de_prueba()}")
         cliente = Cliente(rut=rut_de_prueba(), nombre_completo=NOMBRE_CLIENTE)
         vehiculo = Vehiculo(cliente=cliente, patente=patente_de_prueba(),
                             marca="Toyota", modelo="Yaris")
-        db.add_all([usuario, producto, servicio, vehiculo])
+        db.add_all([usuario, producto, servicio, vehiculo, mecanico])
         db.commit()
         datos = SimpleNamespace(
             usuario_id=usuario.id, producto_id=producto.id, servicio_id=servicio.id,
-            vehiculo_id=vehiculo.id,
+            vehiculo_id=vehiculo.id, mecanico_id=mecanico.id, mecanico=mecanico.nombre,
         )
         Sesion.iniciar(SimpleNamespace(id=usuario.id, nombre=usuario.nombre, rol=usuario.rol))
 
     yield datos
     Sesion.cerrar()
+
+
+def elegir_mecanico(widget, taller) -> None:
+    widget.combo_mecanico.setCurrentIndex(widget.combo_mecanico.findData(taller.mecanico_id))
 
 
 @pytest.fixture
@@ -122,6 +130,7 @@ def test_mirar_el_historial_no_descarta_la_orden_en_progreso(app, taller, sin_mo
     # Menos kilómetros que el servicio anterior: se pregunta; con No, no se guarda.
     from PySide6.QtWidgets import QMessageBox
     monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.No)
+    elegir_mecanico(widget, taller)
     widget.spin_kilometraje.setValue(50000)
     widget.guardar_orden()
     with SessionLocal() as db:
@@ -216,6 +225,12 @@ def test_lo_que_queda_en_el_carrito_es_lo_que_se_guarda(app, taller, sin_modales
     assert widget.spin_kilometraje.value() == 0
     assert widget.spin_kilometraje.text() == "Sin registrar"   # no "0 km"
     assert not widget.boton_guardar.isEnabled()
+    # Quien trabaja el auto no siempre es quien usa el sistema: se elige, y
+    # sin él tampoco se guarda (sale en el PDF como técnico).
+    assert widget.combo_mecanico.currentIndex() == -1
+    widget.guardar_orden()
+    assert sin_modales[-1] == "Falta el mecánico"
+    elegir_mecanico(widget, taller)
     widget.guardar_orden()
     assert sin_modales[-1] == "Falta el kilometraje"
 
@@ -225,7 +240,8 @@ def test_lo_que_queda_en_el_carrito_es_lo_que_se_guarda(app, taller, sin_modales
 
     with SessionLocal() as db:
         orden = db.scalar(select(Orden).where(Orden.vehiculo_id == taller.vehiculo_id))
-        assert orden.usuario_id == taller.usuario_id
+        # Dos personas distintas: quien la registró y quien trabajó el auto.
+        assert (orden.usuario_id, orden.mecanico_id) == (taller.usuario_id, taller.mecanico_id)
         assert orden.kilometraje_ingreso == 120000
         # El IVA se calcula al cobrar y queda en la orden, no se re-deriva.
         assert (int(orden.subtotal), int(orden.descuento_porcentaje), int(orden.descuento_monto),
@@ -266,6 +282,7 @@ def test_lo_que_queda_en_el_carrito_es_lo_que_se_guarda(app, taller, sin_modales
     widget.filtro_historial.setCurrentText("Mercado Público")
     assert [widget.tabla_historial.item(f, columna).text()
             for f in range(widget.tabla_historial.rowCount())] == ["MP-2026-001"]
+    assert widget.tabla_historial.item(0, COLUMNAS_HISTORIAL.index("Mecánico")).text() == taller.mecanico
     widget.filtro_historial.setCurrentText("Clientes")
     assert widget.tabla_historial.rowCount() == 0
 
@@ -405,6 +422,7 @@ def test_la_orden_se_cierra_con_un_abono_y_el_saldo_se_cobra_despues(app, taller
     widget = ordenes.OrdenesWidget()
     widget._iniciar_nueva_orden(taller.vehiculo_id)
     widget.agregar_al_carrito(taller.producto_id, 1)   # 12.900 + IVA
+    elegir_mecanico(widget, taller)
     widget.spin_kilometraje.setValue(120000)
     # Sin nada que cobrar el medio de pago no importa y se ve apagado.
     assert not widget.combo_medio_pago.isEnabled()
@@ -650,6 +668,7 @@ def test_una_orden_se_deja_abierta_se_retoma_y_se_entrega(app, taller, sin_modal
     widget = ordenes.OrdenesWidget()
     widget._iniciar_nueva_orden(taller.vehiculo_id)
     widget.agregar_al_carrito(taller.producto_id, 2)
+    elegir_mecanico(widget, taller)
     widget.spin_kilometraje.setValue(50000)
     widget.guardar_orden("ABIERTA")
 
@@ -660,9 +679,17 @@ def test_una_orden_se_deja_abierta_se_retoma_y_se_entrega(app, taller, sin_modal
         assert db.get(Producto, taller.producto_id).stock_actual == 8
         orden_id = orden.id
 
+    # El mecánico deja el taller mientras el auto sigue adentro: la orden lo
+    # conserva, aunque ya no se ofrezca para las nuevas.
+    with SessionLocal() as db:
+        db.get(Mecanico, taller.mecanico_id).activo = False
+        db.commit()
+
     widget.setCurrentIndex(1)
     filas = [widget.tabla_abiertas.item(f, 0).text() for f in range(widget.tabla_abiertas.rowCount())]
-    widget.tabla_abiertas.selectRow(filas.index(str(orden_id)))
+    fila = filas.index(str(orden_id))
+    assert widget.tabla_abiertas.item(fila, 5).text() == taller.mecanico
+    widget.tabla_abiertas.selectRow(fila)
     assert widget.boton_retomar.isEnabled()
     widget.retomar_orden()
 
@@ -671,13 +698,17 @@ def test_una_orden_se_deja_abierta_se_retoma_y_se_entrega(app, taller, sin_modal
     assert widget.orden_abierta_id == orden_id
     assert widget.tabla_carrito.rowCount() == 1
     assert widget.tabla_carrito.item(0, 0).data(ROL_DETALLE) is not None
+    assert widget.combo_mecanico.currentData() == taller.mecanico_id
 
     widget.agregar_servicio_al_carrito(taller.servicio_id)
     widget.guardar_orden("ENTREGADA")
 
+    widget._iniciar_nueva_orden(taller.vehiculo_id)
+    assert widget.combo_mecanico.findData(taller.mecanico_id) == -1
+
     with SessionLocal() as db:
         orden = db.get(Orden, orden_id)
-        assert orden.estado == "ENTREGADA"
+        assert (orden.estado, orden.mecanico_id) == ("ENTREGADA", taller.mecanico_id)
         # La línea vieja no se duplicó y la nueva entró.
         assert len(orden.detalles) == 2
         # Y el producto se descontó una sola vez en todo el recorrido.
@@ -703,6 +734,7 @@ def test_el_flyer_descuenta_aceite_y_filtros_y_sirve_una_vez(app, taller, sin_mo
     widget._iniciar_nueva_orden(taller.vehiculo_id)
     widget.agregar_al_carrito(taller.producto_id, 1)          # 12.900, entra
     widget.agregar_servicio_al_carrito(taller.servicio_id)    # 15.000, no entra
+    elegir_mecanico(widget, taller)
     widget.spin_kilometraje.setValue(50000)
     widget.tipo_descuento.setCurrentIndex(TIPOS_DESCUENTO.index("Flyer (10 %)"))
     assert widget.totales.descuento.text() == "- $1.290"
@@ -742,6 +774,7 @@ def test_el_flyer_descuenta_aceite_y_filtros_y_sirve_una_vez(app, taller, sin_mo
     # El mismo papel no sirve para otra orden.
     widget._iniciar_nueva_orden(taller.vehiculo_id)
     widget.agregar_al_carrito(taller.producto_id, 1)
+    elegir_mecanico(widget, taller)
     widget.spin_kilometraje.setValue(60000)
     widget.tipo_descuento.setCurrentIndex(TIPOS_DESCUENTO.index("Flyer (10 %)"))
     widget.valor_descuento.setValue(folio)
@@ -768,6 +801,7 @@ def test_anular_una_orden_abierta_devuelve_todo_a_la_bodega(app, taller, sin_mod
     widget = ordenes.OrdenesWidget()
     widget._iniciar_nueva_orden(taller.vehiculo_id)
     widget.agregar_al_carrito(taller.producto_id, 3)
+    elegir_mecanico(widget, taller)
     widget.spin_kilometraje.setValue(50000)
     widget.guardar_orden("ABIERTA")
 

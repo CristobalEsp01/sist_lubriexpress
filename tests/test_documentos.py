@@ -6,7 +6,7 @@ from src.documentos import html_de_orden
 ORDEN = {
     "numero": 42, "fecha": datetime(2026, 9, 16, 10, 30), "cliente": "Ana <Soto>", "rut": None,
     "telefono": "912345678", "patente": "JFFG56", "vehiculo": "Nissan Np300 2017",
-    "kilometraje": 145035, "tecnico": "Alex Núñez Uribe",
+    "kilometraje": 145035, "tecnico": "Alex Núñez Uribe", "ingreso": "Paloma <Mesón>",
     "lineas": [("Aceite 10W40", 3, 12900), ("Cambio de aceite", 1, 15000)],
     "subtotal": 53700, "descuento": 5370, "impuesto": 9183, "ajuste": -3, "total": 57510,
     "pagada": True, "pagado": 57510, "folio": "MP-2026-001", "notas": "Raya en la puerta\nRevisar frenos",
@@ -29,6 +29,8 @@ def test_el_html_muestra_lo_cobrado_y_escapa_el_texto():
                      "JFFG56", "145.035 km", "Cambio de aceite", "$38.700", "$53.700",
                      "- $5.370", "$9.183", "- $3", "$57.510", "Pagada", "MP-2026-001",
                      "Raya en la puerta<br>Revisar frenos",
+                     # El técnico es el mecánico; quien la registró va en el membrete.
+                     "<b>Técnico</b><br>Alex Núñez Uribe", "Ingresada por Paloma &lt;Mesón&gt;",
                      # El membrete y el pie del informe que el taller ya usaba.
                      "LUBRI-EXPRESS", "Rene Schneider 3631", "www.lubri-express.cl",
                      '<img src="logo"'):
