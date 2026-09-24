@@ -153,3 +153,25 @@ def test_el_reporte_de_descuentos_junta_los_tres_tipos_y_quien_ingreso(db, app, 
     widget.filas = [(1, DIA, "Ana", "AB1234", "Paloma", "General (monto)", 500, 9500)]
     widget._llenar_resumen(widget.definicion())
     assert widget.resumen.itemAt(0).widget().findChild(QLabel).text() == "$500"
+
+
+def test_al_abrir_se_ve_el_resumen_y_la_serie_en_el_tiempo_va_entera(app, monkeypatch):
+    """Dos bugs de la pantalla. El resumen se armaba mientras la pestaña se
+    mostraba y quedaba oculto hasta cambiar algo. Y el gráfico de ingresos
+    cortaba la serie en 12 y la titulaba "Los 12 mayores": con un mes elegido,
+    dejaba fuera los días más recientes."""
+    from src.ui.reportes import ReportesWidget
+
+    monkeypatch.setattr(Sesion, "rol", "ADMINISTRADOR")
+    widget = ReportesWidget()
+    widget.show()
+    app.processEvents()
+    bloques = [widget.resumen.itemAt(i).widget() for i in range(widget.resumen.count())]
+    assert [b for b in bloques if b] and all(b.isVisible() for b in bloques if b)
+
+    widget.lista.setCurrentRow(0)                   # Ingresos por período
+    widget.filas = [(date(2019, 3, d), 1, 1000 * d, 0, 0, 0, 0, 0, 1000 * d) for d in range(1, 21)]
+    widget._dibujar_grafico(widget.definicion())
+    barras = widget.grafico.chart().series()[0].barSets()[0]
+    assert barras.count() == 20 and barras.at(19) == 20000
+    assert widget.grafico.chart().title() == ""

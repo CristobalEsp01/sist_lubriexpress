@@ -337,14 +337,21 @@ class ReportesWidget(QWidget):
             contenedor = QWidget()
             contenedor.setLayout(bloque)
             self.resumen.addWidget(contenedor)
+            # Se arma también durante el showEvent de la pestaña, cuando Qt
+            # ya repartió el show entre los hijos: sin esto quedaba oculto.
+            contenedor.show()
         self.resumen.addStretch()
 
     def _dibujar_grafico(self, definicion: Definicion) -> None:
         """Barras horizontales cuando la categoría es un nombre —caben enteros—
-        y verticales cuando es una fecha, que es como se lee una serie."""
-        filas = self.filas[:MAX_BARRAS]
+        y verticales cuando es una fecha, que es como se lee una serie.
+
+        Los nombres van los MAX_BARRAS mayores; la serie en el tiempo, entera.
+        Cortarla dejaba fuera los días más recientes.
+        """
+        filas = self.filas
         if definicion.horizontal:
-            filas = sorted(filas, key=lambda f: f[definicion.graficada])
+            filas = sorted(filas[:MAX_BARRAS], key=lambda f: f[definicion.graficada])
 
         barras = QBarSet(definicion.columnas[definicion.graficada])
         barras.setColor(QColor(ACENTO))
@@ -358,14 +365,14 @@ class ReportesWidget(QWidget):
         chart.legend().hide()
         chart.setBackgroundVisible(False)
         chart.setMargins(chart.margins().__class__(0, 0, 0, 0))
-        if len(self.filas) > MAX_BARRAS:
+        if definicion.horizontal and len(self.filas) > MAX_BARRAS:
             chart.setTitle(f"Los {MAX_BARRAS} mayores de {len(self.filas)}")
 
-        # En el eje la fecha va sin año: con doce categorías, "19-08-2026" se
-        # corta en "19-…" y no dice nada.
+        # Por día va solo el número: un mes son hasta 31 barras y "19-08" ya
+        # no cabía. El mes y el año están en la tabla y en el período elegido.
         def etiqueta(valor):
             if isinstance(valor, date):
-                return valor.strftime("%m-%Y" if self.por_mes else "%d-%m")
+                return valor.strftime("%m-%Y" if self.por_mes else "%d")
             return str(valor)[:28]
 
         categorias = QBarCategoryAxis()
