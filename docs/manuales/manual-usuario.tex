@@ -455,19 +455,27 @@ archivarlo al cierre.
 
 \pantalla{reportes}{Ingresos del período, con su gráfico.}
 
-Arriba se elige el rango de fechas. Hay cinco reportes; fuera del
+Arriba se elige el rango de fechas. Hay seis reportes; fuera del
 administrador, los demás roles ven solo el de reabastecimiento:
 
 \begin{itemize}
   \item \textbf{Ingresos por período}: ventas y órdenes por día —o por mes, si
         el rango es largo—, con neto, IVA, ajuste por redondeo y total. El
         ajuste va aparte porque no es venta: neto + IVA + ajuste = total.
-  \item \textbf{Ventas por producto}: cuánto se vendió de cada cosa.
+  \item \textbf{Ventas por producto}: cuánto se vendió de cada cosa y qué
+        parte del total es. La tabla ya viene ordenada de mayor a menor.
   \item \textbf{Por usuario}: cuánto movió cada persona.
+  \item \textbf{Por mecánico}: cuántas órdenes trabajó cada mecánico y por
+        cuánto. Las órdenes anteriores al registro de mecánicos salen como
+        ``Sin asignar''.
   \item \textbf{Órdenes con descuento}: cada orden que llevó descuento
         —general, flyer o gremio—, quién la ingresó, cuánto se descontó y el
-        total. Con ``Mes pasado'' es el reporte mensual.
-  \item \textbf{Reabastecimiento}: qué hay que reponer.
+        total. Con ``Mes pasado'' es el reporte mensual. Doble clic sobre una
+        fila abre la orden.
+  \item \textbf{Reabastecimiento}: qué hay que reponer. Solo cuenta los
+        productos que tienen mínimo; arriba dice cuántos no lo tienen. Si la
+        lista sale vacía y ese número es alto, falta fijar mínimos
+        (sección 2.4).
 \end{itemize}
 
 \pantalla{reabastecimiento}{Reabastecimiento: los productos en su mínimo o por

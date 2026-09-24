@@ -22,7 +22,7 @@ Lubri-Express. Corre localmente sobre PostgreSQL.
 | Aviso al cliente por WhatsApp | Funcionando (desde la orden abierta y desde una guardada, que cita su N° de OT) |
 | Exportación de la orden a PDF | Funcionando |
 | Caja chica del día | Funcionando (abre y cierra sola; efectivo agregado, gastos y PDF del día) |
-| Reportería (ingresos, productos, usuarios, descuentos, reabastecimiento) | Funcionando (con gráficos y exportación a Excel) |
+| Reportería (ingresos, productos, usuarios, mecánicos, descuentos, reabastecimiento) | Funcionando (con gráficos y exportación a Excel) |
 | Migración del sistema antiguo | Funcionando (`scripts/migrar_sistema_antiguo.py`) |
 | Respaldo automatizado local y a OneDrive | Funcionando (`scripts/respaldar.py`, con restauración probada) |
 | Aplicación empaquetada para Windows | Especificación lista (`lubriexpress.spec`); los `.exe` se construyen en Windows |
