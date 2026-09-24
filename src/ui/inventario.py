@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
 )
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import selectinload
 
 from ..auth import Sesion
 from ..database import SessionLocal
@@ -26,7 +27,8 @@ from .tema import ALERTA, CANAL_PANEL, ESPACIO_BARRA, EXITO, TINTA_SUAVE, fuente
 
 COLUMNAS_PRODUCTO = ["Nombre", "Marca", "Categoría", "Ubicación", "Stock", "Mín.", "Costo", "Venta neto"]
 COLUMNAS_KARDEX = ["Fecha", "Tipo", "Cantidad", "Saldo", "Costo unit.", "Usuario", "Origen"]
-COLUMNAS_INGRESO = ["Producto", "Stock Actual", "Ingreso", "Nuevo Stock", "Costo unit."]
+COLUMNAS_INGRESO = ["Producto", "Stock Actual", "Ingreso", "Nuevo Stock", "Costo unit.",
+                    "Venta neto", "Ubicación"]
 MAX_CLP = 99_999_999
 
 ETIQUETAS_MOVIMIENTO = {
@@ -236,11 +238,12 @@ class FormularioProducto(QDialog):
 
 
 class IngresoMercaderiaDialog(QDialog):
-    """Ventana para registrar la llegada de nueva mercadería masiva."""
+    """Ventana para registrar la llegada de mercadería de productos que ya
+    existen. Un producto nuevo se crea antes, con "Nuevo producto"."""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Ingreso de Mercadería")
-        self.resize(600, 400)
+        self.resize(1050, 440)
         self.setModal(True)
 
         self.lista_ingreso = []
@@ -254,7 +257,26 @@ class IngresoMercaderiaDialog(QDialog):
         # obligar a retipearlo invita a dejarlo en cero.
         self.spin_costo = FormularioProducto._campo_pesos()
         self.spin_costo.setToolTip("Lo que costó esta compra. Actualiza el costo del producto.")
-        self.combo_productos.currentIndexChanged.connect(self._proponer_costo)
+        # Si la compra subió mucho, el precio se sube acá mismo. Es neto, como
+        # en el catálogo: al lado va lo que paga el cliente, o alguien teclea
+        # el precio de la repisa y queda un 19 % más caro.
+        self.spin_venta = FormularioProducto._campo_pesos()
+        self.spin_venta.setToolTip("Precio de venta sin IVA. Actualiza el del producto.")
+        self.venta_con_iva = QLabel(f"con IVA {clp(0)}")
+        self.venta_con_iva.setToolTip("Lo que paga el cliente.")
+        # El ancho de un precio de siete cifras desde que se abre: calculado con
+        # el "$0" inicial, la ventana no crecía después y se leía "$5" en vez
+        # de "$50.089".
+        self.venta_con_iva.setMinimumWidth(
+            self.venta_con_iva.fontMetrics().horizontalAdvance("con IVA $9.999.999"))
+        self.spin_venta.valueChanged.connect(
+            lambda neto: self.venta_con_iva.setText(f"con IVA {clp(con_iva(neto))}")
+        )
+        # Recibir la mercadería es cuando se pone en la repisa: el momento de
+        # anotar dónde quedó. Casi todo lo migrado llegó sin ubicación.
+        self.combo_ubicacion = hacer_buscable(QComboBox(), libre=True)
+        self.combo_ubicacion.lineEdit().setPlaceholderText("Ej: Pasillo 1 - Repisa B")
+        self.combo_productos.currentIndexChanged.connect(self._proponer_valores)
 
         self.boton_agregar = QPushButton("Añadir a la lista")
         self.boton_agregar.setEnabled(False)
@@ -266,10 +288,16 @@ class IngresoMercaderiaDialog(QDialog):
         # mueve stock— exige un click deliberado.
         self.boton_agregar.setDefault(True)
 
-        barra_superior = barra(
+        # Dos filas: en una sola, a este ancho, el producto quedaba en "Bus…".
+        # "Añadir" va al final porque es lo último que se hace.
+        fila_producto = barra(
             QLabel("Producto"), self.combo_productos,
-            QLabel("Cantidad"), self.spin_cantidad,
-            QLabel("Costo unit."), self.spin_costo, self.boton_agregar, estira=1,
+            QLabel("Cantidad"), self.spin_cantidad, estira=1,
+        )
+        fila_precios = barra(
+            QLabel("Costo unit."), self.spin_costo,
+            QLabel("Venta neto"), self.spin_venta, self.venta_con_iva,
+            QLabel("Ubicación"), self.combo_ubicacion, self.boton_agregar, estira=6,
         )
 
         self.tabla = con_aviso_vacio(
@@ -303,7 +331,8 @@ class IngresoMercaderiaDialog(QDialog):
         barra_inferior.addWidget(self.boton_confirmar)
 
         layout = layout_de_dialogo(self)
-        layout.addLayout(barra_superior)
+        layout.addLayout(fila_producto)
+        layout.addLayout(fila_precios)
         layout.addWidget(self.tabla)
         layout.addLayout(barra_inferior)
 
@@ -313,7 +342,11 @@ class IngresoMercaderiaDialog(QDialog):
     def _cargar_productos(self) -> None:
         self.combo_productos.clear()
         with SessionLocal() as db:
-            productos = db.scalars(select(Producto).where(Producto.activo.is_(True)).order_by(Producto.nombre)).all()
+            productos = db.scalars(
+                select(Producto).where(Producto.activo.is_(True)).order_by(Producto.nombre)
+                # Sin esto, leer la ubicación de 2.372 productos son 2.372 consultas.
+                .options(selectinload(Producto.ubicacion))
+            ).all()
             for p in productos:
                 # El nombre viaja en los datos, no se lee de currentText(): con
                 # el combo editable ese texto puede ser un filtro a medio
@@ -321,8 +354,12 @@ class IngresoMercaderiaDialog(QDialog):
                 self.combo_productos.addItem(
                     p.nombre,
                     {"id": p.id, "nombre": p.nombre, "stock": p.stock_actual,
-                     "costo": int(p.precio_costo)},
+                     "costo": int(p.precio_costo), "venta": int(p.precio_venta),
+                     "ubicacion": p.ubicacion.descripcion if p.ubicacion else ""},
                 )
+            self.combo_ubicacion.addItems([""] + list(db.scalars(
+                select(Ubicacion.descripcion).distinct().order_by(Ubicacion.descripcion)
+            )))
         # Nace vacío, con su texto de fondo. Abrir con el primer producto del
         # catálogo ya elegido convierte un "Añadir" sin mirar en stock sumado al
         # producto equivocado, y eso se descubre recién cuando no cuadra el
@@ -330,14 +367,23 @@ class IngresoMercaderiaDialog(QDialog):
         self.combo_productos.setCurrentIndex(-1)
         self.combo_productos.lineEdit().setPlaceholderText("Busca por nombre o marca")
 
-    def _proponer_costo(self) -> None:
-        datos = self.combo_productos.currentData()
-        self.spin_costo.setValue(datos["costo"] if datos else 0)
+    def _proponer_valores(self) -> None:
+        """Lo que el producto tiene hoy: casi siempre no cambió."""
+        datos = self.combo_productos.currentData() or {}
+        self.spin_costo.setValue(datos.get("costo", 0))
+        self.spin_venta.setValue(datos.get("venta", 0))
+        self.combo_ubicacion.setCurrentText(datos.get("ubicacion", ""))
 
     def agregar_a_lista(self) -> None:
         datos = self.combo_productos.currentData()
         if not datos:
             return
+        if self.spin_venta.value() < self.spin_costo.value() and QMessageBox.question(
+            self, "Precio bajo el costo",
+            "El precio de venta es menor que el costo. ¿Agregar de todas formas?",
+        ) != QMessageBox.Yes:
+            return
+        venta, ubicacion = self.spin_venta.value(), self.combo_ubicacion.currentText().strip()
 
         existente = next(
             (item for item in self.lista_ingreso if item["producto_id"] == datos["id"]), None
@@ -347,6 +393,7 @@ class IngresoMercaderiaDialog(QDialog):
             # tecleado: es el dato más nuevo que alguien miró.
             existente["cantidad"] += self.spin_cantidad.value()
             existente["costo"] = self.spin_costo.value()
+            existente["venta"], existente["ubicacion"] = venta, ubicacion
         else:
             self.lista_ingreso.append({
                 "producto_id": datos["id"],
@@ -354,6 +401,8 @@ class IngresoMercaderiaDialog(QDialog):
                 "stock_actual": datos["stock"],
                 "cantidad": self.spin_cantidad.value(),
                 "costo": self.spin_costo.value(),
+                "venta": venta,
+                "ubicacion": ubicacion,
             })
 
         self.spin_cantidad.setValue(1)
@@ -374,6 +423,8 @@ class IngresoMercaderiaDialog(QDialog):
             self.tabla.setItem(fila, 2, ItemNumerico(f"+{item['cantidad']}", item["cantidad"]))
             self.tabla.setItem(fila, 3, ItemNumerico(str(nuevo), nuevo))
             self.tabla.setItem(fila, 4, ItemNumerico(clp(item["costo"]), item["costo"]))
+            self.tabla.setItem(fila, 5, ItemNumerico(clp(item["venta"]), item["venta"]))
+            self.tabla.setItem(fila, 6, QTableWidgetItem(item["ubicacion"]))
         ajustar_columnas(self.tabla)
         hay_lista = bool(self.lista_ingreso)
         self.boton_confirmar.setEnabled(hay_lista)
@@ -388,6 +439,9 @@ class IngresoMercaderiaDialog(QDialog):
         # (fn_aplicar_movimiento_manual) suma el stock y calcula el
         # stock_resultante. Tocar stock_actual acá lo contaría dos veces.
         with SessionLocal() as db:
+            # Con autoflush apagado, una repisa nueva recién creada no la ve
+            # la consulta del producto siguiente: sin esto nacería dos veces.
+            ubicaciones = {}
             for item in self.lista_ingreso:
                 db.add(KardexMovimiento(
                     producto_id=item["producto_id"],
@@ -398,9 +452,14 @@ class IngresoMercaderiaDialog(QDialog):
                 ))
                 # El costo del catálogo pasa a ser el de esta compra; el de las
                 # anteriores queda en su movimiento, que es lo que se consulta
-                # después. No se toca el precio de venta: el margen lo decide
-                # el taller, no una regla de tres.
-                db.get(Producto, item["producto_id"]).precio_costo = item["costo"]
+                # después. El precio de venta es el que se tecleó: el margen lo
+                # decide el taller, no una regla de tres.
+                producto = db.get(Producto, item["producto_id"])
+                producto.precio_costo, producto.precio_venta = item["costo"], item["venta"]
+                if item["ubicacion"] not in ubicaciones:
+                    ubicaciones[item["ubicacion"]] = FormularioProducto._ubicacion_o_crear(
+                        db, item["ubicacion"])
+                producto.ubicacion = ubicaciones[item["ubicacion"]]
             try:
                 db.commit()
             except IntegrityError as e:

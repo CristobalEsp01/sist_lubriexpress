@@ -14,6 +14,7 @@ from src.models import DetalleVenta, KardexMovimiento, Producto, Ubicacion, Usua
 
 NOMBRE = "QA Aceite de prueba"
 NOMBRE_INGRESO = "QA Filtro ingreso"
+UBICACION_INGRESO = "QA Repisa del ingreso"
 
 
 @pytest.fixture
@@ -47,8 +48,10 @@ def bodeguero_qa():
     Sesion.cerrar()
     with SessionLocal() as db:
         db.query(KardexMovimiento).filter(KardexMovimiento.usuario_id == usuario_id).delete()
-        for p in db.scalars(select(Producto).where(Producto.nombre == NOMBRE_INGRESO)):
+        for p in db.scalars(select(Producto).where(Producto.nombre.startswith(NOMBRE_INGRESO))):
             db.delete(p)
+        for u in db.scalars(select(Ubicacion).where(Ubicacion.descripcion == UBICACION_INGRESO)):
+            db.delete(u)
         usuario = db.get(Usuario, usuario_id)
         if usuario:
             db.delete(usuario)
@@ -264,9 +267,9 @@ def test_la_lista_de_ingreso_respeta_el_orden_en_que_se_agrego(app):
 
     dialogo.lista_ingreso = [
         {"producto_id": 1, "nombre": "ZZ Agregado primero", "stock_actual": 0,
-         "cantidad": 1, "costo": 100},
+         "cantidad": 1, "costo": 100, "venta": 150, "ubicacion": ""},
         {"producto_id": 2, "nombre": "AA Agregado después", "stock_actual": 0,
-         "cantidad": 2, "costo": 200},
+         "cantidad": 2, "costo": 200, "venta": 300, "ubicacion": "M4-C"},
     ]
     dialogo._redibujar_tabla()
     assert dialogo.tabla.item(0, 0).text() == "ZZ Agregado primero"
@@ -416,3 +419,54 @@ def test_el_ingreso_registra_el_costo_de_esa_compra(app, bodeguero_qa, monkeypat
         # Y se puede consultar después, que es para lo que se guarda.
         from src.ui.inventario import movimientos_de
         assert movimientos_de(db, producto_id)[0][4] == 1350
+
+
+def test_el_ingreso_fija_el_precio_de_venta_y_la_ubicacion(app, bodeguero_qa, monkeypatch):
+    """Recibir la mercadería es cuando alguien la pone en la repisa: el momento
+    de anotar dónde quedó (casi todo lo migrado no tiene ubicación) y de subir
+    el precio si la compra subió. El precio es neto, así que se ve con IVA."""
+    from PySide6.QtWidgets import QMessageBox
+
+    from src.ui.inventario import IngresoMercaderiaDialog
+
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: QMessageBox.Ok)
+    with SessionLocal() as db:
+        filtro = Producto(nombre=f"{NOMBRE_INGRESO} aire", precio_costo=1000, precio_venta=2000,
+                          stock_actual=4, stock_minimo=1)
+        aceite = Producto(nombre=f"{NOMBRE_INGRESO} aceite", precio_costo=3000, precio_venta=5000,
+                          stock_actual=2, stock_minimo=1)
+        db.add_all([filtro, aceite])
+        db.commit()
+        filtro_id, aceite_id = filtro.id, aceite.id
+
+    dialogo = IngresoMercaderiaDialog()
+    dialogo.combo_productos.setCurrentIndex(dialogo.combo_productos.findText(filtro.nombre))
+    # Propone lo que el producto tiene hoy, igual que el costo.
+    assert (dialogo.spin_venta.value(), dialogo.venta_con_iva.text()) == (2000, "con IVA $2.380")
+    assert dialogo.combo_ubicacion.currentText() == ""
+
+    dialogo.spin_costo.setValue(1350)
+    dialogo.spin_venta.setValue(2500)
+    dialogo.combo_ubicacion.setCurrentText(UBICACION_INGRESO)
+    dialogo.agregar_a_lista()
+    assert dialogo.tabla.item(0, 5).text() == "$2.500"
+    assert dialogo.tabla.item(0, 6).text() == UBICACION_INGRESO
+
+    # Vender bajo el costo se pregunta, igual que en el formulario del producto.
+    dialogo.combo_productos.setCurrentIndex(dialogo.combo_productos.findText(aceite.nombre))
+    dialogo.spin_costo.setValue(6000)
+    dialogo.combo_ubicacion.setCurrentText(UBICACION_INGRESO)   # la misma repisa, nueva
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.No)
+    dialogo.agregar_a_lista()
+    assert len(dialogo.lista_ingreso) == 1
+    dialogo.spin_venta.setValue(7000)
+    dialogo.agregar_a_lista()
+    dialogo.confirmar_ingreso()
+
+    with SessionLocal() as db:
+        filtro, aceite = db.get(Producto, filtro_id), db.get(Producto, aceite_id)
+        assert (filtro.precio_costo, filtro.precio_venta) == (1350, 2500)
+        assert (aceite.precio_costo, aceite.precio_venta) == (6000, 7000)
+        assert filtro.ubicacion.descripcion == aceite.ubicacion.descripcion == UBICACION_INGRESO
+        # Dos productos a una repisa nueva en el mismo ingreso: una sola repisa.
+        assert db.query(Ubicacion).filter_by(descripcion=UBICACION_INGRESO).count() == 1
