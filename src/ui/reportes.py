@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 
 from .. import reportes
 from ..database import SessionLocal
+from ..permisos import puede
 from ..xlsx import escribir_xlsx
 from .comunes import (
     ItemNumerico, barra, carpeta_de_documentos, clp, con_aviso_vacio, crear_tabla,
@@ -34,14 +35,15 @@ MAX_BARRAS = 12  # más barras que eso no se leen; el detalle está en la tabla
 
 class Definicion:
     """Un reporte: cómo se llama, qué columnas tiene, cuál resume y cómo se
-    grafica. `fechas` dice si el cálculo depende del período elegido."""
+    grafica. `fechas` dice si el cálculo depende del período elegido, y
+    `grafico` si tiene uno: una lista de órdenes no tiene forma que mirar."""
 
     def __init__(self, titulo, ayuda, columnas, pesos, numericas, orden, graficada,
-                 funcion, fechas=True, horizontal=False):
+                 funcion, fechas=True, horizontal=False, grafico=True):
         self.titulo, self.ayuda, self.columnas = titulo, ayuda, columnas
         self.pesos, self.numericas, self.orden = pesos, numericas, orden
         self.graficada, self.funcion = graficada, funcion
-        self.fechas, self.horizontal = fechas, horizontal
+        self.fechas, self.horizontal, self.grafico = fechas, horizontal, grafico
 
 
 REPORTES = [
@@ -57,6 +59,10 @@ REPORTES = [
         "Por usuario", "Cuánto movió cada persona en el período.",
         reportes.COLUMNAS_USUARIOS, {2, 4, 5}, (1, 2, 3, 4, 5), 5, 5,
         reportes.por_usuario, horizontal=True),
+    Definicion(
+        "Órdenes con descuento", "Toda orden con descuento general, flyer o gremio, y quién la ingresó.",
+        reportes.COLUMNAS_DESCUENTOS, {6, 7}, (0, 6, 7), 0, 6,
+        reportes.descuentos, grafico=False),
     Definicion(
         "Reabastecimiento", "Productos en su stock mínimo o por debajo. No depende del período.",
         reportes.COLUMNAS_REABASTECIMIENTO, set(), (3, 4, 5), 5, 5,
@@ -81,6 +87,10 @@ def rangos(hoy: date) -> list[tuple[str, date, date]]:
 class ReportesWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+        # Las cifras de plata son del administrador; el resto ve solo la lista
+        # de compras (permisos.py).
+        self.definiciones = [d for d in REPORTES
+                             if puede("reportes") or d.funcion is reportes.reabastecimiento]
         self.hoy = date.today()
         self.filas: list[list] = []
         self.por_mes = False
@@ -107,10 +117,10 @@ class ReportesWidget(QWidget):
         )
 
         # --- Qué reporte -------------------------------------------------
-        # Una lista y no pestañas dentro de otra pestaña: se ven los cuatro de
-        # una vez y cuál está elegido, sin dos filas de solapas apiladas.
+        # Una lista y no pestañas dentro de otra pestaña: se ven todos de una
+        # vez y cuál está elegido, sin dos filas de solapas apiladas.
         self.lista = QListWidget()
-        self.lista.addItems([d.titulo for d in REPORTES])
+        self.lista.addItems([d.titulo for d in self.definiciones])
         self.lista.setCurrentRow(0)
         self.lista.setFixedWidth(190)
         self.lista.currentRowChanged.connect(self._cambiar_reporte)
@@ -128,8 +138,8 @@ class ReportesWidget(QWidget):
         marco_resumen.setLayout(self.resumen)
 
         self.tabla = con_aviso_vacio(
-            crear_tabla(REPORTES[0].columnas, ancha=0, orden=0,
-                        numericas=REPORTES[0].numericas),
+            crear_tabla(self.definiciones[0].columnas, ancha=0, orden=0,
+                        numericas=self.definiciones[0].numericas),
             "Sin datos en el período elegido.")
         self.grafico = QChartView()
         self.grafico.setRenderHint(QPainter.Antialiasing)
@@ -165,8 +175,9 @@ class ReportesWidget(QWidget):
         ))
         layout.addLayout(cuerpo, 1)
 
-        self._ajustar_cabecera(REPORTES[0])
         self._cambiar_rango()
+        # El primero puede no depender del período (sin permiso, es el único).
+        self._cambiar_reporte()
         self._conectar_fechas(True)
 
     @staticmethod
@@ -235,7 +246,7 @@ class ReportesWidget(QWidget):
         cabecera.setStretchLastSection(True)
 
     def definicion(self) -> Definicion:
-        return REPORTES[max(self.lista.currentRow(), 0)]
+        return self.definiciones[max(self.lista.currentRow(), 0)]
 
     # ------------------------------------------------------------------
     # Datos
@@ -254,7 +265,9 @@ class ReportesWidget(QWidget):
         self.ayuda.setText(definicion.ayuda)
         self._llenar_tabla(definicion)
         self._llenar_resumen(definicion)
-        self._dibujar_grafico(definicion)
+        self.grafico.setVisible(definicion.grafico)
+        if definicion.grafico:
+            self._dibujar_grafico(definicion)
 
     def _texto(self, definicion: Definicion, columna: int, valor) -> str:
         if isinstance(valor, date):
@@ -302,6 +315,9 @@ class ReportesWidget(QWidget):
             cifras = [(clp(total), "total del período"),
                       (clp(sum(f[6] for f in self.filas)), "IVA"),
                       (f"{sum(f[1] + f[3] for f in self.filas)}", "documentos")]
+        elif definicion.funcion is reportes.descuentos:
+            cifras = [(clp(total), "descontado"),
+                      (f"{len(self.filas)}", "órdenes con descuento")]
         elif definicion.funcion is reportes.reabastecimiento:
             cifras = [(f"{len(self.filas)}", "productos bajo el mínimo"),
                       (f"{total}", "unidades que faltan")]

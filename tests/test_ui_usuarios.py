@@ -56,13 +56,19 @@ def sesion():
 def test_el_rol_manda_en_inventario_y_en_las_pestanas(app, sesion, avisos, rol, supervisa, pestanas):
     """Un botón apagado no basta: el slot vuelve a preguntar, que es lo que
     ataja el doble click y el atajo. Y la pestaña de usuarios existe solo para
-    quien puede usarla."""
+    quien puede usarla.
+
+    El costo, el inventario valorizado y los reportes de plata son del dueño:
+    el supervisor maneja la bodega sin verlos en los listados."""
     from src.ui import InventarioWidget, VentanaPrincipal
 
     sesion(rol)
+    administra = rol == "ADMINISTRADOR"
     inventario = InventarioWidget()
     assert inventario.boton_ingreso.isEnabled() == supervisa
-    assert inventario.tabla.isColumnHidden(6) == (not supervisa)  # el costo
+    assert inventario.tabla.isColumnHidden(6) == (not administra)       # el costo
+    assert inventario.tabla_kardex.isColumnHidden(4) == (not administra)
+    assert ("a precio costo" in inventario.resumen.text()) == administra
     if inventario.tabla.rowCount():
         inventario.tabla.selectRow(0)
         assert inventario.boton_editar.isEnabled() == supervisa
@@ -73,6 +79,7 @@ def test_el_rol_manda_en_inventario_y_en_las_pestanas(app, sesion, avisos, rol, 
 
     ventana = VentanaPrincipal()
     assert ventana.pestanias.count() == pestanas
+    assert ventana.reportes.lista.count() == (5 if administra else 1)   # solo Reabastecimiento
     if pestanas == 7:
         assert ventana.pestanias.tabText(6) == "Usuarios"
         ventana.pestanias.setCurrentIndex(6)

@@ -11,9 +11,15 @@ suman acá cuando existan en pantalla.
 from .auth import Sesion
 
 PERMISOS = {
-    # Crear y editar productos, ingresar mercadería, ajustar stock, ver el costo.
+    # Crear y editar productos, ingresar mercadería, ajustar stock. Los
+    # formularios de bodega piden el costo de la compra, así que ahí se ve.
     "inventario": {"SUPERVISOR", "ADMINISTRADOR"},
-    # Dar de alta usuarios y asignar roles.
+    # El costo en los listados y el inventario valorizado: lo que vale la bodega.
+    "costos": {"ADMINISTRADOR"},
+    # Los reportes de plata (ingresos, ventas, usuarios, descuentos). El de
+    # reabastecimiento lo ve cualquiera: es la lista de compras.
+    "reportes": {"ADMINISTRADOR"},
+    # Dar de alta usuarios y mecánicos, y asignar roles.
     "usuarios": {"ADMINISTRADOR"},
 }
 

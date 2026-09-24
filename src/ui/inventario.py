@@ -554,8 +554,9 @@ class MinimoPorCategoriaDialog(QDialog):
 
 class InventarioWidget(QWidget):
     """Listado de productos con búsqueda, alta y edición. Crear, editar,
-    ingresar mercadería, ajustar stock y ver el costo están reservados a
-    supervisores (permisos.py); el resto lo ve cualquiera."""
+    ingresar mercadería y ajustar stock están reservados a supervisores, y el
+    costo del listado y el total valorizado a administradores (permisos.py);
+    el resto lo ve cualquiera."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -592,6 +593,7 @@ class InventarioWidget(QWidget):
         # El rol manda: el botón nace apagado y lo dice, y el slot vuelve a
         # preguntar. Editar y Ajustar además exigen una fila (recargar_kardex).
         self.supervisa = puede("inventario")
+        self.ve_costo = puede("costos")
         boton_nuevo.setEnabled(self.supervisa)
         self.boton_ingreso.setEnabled(self.supervisa)
         self.boton_excel.setEnabled(self.supervisa)
@@ -605,7 +607,7 @@ class InventarioWidget(QWidget):
             crear_tabla(COLUMNAS_PRODUCTO, ancha=0, orden=0, numericas=(4, 5, 6, 7)),
             "No hay productos registrados.",
         )  # ordena por Nombre
-        self.tabla.setColumnHidden(6, not self.supervisa)  # el costo lo ven supervisores
+        self.tabla.setColumnHidden(6, not self.ve_costo)
         self.tabla.doubleClicked.connect(self.editar)
         self.tabla.itemSelectionChanged.connect(self.recargar_kardex)
 
@@ -616,7 +618,7 @@ class InventarioWidget(QWidget):
             "Elige un producto para ver sus movimientos.",
         )
         # El costo lo ven los mismos que ven la columna de costo del listado.
-        self.tabla_kardex.setColumnHidden(4, not self.supervisa)
+        self.tabla_kardex.setColumnHidden(4, not self.ve_costo)
         self.titulo_kardex = QLabel()
         self.titulo_kardex.setProperty("clase", "seccion")
 
@@ -737,7 +739,7 @@ class InventarioWidget(QWidget):
         # que se va a vender. Sigue lo que muestra la tabla, así que con un
         # filtro puesto dice cuánto vale esa categoría. Lo ven los mismos que
         # ven la columna de costo.
-        if self.supervisa:
+        if self.ve_costo:
             aviso += f" — {clp(valorizado)} a precio costo"
         self.resumen.setText(f"{len(filas)} producto(s){aviso}")
         self.recargar_kardex()

@@ -321,7 +321,7 @@ def test_el_resumen_valoriza_a_costo_lo_que_muestra_la_tabla(app, limpiar, bodeg
     listado, y sin filtro, la bodega entera.
 
     Va a precio costo —plata inmovilizada, no venta futura— así que la ve quien
-    ve la columna de costo: el mecánico, no.
+    ve la columna de costo: el dueño. El supervisor maneja la bodega sin verla.
     """
     from src.auth import Sesion
     from src.ui import InventarioWidget
@@ -331,6 +331,13 @@ def test_el_resumen_valoriza_a_costo_lo_que_muestra_la_tabla(app, limpiar, bodeg
                         stock_actual=3, stock_minimo=1))
         db.commit()
 
+    supervisor = InventarioWidget()
+    supervisor.busqueda.setText(NOMBRE)
+    assert supervisor.tabla.rowCount() == 1 and supervisor.boton_ingreso.isEnabled()
+    assert "a precio costo" not in supervisor.resumen.text()
+    assert supervisor.tabla.isColumnHidden(6)
+
+    Sesion.iniciar(SimpleNamespace(id=bodeguero_qa, nombre="Dueño QA", rol="ADMINISTRADOR"))
     widget = InventarioWidget()
     widget.busqueda.setText(NOMBRE)
     assert widget.tabla.rowCount() == 1

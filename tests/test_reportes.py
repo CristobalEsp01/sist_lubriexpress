@@ -3,16 +3,20 @@ documentos y el rango de fechas incluye el día `hasta` completo."""
 from datetime import date, datetime
 
 from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QLabel
+from sqlalchemy import select
 
 from conftest import patente_de_prueba, rut_de_prueba
 from src import reportes
+from src.auth import Sesion
 from src.models import Cliente, DetalleOrden, DetalleVenta, Orden, Producto, Usuario, Vehiculo, Venta
 from src.xlsx import leer_xlsx
 
 DIA = date(2019, 3, 10)  # antes de los datos migrados: no choca con nada
 
 
-def test_los_cuatro_reportes_cuadran_con_lo_guardado(db, app, tmp_path):
+def test_los_cuatro_reportes_cuadran_con_lo_guardado(db, app, tmp_path, monkeypatch):
+    monkeypatch.setattr(Sesion, "rol", "ADMINISTRADOR")     # los reportes de plata son suyos
     usuario = Usuario(nombre=f"Reportero {rut_de_prueba()}", username=f"qa_rep_{rut_de_prueba()}",
                       password_hash="x", rol="SUPERVISOR")
     producto = Producto(nombre=f"Aceite reporte {rut_de_prueba()}", marca="Mobil",
@@ -85,9 +89,10 @@ def test_los_cuatro_reportes_cuadran_con_lo_guardado(db, app, tmp_path):
     assert barras.count() == 2 and barras.at(0) == 1000
 
     # Cambiar de reporte cambia las columnas, el resumen y el gráfico.
-    widget.lista.setCurrentRow(3)            # Reabastecimiento: no usa fechas
+    titulos = [d.titulo for d in REPORTES]
+    widget.lista.setCurrentRow(titulos.index("Reabastecimiento"))   # no usa fechas
     assert not widget.rango.isEnabled()
-    assert widget.tabla.columnCount() == len(REPORTES[3].columnas)
+    assert widget.tabla.columnCount() == len(reportes.COLUMNAS_REABASTECIMIENTO)
     ruta = widget.exportar_a_carpeta(tmp_path)
     assert ruta.name == "reabastecimiento_20190301_20190331.xlsx"
     exportado = leer_xlsx(ruta)
@@ -97,3 +102,54 @@ def test_los_cuatro_reportes_cuadran_con_lo_guardado(db, app, tmp_path):
     widget.filas = [(date(2019, 3, 10), 1, 23800, 1, 11900, 30000, 5700, 0, 35700)]
     ruta = widget.exportar_a_carpeta(tmp_path)
     assert leer_xlsx(ruta)[0]["Fecha"] == "10-03-2019"   # exportada formateada
+
+
+def test_el_reporte_de_descuentos_junta_los_tres_tipos_y_quien_ingreso(db, app, monkeypatch):
+    """Lo pidió el dueño: qué orden llevó descuento, de qué tipo, cuánto y
+    quién la ingresó. Sin estados de pago: no es lo que se pregunta."""
+    usuario = Usuario(nombre=f"Mesón {rut_de_prueba()}", username=f"qa_rep_{rut_de_prueba()}",
+                      password_hash="x", rol="USUARIO_NORMAL")
+    vehiculo = Vehiculo(cliente=Cliente(nombre_completo="Cliente descuento"),
+                        patente=patente_de_prueba())
+    db.add_all([usuario, vehiculo])
+    db.flush()
+    usados = set(db.scalars(select(Orden.folio_flyer).where(Orden.folio_flyer.isnot(None))))
+    folio = max(set(range(1, 1001)) - usados)
+
+    def orden(**campos):
+        nueva = Orden(vehiculo=vehiculo, usuario=usuario, fecha_creacion=datetime(2019, 3, 10, 12),
+                      subtotal=10000, total_final=10000, **campos)
+        db.add(nueva)
+        return nueva
+
+    porcentaje = orden(descuento_porcentaje=10)
+    monto = orden(descuento_monto=500)
+    flyer = orden(descuento_monto=1000, convenio="FLYER", folio_flyer=folio)
+    gremio = orden(descuento_monto=1500, convenio="GREMIO")
+    orden()                                         # sin descuento: no va
+    orden(descuento_monto=700, estado="ANULADA")    # anulada: no se hizo
+    db.flush()
+
+    comunes = (DIA, "Cliente descuento", vehiculo.patente, usuario.nombre)
+    assert reportes.descuentos(db, DIA, DIA) == [
+        (porcentaje.id, *comunes, "General (10 %)", 1000, 10000),
+        (monto.id, *comunes, "General (monto)", 500, 10000),
+        (flyer.id, *comunes, f"Flyer N° {folio:04d} (10 %)", 1000, 10000),
+        (gremio.id, *comunes, "Gremio/Sindicato (15 %)", 1500, 10000),
+    ]
+
+    # Solo el administrador lo ve; los demás, solo la lista de compras.
+    from src.ui.reportes import ReportesWidget
+
+    monkeypatch.setattr(Sesion, "rol", "SUPERVISOR")
+    widget = ReportesWidget()
+    assert [d.titulo for d in widget.definiciones] == ["Reabastecimiento"]
+    assert not widget.rango.isEnabled()
+
+    monkeypatch.setattr(Sesion, "rol", "ADMINISTRADOR")
+    widget = ReportesWidget()
+    widget.lista.setCurrentRow([d.titulo for d in widget.definiciones].index("Órdenes con descuento"))
+    assert widget.grafico.isHidden()          # una lista de órdenes no tiene forma que graficar
+    widget.filas = [(1, DIA, "Ana", "AB1234", "Paloma", "General (monto)", 500, 9500)]
+    widget._llenar_resumen(widget.definicion())
+    assert widget.resumen.itemAt(0).widget().findChild(QLabel).text() == "$500"

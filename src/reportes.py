@@ -1,5 +1,5 @@
 """Reportería (Propuesta 3.2, semana 3): ingresos por período, ventas por
-producto, actividad por usuario y reabastecimiento. Sin Qt: cada función
+producto, actividad por usuario, órdenes con descuento y reabastecimiento. Sin Qt: cada función
 devuelve filas listas para una tabla o para exportar.
 
 Las cifras salen de lo guardado en los documentos (`total_final`,
@@ -11,7 +11,8 @@ from datetime import date, datetime, time, timedelta
 
 from sqlalchemy import func, select, text
 
-from .models import DetalleOrden, DetalleVenta, Orden, Producto, Usuario, Venta
+from . import convenios
+from .models import Cliente, DetalleOrden, DetalleVenta, Orden, Producto, Usuario, Vehiculo, Venta
 
 # Una orden anulada no se hizo: su stock volvió a la bodega y no puede seguir
 # contándose como ingreso ni como producto vendido.
@@ -22,6 +23,8 @@ COLUMNAS_INGRESOS = ["Fecha", "Ventas", "Total ventas", "Órdenes", "Total órde
                      "Ajuste", "Total"]
 COLUMNAS_PRODUCTOS = ["Producto", "Marca", "Cantidad", "Monto neto"]
 COLUMNAS_USUARIOS = ["Usuario", "Ventas", "Total ventas", "Órdenes", "Total órdenes", "Total"]
+COLUMNAS_DESCUENTOS = ["N° OT", "Fecha", "Cliente", "Patente", "Ingresó", "Tipo de descuento",
+                       "Descuento", "Total"]
 COLUMNAS_REABASTECIMIENTO = ["Producto", "Marca", "Categoría", "Stock", "Mínimo", "Faltante"]
 
 
@@ -102,6 +105,29 @@ def por_usuario(db, desde: date, hasta: date) -> list[tuple]:
         ((nombre, nv, tv, no, to, tv + to) for nombre, (nv, tv, no, to) in acumulado.items()),
         key=lambda f: (-f[5], f[0]),
     )
+
+
+def descuentos(db, desde: date, hasta: date) -> list[tuple]:
+    """Las órdenes que llevaron descuento, de cualquier tipo, y quién las
+    ingresó. Solo las ventas de mostrador no entran: no tienen descuento."""
+    ini, fin = _rango(desde, hasta)
+    filas = []
+    for orden, cliente, patente, usuario in db.execute(
+        select(Orden, Cliente.nombre_completo, Vehiculo.patente, Usuario.nombre)
+        .join(Orden.vehiculo).join(Vehiculo.cliente).join(Orden.usuario)
+        .where(Orden.fecha_creacion >= ini, Orden.fecha_creacion < fin, VIGENTE,
+               (Orden.descuento_monto > 0) | (Orden.descuento_porcentaje > 0))
+        .order_by(Orden.id)
+    ):
+        if orden.convenio:
+            tipo = convenios.rotulo(orden.convenio, orden.folio_flyer)
+        elif orden.descuento_porcentaje:
+            tipo = f"General ({int(orden.descuento_porcentaje)} %)"
+        else:
+            tipo = "General (monto)"
+        filas.append((orden.id, orden.fecha_creacion.date(), cliente, patente, usuario, tipo,
+                      orden.descuento_aplicado, int(orden.total_final)))
+    return filas
 
 
 def reabastecimiento(db) -> list[tuple]:
