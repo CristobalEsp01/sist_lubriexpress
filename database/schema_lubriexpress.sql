@@ -104,8 +104,17 @@ CREATE TABLE "servicios" (
   "nombre" VARCHAR(100) NOT NULL,
   "categoria" VARCHAR(50),
   "precio_venta" DECIMAL(10,2) NOT NULL CHECK ("precio_venta" >= 0),
-  "activo" BOOLEAN NOT NULL DEFAULT TRUE
+  "activo" BOOLEAN NOT NULL DEFAULT TRUE,
+  -- El precio se escribe en cada orden en vez de salir del catálogo. Hoy solo
+  -- lo usa el Servicio Público de Mercado Público, que existe una vez (índice
+  -- de abajo) y sirve para cuadrar la orden con el presupuesto.
+  "precio_variable" BOOLEAN NOT NULL DEFAULT FALSE
 );
+CREATE UNIQUE INDEX servicio_de_precio_variable_unico ON "servicios"("precio_variable")
+  WHERE "precio_variable";
+INSERT INTO "servicios" ("nombre", "categoria", "precio_venta", "activo", "precio_variable")
+  SELECT 'Servicio Público', 'Mercado Público', 0, TRUE, TRUE
+  WHERE NOT EXISTS (SELECT 1 FROM "servicios" WHERE "precio_variable");
 
 -- ---------------------------------------------------------------------
 -- Tabla de Mecánicos
@@ -179,6 +188,9 @@ CREATE TABLE "detalle_ordenes" (
   -- y en todo lo guardado antes de que existiera esta columna: ahí el margen
   -- es "sin dato", no cero.
   "costo_unitario" DECIMAL(10,2) CHECK ("costo_unitario" >= 0),
+  -- Texto libre de la línea. Lo usa el Servicio Público para decir qué se hizo
+  -- (el presupuesto vive fuera del sistema); en el resto queda vacío.
+  "descripcion" VARCHAR(150) CHECK ("descripcion" <> ''),
   CONSTRAINT "detalle_orden_un_item"
       CHECK (("producto_id" IS NULL) <> ("servicio_id" IS NULL))
 );
@@ -666,6 +678,62 @@ CREATE TRIGGER trg_detalle_ordenes_costo
 CREATE TRIGGER trg_detalle_ventas_costo
   BEFORE INSERT ON "detalle_ventas"
   FOR EACH ROW EXECUTE FUNCTION fn_congelar_costo();
+
+-- =====================================================================
+-- Triggers: servicio de precio variable (Servicio Público)
+-- =====================================================================
+-- Es plata a cobrar sin producto detrás, y por eso lleva reglas propias que
+-- viven acá y no en la pantalla: solo en órdenes con folio de Mercado Público,
+-- una vez por orden y de cantidad 1. Y a la inversa, una orden que lo tiene no
+-- puede perder su folio, porque quedaría cobrando un presupuesto que no existe.
+CREATE OR REPLACE FUNCTION fn_validar_servicio_publico() RETURNS TRIGGER AS $$
+DECLARE
+  v_folio VARCHAR(50);
+BEGIN
+  IF NEW."servicio_id" IS NULL
+     OR NOT EXISTS (SELECT 1 FROM "servicios" WHERE "id" = NEW."servicio_id" AND "precio_variable") THEN
+    RETURN NEW;
+  END IF;
+
+  SELECT "folio_mercado_publico" INTO v_folio FROM "ordenes" WHERE "id" = NEW."orden_id";
+  IF v_folio IS NULL OR v_folio = '' THEN
+    RAISE EXCEPTION USING ERRCODE = 'check_violation',
+      MESSAGE = 'El servicio de precio variable solo va en órdenes de Mercado Público (con folio).';
+  END IF;
+  IF NEW."cantidad" <> 1 THEN
+    RAISE EXCEPTION USING ERRCODE = 'check_violation',
+      MESSAGE = 'El servicio de precio variable se cobra una sola vez por orden (cantidad 1).';
+  END IF;
+  IF EXISTS (SELECT 1 FROM "detalle_ordenes"
+              WHERE "orden_id" = NEW."orden_id" AND "servicio_id" = NEW."servicio_id") THEN
+    RAISE EXCEPTION USING ERRCODE = 'check_violation',
+      MESSAGE = 'La orden ya tiene el servicio de precio variable.';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_detalle_ordenes_servicio_publico
+  BEFORE INSERT ON "detalle_ordenes"
+  FOR EACH ROW EXECUTE FUNCTION fn_validar_servicio_publico();
+
+CREATE OR REPLACE FUNCTION fn_folio_con_servicio_publico() RETURNS TRIGGER AS $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM "detalle_ordenes" d
+               JOIN "servicios" s ON s."id" = d."servicio_id"
+              WHERE d."orden_id" = NEW."id" AND s."precio_variable") THEN
+    RAISE EXCEPTION USING ERRCODE = 'check_violation',
+      MESSAGE = 'La orden tiene el servicio de precio variable: quítalo antes de sacarle el folio de Mercado Público.';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_ordenes_folio_servicio_publico
+  BEFORE UPDATE OF "folio_mercado_publico" ON "ordenes"
+  FOR EACH ROW
+  WHEN (NEW."folio_mercado_publico" IS NULL OR NEW."folio_mercado_publico" = '')
+  EXECUTE FUNCTION fn_folio_con_servicio_publico();
 
 -- =====================================================================
 -- Triggers: cuentas por cobrar

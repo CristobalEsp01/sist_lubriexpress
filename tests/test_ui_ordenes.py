@@ -829,3 +829,161 @@ def test_anular_una_orden_abierta_devuelve_todo_a_la_bodega(app, taller, sin_mod
         devolucion = db.query(KardexMovimiento).filter_by(
             orden_id=orden_id, tipo_movimiento="DEVOLUCION_ORDEN").one()
         assert devolucion.cantidad_movida == 3
+
+
+# --- Servicio Público -------------------------------------------------------
+
+def _como(rol: str, taller) -> None:
+    Sesion.iniciar(SimpleNamespace(id=taller.usuario_id, nombre="QA", rol=rol))
+
+
+@pytest.fixture
+def dialogo_servicio_publico(monkeypatch):
+    """El diálogo es modal: se responde con lo que se le pone en `respuesta`."""
+    from PySide6.QtWidgets import QDialog
+
+    from src.ui.ordenes import DialogoServicioPublico
+
+    respuesta = {"descripcion": "", "presupuesto": 0, "neto": None, "abre": 0}
+
+    def exec_(self):
+        respuesta["abre"] += 1
+        respuesta["previa"] = (self.descripcion.text(), self.neto.value())
+        self.descripcion.setText(respuesta["descripcion"])
+        if respuesta["neto"] is not None:
+            self.neto.setValue(respuesta["neto"])
+        else:
+            self.presupuesto.setValue(respuesta["presupuesto"])
+        return QDialog.Accepted
+
+    monkeypatch.setattr(DialogoServicioPublico, "exec", exec_)
+    return respuesta
+
+
+def _orden_mp(widget, taller, folio="MP-1"):
+    widget._iniciar_nueva_orden(taller.vehiculo_id)
+    widget.agregar_al_carrito(taller.producto_id, 2)
+    elegir_mecanico(widget, taller)
+    widget.spin_kilometraje.setValue(50000)
+    widget.folio.setText(folio)
+
+
+def test_el_boton_del_servicio_publico_pide_folio_y_permiso(app, taller, sin_modales):
+    from src.ui import ordenes
+
+    widget = ordenes.OrdenesWidget()
+    widget._iniciar_nueva_orden(taller.vehiculo_id)
+
+    _como("SUPERVISOR", taller)
+    widget.folio.setText("")
+    widget._actualizar_boton_servicio_publico()
+    assert not widget.boton_servicio_publico.isEnabled()
+    widget.folio.setText("MP-1")
+    assert widget.boton_servicio_publico.isEnabled()
+    widget.folio.setText("   ")
+    assert not widget.boton_servicio_publico.isEnabled()
+
+    # Un usuario normal nunca lo enciende, y si llama al slot igual lo frena.
+    _como("USUARIO_NORMAL", taller)
+    widget.folio.setText("MP-1")
+    widget._actualizar_boton_servicio_publico()
+    assert not widget.boton_servicio_publico.isEnabled()
+    widget.agregar_servicio_publico()
+    assert sin_modales == ["Acción reservada"]
+    assert widget.tabla_carrito.rowCount() == 0
+
+
+def test_el_servicio_publico_cuadra_la_orden_con_el_presupuesto(
+        app, taller, sin_modales, dialogo_servicio_publico, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    from src.ui import ordenes
+
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
+    _como("SUPERVISOR", taller)
+    widget = ordenes.OrdenesWidget()
+    _orden_mp(widget, taller)
+    dialogo_servicio_publico.update(descripcion="Orlando 230.000 km", presupuesto=1_000_000)
+    widget.agregar_servicio_publico()
+
+    assert widget.tabla_carrito.rowCount() == 2
+    assert widget._total_con_iva(0, widget._fila_servicio_publico()) < 1_000_000
+    suma = sum(widget.tabla_carrito.item(f, 3).data(Qt.UserRole) for f in range(2))
+    assert suma + int(suma * 0.19 + 0.5) == 1_000_000
+    widget.guardar_orden("ABIERTA")
+    assert sin_modales == []
+
+    with SessionLocal() as db:
+        orden = db.scalar(select(Orden).where(Orden.vehiculo_id == taller.vehiculo_id))
+        assert orden.subtotal + orden.impuesto == 1_000_000
+        linea = next(d for d in orden.detalles if d.servicio_id)
+        assert (linea.descripcion, linea.cantidad) == ("Orlando 230.000 km", 1)
+        assert linea.nombre == "Servicio Público – Orlando 230.000 km"
+        # Y la cuenta por cobrar de Mercado Público nace con esta orden.
+        assert db.scalar(select(CuentaPorCobrar).where(CuentaPorCobrar.orden_id == orden.id))
+        orden_id, precio = orden.id, int(linea.precio_unitario_cobrado)
+
+    # Se retoma con su descripción, y editarlo cambia el precio sin duplicarlo.
+    widget.setCurrentIndex(1)
+    filas = [widget.tabla_abiertas.item(f, 0).text() for f in range(widget.tabla_abiertas.rowCount())]
+    widget.tabla_abiertas.selectRow(filas.index(str(orden_id)))
+    widget.retomar_orden()
+    fila = widget._fila_servicio_publico()
+    assert widget.tabla_carrito.item(fila, 0).text() == "Servicio Público – Orlando 230.000 km"
+
+    dialogo_servicio_publico.update(descripcion="Orlando 230.000 km", neto=precio + 1000)
+    widget.tabla_carrito.selectRow(fila)
+    widget.cambiar_cantidad()                     # el doble clic
+    assert dialogo_servicio_publico["previa"] == ("Orlando 230.000 km", precio)
+    assert widget.tabla_carrito.rowCount() == 2
+    widget.guardar_orden("ENTREGADA")
+    assert sin_modales == []
+
+    with SessionLocal() as db:
+        lineas = db.scalars(select(DetalleOrden).where(
+            DetalleOrden.orden_id == orden_id, DetalleOrden.servicio_id.is_not(None))).all()
+        assert [int(d.precio_unitario_cobrado) for d in lineas] == [precio + 1000]
+
+
+def test_no_se_guarda_el_servicio_publico_sin_folio_ni_sale_en_el_catalogo(
+        app, taller, sin_modales, dialogo_servicio_publico):
+    from src.ui import ordenes
+
+    _como("SUPERVISOR", taller)
+    widget = ordenes.OrdenesWidget()
+    _orden_mp(widget, taller)
+    dialogo_servicio_publico.update(descripcion="", neto=50000)
+    widget.agregar_servicio_publico()
+    assert widget.tabla_carrito.item(widget._fila_servicio_publico(), 0).text() == "Servicio Público"
+
+    tabla = widget.catalogo.tabla
+    celdas = [tabla.item(f, c).text() for f in range(tabla.rowCount())
+              for c in range(tabla.columnCount()) if tabla.item(f, c)]
+    assert "Servicio Público" not in celdas
+    assert NOMBRE_SERVICIO in celdas              # los demás servicios siguen
+
+    widget.folio.setText("")
+    widget.guardar_orden("ABIERTA")
+    assert sin_modales == ["Servicio Público sin folio"]
+    with SessionLocal() as db:
+        assert db.scalar(select(Orden).where(Orden.vehiculo_id == taller.vehiculo_id)) is None
+
+
+def test_el_dialogo_avisa_cuando_el_total_no_se_puede_lograr_exacto(app):
+    from src.precios import con_iva
+    from src.ui.ordenes import DialogoServicioPublico
+
+    dialogo = DialogoServicioPublico(lambda neto: con_iva(neto + 25800))
+    dialogo.presupuesto.setValue(1_000_000)
+    assert con_iva(dialogo.neto.value() + 25800) == 1_000_000
+    assert dialogo.aviso.text() == ""
+
+    inexacto = next(t for t in range(100_000, 100_100)
+                    if not any(con_iva(n) == t
+                               for n in range(t * 100 // 119 - 5, t * 100 // 119 + 6)))
+    dialogo.presupuesto.setValue(inexacto)
+    assert "no se puede lograr exacto" in dialogo.aviso.text()
+
+    dialogo.presupuesto.setValue(20_000)          # el resto ya supera el presupuesto
+    assert dialogo.neto.value() == 0
+    assert "ya supera" in dialogo.aviso.text()

@@ -94,7 +94,9 @@ class Catalogo(QObject):
             ).all()
             servicios = db.execute(
                 select(Servicio.id, Servicio.nombre, Servicio.categoria, Servicio.precio_venta)
-                .where(Servicio.activo.is_(True))
+                # El de precio variable no tiene precio que mostrar: se agrega con su
+                # propio botón en la orden.
+                .where(Servicio.activo.is_(True), Servicio.precio_variable.is_(False))
             ).all() if self.servicios else []
 
         self.tabla.setSortingEnabled(False)

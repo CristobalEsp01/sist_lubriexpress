@@ -50,6 +50,8 @@ consola de psql abierta.
 | `trg_ordenes_alta_cuenta_cobrar` | `INSERT` en `ordenes`, o `UPDATE` de `folio_mercado_publico`, con folio | Abre la cuenta por cobrar de la orden en `PENDIENTE_FACTURA`; antes de facturar, la sigue si el folio cambia |
 | `trg_ordenes_anula_cuenta_cobrar` | `UPDATE` de `ordenes.estado` a `ANULADA` | Anula la cuenta si aún no tiene factura |
 | `trg_pagos_cobro_abono` | `INSERT` en `pagos_cobro` | Rechaza el pago si la cuenta no está `POR_COBRAR`; si los abonos completan el monto, la pasa a `PAGADA` |
+| `trg_detalle_ordenes_servicio_publico` | `INSERT` en `detalle_ordenes` de un servicio con `precio_variable` | Lo rechaza si la orden no tiene folio de Mercado Público, si la cantidad no es 1 o si la orden ya lo tiene |
+| `trg_ordenes_folio_servicio_publico` | `UPDATE` de `folio_mercado_publico` a vacío | Lo rechaza si la orden lleva el servicio de precio variable: primero se quita la línea |
 | `trg_pagos_proveedor_abono` | `INSERT` en `pagos_proveedor` | Igual, para `facturas_proveedor` (`PENDIENTE` → `PAGADA`) |
 | `trg_*_updated_at` | `UPDATE` en `usuarios`, `clientes`, `vehiculos`, `productos`, `cuentas_por_cobrar`, `facturas_proveedor` | Refresca `updated_at` |
 
@@ -228,6 +230,17 @@ retenciones, y ese caso lo resuelve una persona.
 no las genera. `fecha_vencimiento` se guarda en vez de calcularse, porque cada
 proveedor da su plazo y es contra él que se mide la mora; `proveedores.plazo_credito_dias`
 solo sugiere el valor al ingresar la factura.
+
+**El Servicio Público es un servicio de precio libre.** `servicios.precio_variable`
+marca al único servicio (índice único parcial) cuyo precio se escribe en cada
+orden en vez de salir del catálogo; el catálogo de la pantalla no lo ofrece, se
+agrega con su propio botón y solo en órdenes con folio de Mercado Público. Sirve
+para que el total de la orden cuadre con el presupuesto, que se arma fuera del
+sistema. No tiene costo (`costo_unitario` queda en `NULL`, como todo servicio),
+así que en la cuenta por cobrar es margen puro. `detalle_ordenes.descripcion`
+guarda el texto libre de la línea. La cuenta por cobrar sale por
+`venta_neto + iva` exactos, sin el redondeo de caja, así que la factura coincide
+con el presupuesto aunque el efectivo difiera hasta $5.
 
 ## Vistas
 

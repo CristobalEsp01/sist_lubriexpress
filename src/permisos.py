@@ -22,6 +22,9 @@ PERMISOS = {
     # Ingresos por período. Aparte de "reportes" para poder cerrarlo de nuevo
     # sin tocar la pantalla: hoy lo ven todos.
     "ingresos": {"USUARIO_NORMAL", "SUPERVISOR", "ADMINISTRADOR"},
+    # Poner a mano el precio del Servicio Público para cuadrar una orden de
+    # Mercado Público con su presupuesto.
+    "precio_libre": {"SUPERVISOR", "ADMINISTRADOR"},
     # Dar de alta usuarios y mecánicos, y asignar roles.
     "usuarios": {"ADMINISTRADOR"},
 }

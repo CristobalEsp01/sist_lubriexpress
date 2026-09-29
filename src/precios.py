@@ -34,3 +34,16 @@ def redondear_decena(monto) -> int:
         return monto_entero - unidad
     else:
         return monto_entero + (10 - unidad)
+
+
+def neto_para_total(total_con_iva) -> tuple[int, bool]:
+    """El neto cuyo total con IVA se acerca más a `total_con_iva`.
+
+    Devuelve (neto, exacto). Al pasar de neto a total el IVA se redondea, así
+    que hay totales que ningún neto entero produce (con 19 % se salta uno cada
+    varios pesos): ahí `exacto` es False y el total resultante queda a $1.
+    """
+    total = int(total_con_iva)
+    neto = round(total / (1 + IVA))
+    mejor = min(range(max(neto - 2, 0), neto + 3), key=lambda n: (abs(con_iva(n) - total), n))
+    return mejor, con_iva(mejor) == total

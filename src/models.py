@@ -132,6 +132,8 @@ class Servicio(Base):
     categoria = Column(String(50))
     precio_venta = Column(Numeric(10, 2), nullable=False)  # neto, sin IVA
     activo = Column(Boolean, default=True, nullable=False)
+    # El precio se escribe en cada orden (Servicio Público). Único en la base.
+    precio_variable = Column(Boolean, default=False, server_default="false", nullable=False)
 
 
 class Mecanico(Base):
@@ -213,10 +215,18 @@ class DetalleOrden(Base):
     # Lo copia el trigger fn_congelar_costo al insertar, y no se mueve más.
     # NULL en servicios y en lo anterior a la columna: margen "sin dato".
     costo_unitario = Column(Numeric(10, 2))
+    # Texto libre; hoy solo el Servicio Público lo lleva.
+    descripcion = Column(String(150))
 
     orden = relationship("Orden", back_populates="detalles")
     producto = relationship("Producto")
     servicio = relationship("Servicio")
+
+    @property
+    def nombre(self) -> str:
+        """Lo que se lee en la orden: el ítem y, si la línea trae, su descripción."""
+        base = (self.producto or self.servicio).nombre
+        return f"{base} – {self.descripcion}" if self.descripcion else base
 
 
 class PagoOrden(Base):

@@ -28,6 +28,8 @@ from ..documentos import estado_de_pago, html_de_orden
 from ..models import (
     Cliente, DetalleOrden, Mecanico, Orden, PagoOrden, Producto, Servicio, Usuario, Vehiculo,
 )
+from ..permisos import puede
+from ..precios import iva_de
 from ..texto import filtro_busqueda
 from ..whatsapp import PLANTILLAS, describir_vehiculo, enlace_whatsapp, redactar
 from .clientes import FormularioCliente, FormularioVehiculo
@@ -36,7 +38,7 @@ from .comunes import (
     BADGE_ACENTO, BADGE_ALERTA, BADGE_EXITO, BADGE_INFO, BADGE_NEUTRAL, ROL_INSIGNIA,
     ItemNumerico, SpinBoxConPrefijo, barra, bloque_total, botonera,
     carpeta_de_documentos, clp, combo_medio_pago, con_aviso_vacio, crear_tabla, hacer_buscable,
-    layout_de_dialogo, layout_de_pantalla, medio_elegido, reordenar,
+    exigir_permiso, layout_de_dialogo, layout_de_pantalla, medio_elegido, reordenar,
 )
 from .tema import ALTO_FILA, CANAL_PANEL, ESPACIO_BARRA, ESPACIO_PANTALLA, LOGO, fuente_tabular
 
@@ -97,6 +99,16 @@ def km(valor: int) -> str:
     return f"{valor:,} km".replace(",", ".")
 
 
+def _item_de(detalle: DetalleOrden) -> dict:
+    """La clave con que una línea guardada viaja en el carrito. El Servicio
+    Público lleva además su descripción, y esa clave es lo que lo distingue."""
+    if detalle.producto_id:
+        return {"producto_id": detalle.producto_id}
+    if detalle.servicio.precio_variable:
+        return {"servicio_id": detalle.servicio_id, "descripcion": detalle.descripcion}
+    return {"servicio_id": detalle.servicio_id}
+
+
 def guardar_pdf_de_orden(orden_id: int, ruta) -> None:
     """La orden como PDF para el cliente (Propuesta 3.4): lo guardado, tal cual."""
     with SessionLocal() as db:
@@ -113,7 +125,7 @@ def guardar_pdf_de_orden(orden_id: int, ruta) -> None:
             "kilometraje": orden.kilometraje_ingreso,
             "tecnico": orden.mecanico.nombre if orden.mecanico else SIN_MECANICO,
             "ingreso": orden.usuario.nombre,
-            "lineas": [((d.producto or d.servicio).nombre, d.cantidad, int(d.precio_unitario_cobrado))
+            "lineas": [(d.nombre, d.cantidad, int(d.precio_unitario_cobrado))
                        for d in orden.detalles],
             "subtotal": orden.subtotal, "descuento": orden.descuento_aplicado,
             "impuesto": orden.impuesto, "ajuste": orden.ajuste_redondeo,
@@ -451,7 +463,8 @@ class OrdenesWidget(QTabWidget):
             crear_tabla(COLUMNAS_CARRITO, ancha=0, orden=0, numericas=(1, 2, 3)),
             "Busca arriba lo que se usó y agrégalo con Enter o doble clic.",
         )
-        self.tabla_carrito.setToolTip("Doble clic en una línea para cambiar la cantidad.")
+        self.tabla_carrito.setToolTip("Doble clic en una línea para cambiar la cantidad "
+                                      "(en el Servicio Público, su precio).")
         self.tabla_carrito.doubleClicked.connect(self.cambiar_cantidad)
         QShortcut(QKeySequence.Delete, self.tabla_carrito, self.quitar_del_carrito,
                   context=Qt.WidgetShortcut)
@@ -469,6 +482,17 @@ class OrdenesWidget(QTabWidget):
         self.boton_quitar.setEnabled(False)
         self.boton_quitar.clicked.connect(self.quitar_del_carrito)
 
+        # Solo para órdenes de Mercado Público: el precio se escribe a mano para
+        # cuadrar la orden con el presupuesto, que se arma fuera del sistema.
+        self.boton_servicio_publico = QPushButton("Servicio Público")
+        self.boton_servicio_publico.setAutoDefault(False)
+        self.boton_servicio_publico.setEnabled(False)
+        self.boton_servicio_publico.setToolTip(
+            "Ítem de precio libre para cuadrar la orden con el presupuesto de Mercado "
+            "Público. Pide el folio de MP y el permiso de supervisor."
+        )
+        self.boton_servicio_publico.clicked.connect(self.agregar_servicio_publico)
+
         titulo_insumos = QLabel("1. Insumos y Servicios Aplicados")
         titulo_insumos.setProperty("clase", "seccion")
         en_la_orden = QLabel("En la orden")
@@ -480,7 +504,7 @@ class OrdenesWidget(QTabWidget):
         layout_izq.setSpacing(ESPACIO_PANTALLA)
         layout_izq.addWidget(titulo_insumos)
         layout_izq.addLayout(barra(self.catalogo.busqueda, self.catalogo.categoria,
-                                   self.catalogo.boton))
+                                   self.catalogo.boton, self.boton_servicio_publico))
         layout_izq.addLayout(barra(self.catalogo.pestanas, QWidget(), self.catalogo.resumen,
                                    estira=1))
         layout_izq.addWidget(self.catalogo.tabla)
@@ -525,6 +549,7 @@ class OrdenesWidget(QTabWidget):
 
         self.folio = QLineEdit(placeholderText="Folio MP")
         self.folio.setToolTip("Folio de Mercado Público: solo en las órdenes institucionales.")
+        self.folio.textChanged.connect(self._actualizar_boton_servicio_publico)
         self.pagada = QCheckBox("Pagada")
         self.pagada.toggled.connect(self._cambiar_pago)
         # El taller cobra por partes: un abono al dejar el auto y el saldo al
@@ -1063,6 +1088,68 @@ class OrdenesWidget(QTabWidget):
             nombre, precio = servicio.nombre, int(servicio.precio_venta)
         self._insertar_en_carrito({"servicio_id": servicio_id}, nombre, precio, cantidad)
 
+    def _actualizar_boton_servicio_publico(self, *_) -> None:
+        self.boton_servicio_publico.setEnabled(
+            puede("precio_libre") and bool(self.folio.text().strip())
+        )
+
+    def _fila_servicio_publico(self) -> int | None:
+        for fila in range(self.tabla_carrito.rowCount()):
+            if "descripcion" in self.tabla_carrito.item(fila, 0).data(Qt.UserRole):
+                return fila
+        return None
+
+    def _total_con_iva(self, neto_linea: int, fila_ajena: int | None) -> int:
+        """Lo que valdría la orden (neto + IVA, antes del redondeo de caja) si el
+        Servicio Público costara `neto_linea`. `fila_ajena` es la fila que se
+        está reemplazando y por eso no cuenta."""
+        suma = neto_linea + sum(
+            self.tabla_carrito.item(fila, 3).data(Qt.UserRole)
+            for fila in range(self.tabla_carrito.rowCount()) if fila != fila_ajena
+        )
+        base = suma - self._descuento(suma)[2]
+        return base + iva_de(base)
+
+    def agregar_servicio_publico(self) -> None:
+        """Agrega el Servicio Público a la orden, o edita el que ya tiene."""
+        if not exigir_permiso("precio_libre", self):
+            return
+        if not self.folio.text().strip():
+            QMessageBox.warning(
+                self, "Falta el folio",
+                "El Servicio Público es solo para órdenes de Mercado Público: anota el folio.",
+            )
+            return
+        with SessionLocal() as db:
+            servicio = db.scalar(select(Servicio).where(Servicio.precio_variable.is_(True)))
+            if servicio is None:
+                QMessageBox.warning(self, "Sin Servicio Público",
+                                    "Falta el servicio en la base. Corre el actualizador.")
+                return
+            servicio_id, nombre = servicio.id, servicio.nombre
+
+        fila = self._fila_servicio_publico()
+        previa = None if fila is None else (
+            self.tabla_carrito.item(fila, 0).data(Qt.UserRole)["descripcion"] or "",
+            self.tabla_carrito.item(fila, 2).data(Qt.UserRole),
+        )
+        dialogo = DialogoServicioPublico(
+            lambda neto: self._total_con_iva(neto, fila), previa, self)
+        if dialogo.exec() != QDialog.Accepted:
+            return
+
+        if fila is not None:
+            detalle_id = self.tabla_carrito.item(fila, 0).data(ROL_DETALLE)
+            if detalle_id is not None:
+                self.detalles_borrados.append(detalle_id)   # se reemplaza al guardar
+            self.tabla_carrito.removeRow(fila)
+        descripcion = dialogo.descripcion.text().strip() or None
+        self._insertar_en_carrito(
+            {"servicio_id": servicio_id, "descripcion": descripcion},
+            f"{nombre} – {descripcion}" if descripcion else nombre,
+            dialogo.neto.value(), 1,
+        )
+
     def _linea_nueva(self, item: dict) -> int | None:
         """La fila de ese ítem que aún no está en la base. Las guardadas no se
         tocan: el trigger mueve stock al insertar y borrar, no al cambiar."""
@@ -1091,6 +1178,10 @@ class OrdenesWidget(QTabWidget):
         if fila < 0:
             return
         celda = self.tabla_carrito.item(fila, 0)
+        if "descripcion" in celda.data(Qt.UserRole):
+            # El Servicio Público no mueve stock: se edita aunque ya esté guardado.
+            self.agregar_servicio_publico()
+            return
         if celda.data(ROL_DETALLE) is not None:
             QMessageBox.information(
                 self, "Línea ya guardada",
@@ -1199,8 +1290,7 @@ class OrdenesWidget(QTabWidget):
         with SessionLocal() as db:
             orden = db.get(Orden, orden_id)
             lineas = [
-                ({"producto_id": d.producto_id} if d.producto_id else {"servicio_id": d.servicio_id},
-                 (d.producto or d.servicio).nombre, int(d.precio_unitario_cobrado),
+                (_item_de(d), d.nombre, int(d.precio_unitario_cobrado),
                  d.cantidad, d.id, d.producto.categoria if d.producto else None)
                 for d in orden.detalles
             ]
@@ -1326,6 +1416,13 @@ class OrdenesWidget(QTabWidget):
             }
             for fila in range(self.tabla_carrito.rowCount())
         ]
+        if not self.folio.text().strip() and any("descripcion" in d["item"] for d in detalles):
+            QMessageBox.warning(
+                self, "Servicio Público sin folio",
+                "La orden lleva el Servicio Público, que es solo de Mercado Público: "
+                "anota el folio o quita ese ítem.",
+            )
+            return
         suma_total = sum(d["subtotal"] for d in detalles)
         porcentaje, monto, aplicado = self._descuento(suma_total)
         if folio_flyer is not None and not aplicado:
@@ -1362,29 +1459,33 @@ class OrdenesWidget(QTabWidget):
                                     usuario_id=Sesion.usuario_id,
                                     estado_pago=self.pagada.isChecked())
                 db.add(nueva_orden)
-            # `estado_pago` no se vuelve a escribir al actualizar: sale de los
-            # abonos contra el total, y de eso se encargan los triggers.
-            nueva_orden.mecanico_id = self.combo_mecanico.currentData()
-            nueva_orden.kilometraje_ingreso = self.spin_kilometraje.value()
-            nueva_orden.descuento_porcentaje = porcentaje
-            nueva_orden.descuento_monto = monto
-            nueva_orden.convenio, nueva_orden.folio_flyer = convenio, folio_flyer
-            nueva_orden.subtotal = suma_total
-            nueva_orden.impuesto = impuesto
-            nueva_orden.ajuste_redondeo = ajuste
-            nueva_orden.total_final = total_final
-            nueva_orden.folio_mercado_publico = self.folio.text().strip() or None
-            nueva_orden.notas = notas_finales
-            nueva_orden.estado = estado
             try:
-                db.flush()  # asigna nueva_orden.id sin cerrar la transacción
-                # Lo que se sacó de una orden retomada: al borrarlo, el trigger
-                # le devuelve el stock a la bodega y lo escribe en el Kardex.
+                # Lo que se sacó de una orden retomada va primero: al borrarlo, el
+                # trigger le devuelve el stock a la bodega y lo escribe en el
+                # Kardex. Antes de tocar el resto porque una línea que se va
+                # (el Servicio Público) puede ser lo que impedía cambiar el folio.
                 for detalle_id in self.detalles_borrados:
                     linea = db.get(DetalleOrden, detalle_id)
                     if linea is not None:
                         db.delete(linea)
-                db.flush()
+                if self.detalles_borrados:
+                    db.flush()
+                # `estado_pago` no se vuelve a escribir al actualizar: sale de los
+                # abonos contra el total, y de eso se encargan los triggers.
+                nueva_orden.mecanico_id = self.combo_mecanico.currentData()
+                nueva_orden.kilometraje_ingreso = self.spin_kilometraje.value()
+                nueva_orden.descuento_porcentaje = porcentaje
+                nueva_orden.descuento_monto = monto
+                nueva_orden.convenio, nueva_orden.folio_flyer = convenio, folio_flyer
+                nueva_orden.subtotal = suma_total
+                nueva_orden.impuesto = impuesto
+                nueva_orden.ajuste_redondeo = ajuste
+                nueva_orden.total_final = total_final
+                nueva_orden.folio_mercado_publico = self.folio.text().strip() or None
+                nueva_orden.notas = notas_finales
+                nueva_orden.estado = estado
+
+                db.flush()  # asigna nueva_orden.id sin cerrar la transacción
                 for det in detalles:
                     if det["detalle_id"] is not None:
                         continue      # ya está guardada; su stock ya salió
@@ -1466,6 +1567,100 @@ class OrdenesWidget(QTabWidget):
                 return
 
         self._volver_al_reposo()
+
+
+class DialogoServicioPublico(QDialog):
+    """Precio libre del Servicio Público, para que la orden cuadre con el presupuesto.
+
+    Se puede escribir de dos maneras y las dos se siguen entre sí: el total del
+    presupuesto (con IVA), que calcula el neto que hay que cobrar, o el neto
+    directo. `total_con_iva(neto)` dice cuánto valdría la orden con ese neto.
+    """
+
+    def __init__(self, total_con_iva, previa: tuple[str, int] | None = None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Servicio Público")
+        self.setModal(True)
+        self._total_con_iva = total_con_iva
+
+        self.descripcion = QLineEdit(placeholderText="Qué se hizo (opcional)")
+        self.descripcion.setMaxLength(150)
+        self.presupuesto = SpinBoxConPrefijo()
+        self.presupuesto.setRange(0, 999_999_999)
+        self.presupuesto.setPrefix("$ ")
+        self.presupuesto.setGroupSeparatorShown(True)
+        self.presupuesto.setToolTip("Total del presupuesto con IVA. Calcula el precio de abajo.")
+        self.neto = SpinBoxConPrefijo()
+        self.neto.setRange(0, 999_999_999)
+        self.neto.setPrefix("$ ")
+        self.neto.setGroupSeparatorShown(True)
+        self.resultado = QLabel()
+        self.resultado.setProperty("clase", "resumen")
+        self.aviso = QLabel()
+        self.aviso.setWordWrap(True)
+        self.aviso.setProperty("clase", "error")
+
+        layout = layout_de_dialogo(self)
+        layout.addLayout(barra(QLabel("Descripción"), self.descripcion, estira=1))
+        layout.addLayout(barra(QLabel("Total del presupuesto (con IVA)"), self.presupuesto,
+                               estira=1))
+        layout.addLayout(barra(QLabel("Precio del servicio (neto)"), self.neto, estira=1))
+        layout.addWidget(self.resultado)
+        layout.addWidget(self.aviso)
+        layout.addWidget(botonera(self))
+
+        if previa is not None:
+            self.descripcion.setText(previa[0])
+            self.neto.setValue(previa[1])
+            self._desde_neto(previa[1])
+        else:
+            self._desde_neto(0)
+        # Conectar después de cargar: los valores iniciales no deben dispararse.
+        self.presupuesto.valueChanged.connect(self._desde_presupuesto)
+        self.neto.valueChanged.connect(self._desde_neto)
+        self.presupuesto.setFocus()
+        self.presupuesto.selectAll()
+
+    def neto_para(self, objetivo: int) -> int:
+        """El menor neto cuya orden llega al objetivo, o el anterior si queda más
+        cerca. Nunca baja de cero: si el resto ya lo pasa, el servicio es gratis."""
+        bajo, alto = 0, max(objetivo, 0)
+        while bajo < alto:
+            medio = (bajo + alto) // 2
+            if self._total_con_iva(medio) >= objetivo:
+                alto = medio
+            else:
+                bajo = medio + 1
+        if bajo > 0 and (abs(self._total_con_iva(bajo - 1) - objetivo)
+                         <= abs(self._total_con_iva(bajo) - objetivo)):
+            return bajo - 1
+        return bajo
+
+    def _desde_presupuesto(self, objetivo: int) -> None:
+        neto = self.neto_para(objetivo)
+        self.neto.blockSignals(True)
+        self.neto.setValue(neto)
+        self.neto.blockSignals(False)
+        self._mostrar(objetivo)
+
+    def _desde_neto(self, neto: int) -> None:
+        total = self._total_con_iva(neto)
+        self.presupuesto.blockSignals(True)
+        self.presupuesto.setValue(total)
+        self.presupuesto.blockSignals(False)
+        self._mostrar(None)
+
+    def _mostrar(self, objetivo: int | None) -> None:
+        total = self._total_con_iva(self.neto.value())
+        self.resultado.setText(f"La orden queda en {clp(total)} con IVA.")
+        if objetivo is None or total == objetivo:
+            self.aviso.clear()
+        elif total > objetivo and self.neto.value() == 0:
+            self.aviso.setText("El resto de la orden ya supera el presupuesto: "
+                               f"queda en {clp(total)}.")
+        else:
+            self.aviso.setText(f"Ese total no se puede lograr exacto: queda a "
+                               f"{clp(abs(total - objetivo))} del presupuesto.")
 
 
 class DialogoPago(QDialog):
@@ -1551,7 +1746,7 @@ class DialogoDetalleOrden(QDialog):
             # La relación 'orden.detalles' nos permite acceder a los productos
             # sin hacer joins manuales.
             lineas = [
-                ((det.producto or det.servicio).nombre, det.cantidad,
+                (det.nombre, det.cantidad,
                  int(det.precio_unitario_cobrado))
                 for det in orden.detalles
             ]

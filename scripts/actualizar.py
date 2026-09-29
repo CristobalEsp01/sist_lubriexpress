@@ -216,6 +216,57 @@ CREATE TRIGGER trg_pagos_proveedor_abono
   FOR EACH ROW EXECUTE FUNCTION fn_abonar_factura_proveedor();
 '''
 
+VALIDA_SERVICIO_PUBLICO = '''CREATE OR REPLACE FUNCTION fn_validar_servicio_publico() RETURNS TRIGGER AS $$
+DECLARE
+  v_folio VARCHAR(50);
+BEGIN
+  IF NEW."servicio_id" IS NULL
+     OR NOT EXISTS (SELECT 1 FROM "servicios" WHERE "id" = NEW."servicio_id" AND "precio_variable") THEN
+    RETURN NEW;
+  END IF;
+
+  SELECT "folio_mercado_publico" INTO v_folio FROM "ordenes" WHERE "id" = NEW."orden_id";
+  IF v_folio IS NULL OR v_folio = '' THEN
+    RAISE EXCEPTION USING ERRCODE = 'check_violation',
+      MESSAGE = 'El servicio de precio variable solo va en órdenes de Mercado Público (con folio).';
+  END IF;
+  IF NEW."cantidad" <> 1 THEN
+    RAISE EXCEPTION USING ERRCODE = 'check_violation',
+      MESSAGE = 'El servicio de precio variable se cobra una sola vez por orden (cantidad 1).';
+  END IF;
+  IF EXISTS (SELECT 1 FROM "detalle_ordenes"
+              WHERE "orden_id" = NEW."orden_id" AND "servicio_id" = NEW."servicio_id") THEN
+    RAISE EXCEPTION USING ERRCODE = 'check_violation',
+      MESSAGE = 'La orden ya tiene el servicio de precio variable.';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_detalle_ordenes_servicio_publico
+  BEFORE INSERT ON "detalle_ordenes"
+  FOR EACH ROW EXECUTE FUNCTION fn_validar_servicio_publico();
+'''
+
+FOLIO_CON_SERVICIO_PUBLICO = '''CREATE OR REPLACE FUNCTION fn_folio_con_servicio_publico() RETURNS TRIGGER AS $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM "detalle_ordenes" d
+               JOIN "servicios" s ON s."id" = d."servicio_id"
+              WHERE d."orden_id" = NEW."id" AND s."precio_variable") THEN
+    RAISE EXCEPTION USING ERRCODE = 'check_violation',
+      MESSAGE = 'La orden tiene el servicio de precio variable: quítalo antes de sacarle el folio de Mercado Público.';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_ordenes_folio_servicio_publico
+  BEFORE UPDATE OF "folio_mercado_publico" ON "ordenes"
+  FOR EACH ROW
+  WHEN (NEW."folio_mercado_publico" IS NULL OR NEW."folio_mercado_publico" = '')
+  EXECUTE FUNCTION fn_folio_con_servicio_publico();
+'''
+
 # ponytail: la lista de pasos se escribe a mano y solo va hacia adelante. Sirve
 # mientras sean unos pocos cambios aditivos; el día que haya que revertir uno, o
 # que la lista crezca, toca incorporar Alembic (anotado en docs/base-de-datos.md).
@@ -713,6 +764,44 @@ CREATE INDEX idx_pagos_cobro_cuenta ON "pagos_cobro"("cuenta_id");
         sql=ALTA_CUENTA_COBRAR + ANULA_CUENTA_COBRAR,
         declara=(ALTA_CUENTA_COBRAR, ANULA_CUENTA_COBRAR),
     ),
+    Paso(
+        nombre="servicios.precio_variable",
+        comprobacion="""
+            SELECT EXISTS (SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'servicios' AND column_name = 'precio_variable')
+        """,
+        sql='''
+ALTER TABLE "servicios" ADD COLUMN "precio_variable" BOOLEAN NOT NULL DEFAULT FALSE;
+CREATE UNIQUE INDEX servicio_de_precio_variable_unico ON "servicios"("precio_variable")
+  WHERE "precio_variable";
+INSERT INTO "servicios" ("nombre", "categoria", "precio_venta", "activo", "precio_variable")
+  SELECT 'Servicio Público', 'Mercado Público', 0, TRUE, TRUE
+  WHERE NOT EXISTS (SELECT 1 FROM "servicios" WHERE "precio_variable");
+''',
+        declara=(
+            '"precio_variable" BOOLEAN NOT NULL DEFAULT FALSE',
+            'CREATE UNIQUE INDEX servicio_de_precio_variable_unico ON "servicios"("precio_variable")\n  WHERE "precio_variable";',
+            'INSERT INTO "servicios" ("nombre", "categoria", "precio_venta", "activo", "precio_variable")\n  SELECT \'Servicio Público\', \'Mercado Público\', 0, TRUE, TRUE\n  WHERE NOT EXISTS (SELECT 1 FROM "servicios" WHERE "precio_variable");',
+        ),
+    ),
+    Paso(
+        nombre="detalle_ordenes.descripcion",
+        comprobacion="""
+            SELECT EXISTS (SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'detalle_ordenes' AND column_name = 'descripcion')
+        """,
+        sql='''ALTER TABLE "detalle_ordenes" ADD COLUMN "descripcion" VARCHAR(150) CHECK ("descripcion" <> '');''',
+        declara=('"descripcion" VARCHAR(150) CHECK ("descripcion" <> \'\')',),
+    ),
+    Paso(
+        nombre="detalle_ordenes.servicio_publico",
+        comprobacion="""
+            SELECT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_detalle_ordenes_servicio_publico')
+               AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_ordenes_folio_servicio_publico')
+        """,
+        sql=VALIDA_SERVICIO_PUBLICO + FOLIO_CON_SERVICIO_PUBLICO,
+        declara=(VALIDA_SERVICIO_PUBLICO, FOLIO_CON_SERVICIO_PUBLICO),
+    ),
 ]
 
 # Lo que se cuenta antes y después. Un cambio de esquema no borra filas; si la
@@ -904,11 +993,15 @@ def main(argv: list[str]) -> int:
     print("\n6. Verificación")
     with engine.connect() as conexion:
         despues, restantes = conteos(conexion), pendientes(conexion)
-    for tabla, cuantas in antes.items():
+    # Lo único que el esquema agrega por su cuenta es el Servicio Público.
+    esperado = dict(antes)
+    if any(paso.nombre == "servicios.precio_variable" for paso in falta):
+        esperado["servicios"] += 1
+    for tabla, cuantas in esperado.items():
         senal = "=" if despues[tabla] == cuantas else "≠"
         print(f"   {tabla}: {cuantas} {senal} {despues[tabla]}")
 
-    if despues != antes or restantes:
+    if despues != esperado or restantes:
         print(f"\nAlgo no cuadra. Restaura {archivo} y avisa antes de seguir.")
         return 1
     print("\nListo: la base quedó al día.")
