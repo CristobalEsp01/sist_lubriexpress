@@ -235,8 +235,17 @@ En el Programador de tareas de Windows, o con este comando en \texttt{cmd} como
 administrador (ajustando las rutas):
 
 \begin{lstlisting}
-schtasks /create /tn "Respaldo Lubri-Express" /tr "C:\Lubri-Express\lubriexpress\respaldar.exe" /sc daily /st 20:00
+schtasks /create /tn "Respaldo Lubri-Express" /tr "\"C:\Lubri-Express\lubriexpress\respaldar.exe\"" /sc daily /st 20:00 /f
 \end{lstlisting}
+
+\textbf{Las comillas dobles escapadas son a propósito.} Si la ruta tiene un espacio
+(por ejemplo \texttt{C:\textbackslash Users\textbackslash Lubri Express\textbackslash\ldots}),
+Windows corta el comando en el espacio y busca un programa que no existe: la tarea
+se crea sin quejarse, pero cada ejecución termina con el resultado
+\texttt{-2147024894} (\texttt{0x80070002}, archivo no encontrado) y no se hace ningún
+respaldo. Con \texttt{schtasks /query /tn "Respaldo Lubri-Express" /v /fo list} se ve el
+\emph{Último resultado}; tiene que decir \texttt{0}. El \texttt{/f} reemplaza una tarea
+que ya existía.
 
 A las 20:00, después del cierre. Conviene revisar cada tanto que los archivos
 estén apareciendo, tanto en \texttt{respaldos\textbackslash} como en OneDrive:
