@@ -25,7 +25,10 @@ def test_el_respaldo_queda_comprimido_y_se_lee_de_vuelta(tmp_path):
     del archivo crudo, así que el volcado salía sin comprimir; y del otro lado,
     `stdin=gzip.open(...)` le entregaba a psql los bytes del gzip."""
     destino = tmp_path / "respaldo.sql.gz"
-    R.volcar([sys.executable, "-c", f"print({SQL!r}, end='')"], destino, {})
+    # Bytes y no print(): en Windows print traduce \n a \r\n, y la prueba
+    # compararia contra un volcado que el programa real no produce.
+    R.volcar([sys.executable, "-c", f"import sys; sys.stdout.buffer.write({SQL!r}.encode())"],
+             destino, {})
 
     assert destino.read_bytes()[:2] == b"\x1f\x8b"      # gzip de verdad
     assert gzip.open(destino, "rt").read() == SQL
