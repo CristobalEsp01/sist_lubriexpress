@@ -33,6 +33,8 @@ consola de psql abierta.
 | `ventas` / `detalle_ventas` | Ventas de mostrador |
 | `kardex_movimientos` | Historial de inventario. Solo se agrega, nunca se edita |
 | `movimientos_caja` | Caja chica del día: el efectivo del cajón que no pasa por una venta. Solo se agrega |
+| `cuentas_por_cobrar` / `pagos_cobro` | Facturas por cobrar, casi siempre a organismos de Mercado Público. Las abre el trigger desde una orden con folio, o se ingresan a mano. Los abonos solo se agregan |
+| `proveedores` / `facturas_proveedor` / `pagos_proveedor` | Cuentas por pagar: la factura de cada proveedor con su vencimiento, y sus abonos, que solo se agregan |
 
 ## Triggers
 
@@ -44,7 +46,12 @@ consola de psql abierta.
 | `trg_detalle_ordenes_devolucion` | `DELETE` en `detalle_ordenes` con `producto_id` | Devuelve el stock y escribe `DEVOLUCION_ORDEN` en el Kardex |
 | `trg_pagos_orden_estado` | `INSERT` en `pagos_orden` | Recalcula `ordenes.estado_pago` con la suma de los abonos |
 | `trg_ordenes_estado_pago` | `UPDATE` de `ordenes.total_final` | Recalcula `estado_pago`: si el total creció, lo abonado ya no alcanza |
-| `trg_*_updated_at` | `UPDATE` en `usuarios`, `clientes`, `vehiculos`, `productos` | Refresca `updated_at` |
+| `trg_detalle_ordenes_costo` / `trg_detalle_ventas_costo` | `INSERT` en `detalle_ordenes` / `detalle_ventas` | Copia `productos.precio_costo` a `costo_unitario` de la línea, si no trae uno. Los servicios quedan en `NULL` |
+| `trg_ordenes_alta_cuenta_cobrar` | `INSERT` en `ordenes`, o `UPDATE` de `folio_mercado_publico`, con folio | Abre la cuenta por cobrar de la orden en `PENDIENTE_FACTURA`; antes de facturar, la sigue si el folio cambia |
+| `trg_ordenes_anula_cuenta_cobrar` | `UPDATE` de `ordenes.estado` a `ANULADA` | Anula la cuenta si aún no tiene factura |
+| `trg_pagos_cobro_abono` | `INSERT` en `pagos_cobro` | Rechaza el pago si la cuenta no está `POR_COBRAR`; si los abonos completan el monto, la pasa a `PAGADA` |
+| `trg_pagos_proveedor_abono` | `INSERT` en `pagos_proveedor` | Igual, para `facturas_proveedor` (`PENDIENTE` → `PAGADA`) |
+| `trg_*_updated_at` | `UPDATE` en `usuarios`, `clientes`, `vehiculos`, `productos`, `cuentas_por_cobrar`, `facturas_proveedor` | Refresca `updated_at` |
 
 `trg_pagos_orden_estado` sigue la misma idea que los de stock: la pantalla registra
 el hecho (un abono) y la base mantiene el saldo derivado. `estado_pago` no se escribe
@@ -86,6 +93,10 @@ No se pasa `stock_resultante` ni se toca `productos`: el trigger completa ambas 
 | `rut_no_vacio` | Guardar `''` en vez de `NULL`, que rompería el `UNIQUE` al segundo cliente sin RUT |
 | `flyer_con_folio` | Un descuento de flyer sin folio, o un folio sin flyer |
 | `flyer_de_un_solo_uso` (índice único parcial) | Usar el mismo flyer en dos órdenes no anuladas |
+| `cuenta_cobrar_estado_coherente` | Una cuenta `POR_COBRAR` o `PAGADA` sin factura, neto o IVA; o `PENDIENTE_FACTURA` con factura |
+| `cuenta_cobrar_con_origen` | Una cuenta sin orden que no sea una factura completa con su cliente |
+| `factura_proveedor_unica` | La misma factura de un proveedor dos veces (entre proveedores distintos el número sí puede repetirse) |
+| `vencimiento_posterior_a_la_compra` | Una factura de proveedor que vence antes de haberse comprado |
 | `CHECK` de `medio_pago` | Un medio que no sea `EFECTIVO`, `TARJETA` o `TRANSFERENCIA`: la caja cuenta el efectivo por este valor |
 
 El CHECK de stock no negativo es el que hace el trabajo pesado: al ser el trigger
@@ -177,6 +188,46 @@ que un `AJUSTE_MANUAL` corrige un stock.
 Lo cobrado con tarjeta o transferencia se informa aparte y no entra a la cuenta.
 Las órdenes migradas no traen pagos detrás, porque el sistema viejo no los
 guardaba: un día de 2024 se ve con entradas en $0.
+
+## Cuentas por cobrar y por pagar
+
+**El costo se congela en la línea.** `detalle_ordenes.costo_unitario` (y el de
+`detalle_ventas`) lo copia el trigger desde `productos.precio_costo` al insertar,
+y no vuelve a moverse: si el costo del producto cambia mañana, el margen de lo ya
+vendido sigue siendo el de ese día. `NULL` significa *sin dato* (los servicios y
+todo lo guardado antes de la columna), y un margen sin dato no se muestra como
+cero. Como el trigger escribe por fuera del objeto, hay que hacer `db.refresh()`
+para verlo, igual que con el stock.
+
+**La cuenta por cobrar nace sola y se completa a mano.** Toda orden con folio de
+Mercado Público abre su cuenta en `PENDIENTE_FACTURA`: el auto se atiende un día y
+se factura otro. Una persona ingresa el N° y la fecha de la factura
+(`finanzas.registrar_factura`), y ahí pasan a `POR_COBRAR` y se **congelan** el
+neto, el IVA y el costo: desde ese momento la cuenta no lee la orden, y editarla
+no mueve lo facturado. Solo cuenta lo que pasa desde que existe el trigger; las
+órdenes anteriores no generan cuenta, y lo pendiente de antes se ingresa a mano
+(`finanzas.crear_cuenta_manual`), con un costo opcional.
+
+- **Monto facturado** = `venta_neto + iva`, exacto. No lleva el `ajuste_redondeo` de
+  la orden: la ley de redondeo es de la caja, y la factura al organismo va al peso.
+  El neto sale de `total_final − impuesto − ajuste_redondeo`, que es lo que la
+  orden ya calculó con su descuento.
+- **Margen** = `venta_neto − costo`; en porcentaje, sobre la venta neto.
+- **Una factura que cubre dos órdenes** repite su número en cada cuenta; no hay
+  tabla de facturas que las agrupe.
+- **Anular la orden** anula la cuenta solo si aún no tiene factura. Con factura
+  emitida, deshacerla es una nota de crédito y lo decide una persona.
+
+**Los abonos deciden el estado**, como en las órdenes: `pagos_cobro` y
+`pagos_proveedor` solo se agregan, y el trigger pasa la cuenta a `PAGADA` cuando lo
+abonado alcanza el monto. Un pago sobre una cuenta que no está por cobrar se
+rechaza. Un pago *de más* no: los organismos a veces pagan distinto por
+retenciones, y ese caso lo resuelve una persona.
+
+**Las cuentas por pagar se ingresan a mano.** La entrada de mercadería del Kardex
+no las genera. `fecha_vencimiento` se guarda en vez de calcularse, porque cada
+proveedor da su plazo y es contra él que se mide la mora; `proveedores.plazo_credito_dias`
+solo sugiere el valor al ingresar la factura.
 
 ## Vistas
 
