@@ -9,7 +9,7 @@ Dos cosas que el esquema hace y estas clases no muestran:
   hacer `db.refresh(producto)` para no leer un `stock_actual` viejo de la caché.
 """
 from sqlalchemy import (
-    Column, Integer, String, Boolean, Numeric, DateTime, Text, ForeignKey, func
+    Column, Integer, String, Boolean, Numeric, Date, DateTime, Text, ForeignKey, func
 )
 from sqlalchemy.orm import relationship
 
@@ -210,6 +210,9 @@ class DetalleOrden(Base):
     servicio_id = Column(Integer, ForeignKey("servicios.id"))
     cantidad = Column(Integer, nullable=False)
     precio_unitario_cobrado = Column(Numeric(10, 2), nullable=False)
+    # Lo copia el trigger fn_congelar_costo al insertar, y no se mueve más.
+    # NULL en servicios y en lo anterior a la columna: margen "sin dato".
+    costo_unitario = Column(Numeric(10, 2))
 
     orden = relationship("Orden", back_populates="detalles")
     producto = relationship("Producto")
@@ -258,6 +261,7 @@ class DetalleVenta(Base):
     producto_id = Column(Integer, ForeignKey("productos.id"), nullable=False)
     cantidad = Column(Integer, nullable=False)
     precio_unitario_cobrado = Column(Numeric(10, 2), nullable=False)
+    costo_unitario = Column(Numeric(10, 2))  # igual que en DetalleOrden
 
     venta = relationship("Venta", back_populates="detalles")
     producto = relationship("Producto")
@@ -305,3 +309,139 @@ class MovimientoCaja(Base):
 
     usuario = relationship("Usuario")
     anulado = relationship("MovimientoCaja", remote_side=[id])
+
+
+class CuentaPorCobrar(Base):
+    """Una factura por cobrar, casi siempre a un organismo de Mercado Público.
+
+    Con `orden_id` la abrió el trigger al guardar una orden con folio, y espera
+    que alguien ingrese la factura (`src/finanzas.py`); sin él, se ingresó a
+    mano y nació facturada. Ver el comentario del esquema para los estados.
+    """
+
+    __tablename__ = "cuentas_por_cobrar"
+
+    id = Column(Integer, primary_key=True, index=True)
+    orden_id = Column(Integer, ForeignKey("ordenes.id"), unique=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"))  # quien registró la factura
+    cliente_nombre = Column(String(150))  # solo en las ingresadas a mano
+    numero_oc = Column(String(50))
+    numero_factura = Column(String(50))
+    fecha_factura = Column(Date)
+    venta_neto = Column(Numeric(10, 2))
+    iva = Column(Numeric(10, 2))
+    costo = Column(Numeric(10, 2))
+    estado = Column(String(20), nullable=False, server_default="PENDIENTE_FACTURA")
+    observaciones = Column(Text)
+
+    orden = relationship("Orden")
+    usuario = relationship("Usuario")
+    pagos = relationship("PagoCobro", back_populates="cuenta")
+
+    @property
+    def monto(self) -> int | None:
+        """Lo que se factura: neto más IVA, exacto. None antes de facturar."""
+        if self.venta_neto is None or self.iva is None:
+            return None
+        return int(self.venta_neto) + int(self.iva)
+
+    @property
+    def pagado(self) -> int:
+        return int(sum(p.monto for p in self.pagos))
+
+    @property
+    def saldo(self) -> int | None:
+        """Lo que falta cobrar; None mientras no haya factura, y 0 si ya no
+        se cobra (pagada o anulada)."""
+        if self.estado in ("PAGADA", "ANULADA"):
+            return 0
+        if self.monto is None:
+            return None
+        return self.monto - self.pagado
+
+    @property
+    def margen(self) -> int | None:
+        """Venta neto menos costo, o None si falta alguno de los dos."""
+        if self.venta_neto is None or self.costo is None:
+            return None
+        return int(self.venta_neto) - int(self.costo)
+
+    @property
+    def margen_porcentaje(self) -> float | None:
+        """El margen sobre la venta neto, en %. None sin margen o sin venta."""
+        if self.margen is None or not self.venta_neto:
+            return None
+        return self.margen / int(self.venta_neto) * 100
+
+
+class PagoCobro(Base):
+    """Un abono de una cuenta por cobrar. Append-only, como PagoOrden."""
+
+    __tablename__ = "pagos_cobro"
+
+    id = Column(Integer, primary_key=True, index=True)
+    cuenta_id = Column(Integer, ForeignKey("cuentas_por_cobrar.id"), nullable=False)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
+    monto = Column(Numeric(10, 2), nullable=False)
+    fecha_pago = Column(Date, nullable=False, server_default=func.current_date())
+
+    cuenta = relationship("CuentaPorCobrar", back_populates="pagos")
+    usuario = relationship("Usuario")
+
+
+class Proveedor(Base):
+    __tablename__ = "proveedores"
+
+    id = Column(Integer, primary_key=True, index=True)
+    nombre = Column(String(150), unique=True, nullable=False)
+    rut = Column(String(12), unique=True)
+    plazo_credito_dias = Column(Integer, nullable=False, default=30)
+    activo = Column(Boolean, default=True, nullable=False)
+
+    facturas = relationship("FacturaProveedor", back_populates="proveedor")
+
+
+class FacturaProveedor(Base):
+    """Una cuenta por pagar: la factura de un proveedor, con su vencimiento."""
+
+    __tablename__ = "facturas_proveedor"
+
+    id = Column(Integer, primary_key=True, index=True)
+    proveedor_id = Column(Integer, ForeignKey("proveedores.id"), nullable=False)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
+    numero_factura = Column(String(50), nullable=False)
+    fecha_compra = Column(Date, nullable=False)
+    fecha_vencimiento = Column(Date, nullable=False)
+    monto = Column(Numeric(10, 2), nullable=False)  # total con IVA
+    estado = Column(String(20), nullable=False, server_default="PENDIENTE")
+    observaciones = Column(Text)
+
+    proveedor = relationship("Proveedor", back_populates="facturas")
+    usuario = relationship("Usuario")
+    pagos = relationship("PagoProveedor", back_populates="factura")
+
+    @property
+    def pagado(self) -> int:
+        return int(sum(p.monto for p in self.pagos))
+
+    @property
+    def saldo(self) -> int:
+        """Lo que falta pagar; 0 si ya está pagada o se anuló."""
+        if self.estado != "PENDIENTE":
+            return 0
+        return int(self.monto) - self.pagado
+
+
+class PagoProveedor(Base):
+    """Un abono a una factura de proveedor. Append-only."""
+
+    __tablename__ = "pagos_proveedor"
+
+    id = Column(Integer, primary_key=True, index=True)
+    factura_id = Column(Integer, ForeignKey("facturas_proveedor.id"), nullable=False)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"), nullable=False)
+    monto = Column(Numeric(10, 2), nullable=False)
+    fecha_pago = Column(Date, nullable=False, server_default=func.current_date())
+
+    factura = relationship("FacturaProveedor", back_populates="pagos")
+    usuario = relationship("Usuario")

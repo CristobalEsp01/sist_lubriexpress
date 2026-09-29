@@ -107,6 +107,115 @@ CREATE TRIGGER trg_ordenes_estado_pago
   EXECUTE FUNCTION fn_estado_pago_al_cambiar_total();
 '''
 
+CONGELAR_COSTO = '''
+CREATE OR REPLACE FUNCTION fn_congelar_costo() RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW."producto_id" IS NOT NULL AND NEW."costo_unitario" IS NULL THEN
+    SELECT "precio_costo" INTO NEW."costo_unitario"
+      FROM "productos" WHERE "id" = NEW."producto_id";
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_detalle_ordenes_costo
+  BEFORE INSERT ON "detalle_ordenes"
+  FOR EACH ROW EXECUTE FUNCTION fn_congelar_costo();
+
+CREATE TRIGGER trg_detalle_ventas_costo
+  BEFORE INSERT ON "detalle_ventas"
+  FOR EACH ROW EXECUTE FUNCTION fn_congelar_costo();
+'''
+
+ALTA_CUENTA_COBRAR = '''
+CREATE OR REPLACE FUNCTION fn_alta_cuenta_cobrar() RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO "cuentas_por_cobrar" ("orden_id", "numero_oc")
+  VALUES (NEW."id", NEW."folio_mercado_publico")
+  ON CONFLICT ("orden_id") DO UPDATE
+     SET "numero_oc" = EXCLUDED."numero_oc"
+   WHERE "cuentas_por_cobrar"."estado" = 'PENDIENTE_FACTURA';
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_ordenes_alta_cuenta_cobrar
+  AFTER INSERT OR UPDATE OF "folio_mercado_publico" ON "ordenes"
+  FOR EACH ROW
+  WHEN (NEW."folio_mercado_publico" IS NOT NULL AND NEW."folio_mercado_publico" <> ''
+        AND NEW."estado" <> 'ANULADA')
+  EXECUTE FUNCTION fn_alta_cuenta_cobrar();
+'''
+
+ANULA_CUENTA_COBRAR = '''
+CREATE OR REPLACE FUNCTION fn_anular_cuenta_cobrar() RETURNS TRIGGER AS $$
+BEGIN
+  UPDATE "cuentas_por_cobrar"
+     SET "estado" = 'ANULADA'
+   WHERE "orden_id" = NEW."id" AND "estado" = 'PENDIENTE_FACTURA';
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_ordenes_anula_cuenta_cobrar
+  AFTER UPDATE OF "estado" ON "ordenes"
+  FOR EACH ROW
+  WHEN (NEW."estado" = 'ANULADA' AND OLD."estado" IS DISTINCT FROM 'ANULADA')
+  EXECUTE FUNCTION fn_anular_cuenta_cobrar();
+'''
+
+ABONO_CUENTA_COBRAR = '''
+CREATE OR REPLACE FUNCTION fn_abonar_cuenta_cobrar() RETURNS TRIGGER AS $$
+DECLARE
+  v_estado VARCHAR(20);
+  v_total DECIMAL(10,2);
+BEGIN
+  SELECT "estado", "venta_neto" + "iva" INTO v_estado, v_total
+    FROM "cuentas_por_cobrar" WHERE "id" = NEW."cuenta_id" FOR UPDATE;
+
+  IF v_estado <> 'POR_COBRAR' THEN
+    RAISE EXCEPTION USING ERRCODE = 'check_violation',
+      MESSAGE = 'La cuenta ' || NEW."cuenta_id" || ' no admite pagos: está ' || v_estado || '.';
+  END IF;
+
+  IF (SELECT SUM(p."monto") FROM "pagos_cobro" p WHERE p."cuenta_id" = NEW."cuenta_id") >= v_total THEN
+    UPDATE "cuentas_por_cobrar" SET "estado" = 'PAGADA' WHERE "id" = NEW."cuenta_id";
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_pagos_cobro_abono
+  AFTER INSERT ON "pagos_cobro"
+  FOR EACH ROW EXECUTE FUNCTION fn_abonar_cuenta_cobrar();
+'''
+
+ABONO_FACTURA_PROVEEDOR = '''
+CREATE OR REPLACE FUNCTION fn_abonar_factura_proveedor() RETURNS TRIGGER AS $$
+DECLARE
+  v_estado VARCHAR(20);
+  v_monto DECIMAL(10,2);
+BEGIN
+  SELECT "estado", "monto" INTO v_estado, v_monto
+    FROM "facturas_proveedor" WHERE "id" = NEW."factura_id" FOR UPDATE;
+
+  IF v_estado <> 'PENDIENTE' THEN
+    RAISE EXCEPTION USING ERRCODE = 'check_violation',
+      MESSAGE = 'La factura ' || NEW."factura_id" || ' no admite pagos: está ' || v_estado || '.';
+  END IF;
+
+  IF (SELECT SUM(p."monto") FROM "pagos_proveedor" p WHERE p."factura_id" = NEW."factura_id") >= v_monto THEN
+    UPDATE "facturas_proveedor" SET "estado" = 'PAGADA' WHERE "id" = NEW."factura_id";
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_pagos_proveedor_abono
+  AFTER INSERT ON "pagos_proveedor"
+  FOR EACH ROW EXECUTE FUNCTION fn_abonar_factura_proveedor();
+'''
+
 # ponytail: la lista de pasos se escribe a mano y solo va hacia adelante. Sirve
 # mientras sean unos pocos cambios aditivos; el día que haya que revertir uno, o
 # que la lista crezca, toca incorporar Alembic (anotado en docs/base-de-datos.md).
@@ -357,6 +466,252 @@ CREATE INDEX idx_cambios_precio_producto ON "cambios_precio"("producto_id");
 );''',
             'CREATE INDEX idx_cambios_precio_producto ON "cambios_precio"("producto_id");',
         ),
+    ),
+    Paso(
+        nombre="detalle_ordenes.costo_unitario",
+        comprobacion="""
+            SELECT EXISTS (SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'detalle_ordenes' AND column_name = 'costo_unitario')
+        """,
+        sql='''
+ALTER TABLE "detalle_ordenes"
+  ADD COLUMN "costo_unitario" DECIMAL(10,2) CHECK ("costo_unitario" >= 0);
+''',
+        declara=(
+            '"costo_unitario" DECIMAL(10,2) CHECK ("costo_unitario" >= 0)',
+        ),
+    ),
+    Paso(
+        nombre="detalle_ventas.costo_unitario",
+        comprobacion="""
+            SELECT EXISTS (SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'detalle_ventas' AND column_name = 'costo_unitario')
+        """,
+        sql='''
+ALTER TABLE "detalle_ventas"
+  ADD COLUMN "costo_unitario" DECIMAL(10,2) CHECK ("costo_unitario" >= 0);
+''',
+        declara=(
+            '"costo_unitario" DECIMAL(10,2) CHECK ("costo_unitario" >= 0)',
+        ),
+    ),
+    Paso(
+        nombre="detalle_ordenes.costo_congelado",
+        comprobacion="""
+            SELECT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_detalle_ordenes_costo')
+        """,
+        sql=CONGELAR_COSTO,
+        declara=(CONGELAR_COSTO,),
+    ),
+    Paso(
+        nombre="proveedores",
+        comprobacion="SELECT to_regclass('public.proveedores') IS NOT NULL",
+        sql='''
+CREATE TABLE "proveedores" (
+  "id" SERIAL PRIMARY KEY,
+  "nombre" VARCHAR(150) UNIQUE NOT NULL,
+  "rut" VARCHAR(12) UNIQUE,
+  -- El crédito que suele dar: sugiere el vencimiento al ingresar una factura.
+  "plazo_credito_dias" INT NOT NULL DEFAULT 30 CHECK ("plazo_credito_dias" >= 0),
+  "activo" BOOLEAN NOT NULL DEFAULT TRUE,
+  CONSTRAINT "proveedor_rut_no_vacio" CHECK ("rut" <> '')
+);
+''',
+        declara=(
+            '''CREATE TABLE "proveedores" (
+  "id" SERIAL PRIMARY KEY,
+  "nombre" VARCHAR(150) UNIQUE NOT NULL,
+  "rut" VARCHAR(12) UNIQUE,
+  -- El crédito que suele dar: sugiere el vencimiento al ingresar una factura.
+  "plazo_credito_dias" INT NOT NULL DEFAULT 30 CHECK ("plazo_credito_dias" >= 0),
+  "activo" BOOLEAN NOT NULL DEFAULT TRUE,
+  CONSTRAINT "proveedor_rut_no_vacio" CHECK ("rut" <> '')
+);''',
+        ),
+    ),
+    Paso(
+        nombre="facturas_proveedor",
+        comprobacion="SELECT to_regclass('public.facturas_proveedor') IS NOT NULL",
+        sql='''
+CREATE TABLE "facturas_proveedor" (
+  "id" SERIAL PRIMARY KEY,
+  "proveedor_id" INT NOT NULL REFERENCES "proveedores"("id"),
+  "usuario_id" INT NOT NULL REFERENCES "usuarios"("id"),
+  "numero_factura" VARCHAR(50) NOT NULL,
+  "fecha_compra" DATE NOT NULL,
+  "fecha_vencimiento" DATE NOT NULL,
+  "monto" DECIMAL(10,2) NOT NULL CHECK ("monto" > 0),
+  "estado" VARCHAR(20) NOT NULL DEFAULT 'PENDIENTE'
+      CHECK ("estado" IN ('PENDIENTE', 'PAGADA', 'ANULADA')),
+  "observaciones" TEXT,
+  "created_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updated_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "factura_proveedor_unica" UNIQUE ("proveedor_id", "numero_factura"),
+  CONSTRAINT "vencimiento_posterior_a_la_compra"
+      CHECK ("fecha_vencimiento" >= "fecha_compra"),
+  CONSTRAINT "factura_proveedor_sin_vacios" CHECK ("numero_factura" <> '')
+);
+CREATE INDEX idx_facturas_proveedor_proveedor ON "facturas_proveedor"("proveedor_id");
+CREATE INDEX idx_facturas_proveedor_estado ON "facturas_proveedor"("estado");
+CREATE TRIGGER trg_facturas_proveedor_updated_at
+  BEFORE UPDATE ON "facturas_proveedor"
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+''',
+        declara=(
+            '''CREATE TABLE "facturas_proveedor" (
+  "id" SERIAL PRIMARY KEY,
+  "proveedor_id" INT NOT NULL REFERENCES "proveedores"("id"),
+  "usuario_id" INT NOT NULL REFERENCES "usuarios"("id"),
+  "numero_factura" VARCHAR(50) NOT NULL,
+  "fecha_compra" DATE NOT NULL,
+  "fecha_vencimiento" DATE NOT NULL,
+  "monto" DECIMAL(10,2) NOT NULL CHECK ("monto" > 0),
+  "estado" VARCHAR(20) NOT NULL DEFAULT 'PENDIENTE'
+      CHECK ("estado" IN ('PENDIENTE', 'PAGADA', 'ANULADA')),
+  "observaciones" TEXT,
+  "created_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updated_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "factura_proveedor_unica" UNIQUE ("proveedor_id", "numero_factura"),
+  CONSTRAINT "vencimiento_posterior_a_la_compra"
+      CHECK ("fecha_vencimiento" >= "fecha_compra"),
+  CONSTRAINT "factura_proveedor_sin_vacios" CHECK ("numero_factura" <> '')
+);''',
+            '''CREATE INDEX idx_facturas_proveedor_proveedor ON "facturas_proveedor"("proveedor_id");''',
+            '''CREATE INDEX idx_facturas_proveedor_estado ON "facturas_proveedor"("estado");''',
+            '''CREATE TRIGGER trg_facturas_proveedor_updated_at
+  BEFORE UPDATE ON "facturas_proveedor"
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();''',
+        ),
+    ),
+    Paso(
+        nombre="pagos_proveedor",
+        comprobacion="SELECT to_regclass('public.pagos_proveedor') IS NOT NULL",
+        sql='''
+CREATE TABLE "pagos_proveedor" (
+  "id" SERIAL PRIMARY KEY,
+  "factura_id" INT NOT NULL REFERENCES "facturas_proveedor"("id"),
+  "usuario_id" INT NOT NULL REFERENCES "usuarios"("id"),
+  "monto" DECIMAL(10,2) NOT NULL CHECK ("monto" > 0),
+  "fecha_pago" DATE NOT NULL DEFAULT CURRENT_DATE
+);
+CREATE INDEX idx_pagos_proveedor_factura ON "pagos_proveedor"("factura_id");
+''' + ABONO_FACTURA_PROVEEDOR,
+        declara=(
+            '''CREATE TABLE "pagos_proveedor" (
+  "id" SERIAL PRIMARY KEY,
+  "factura_id" INT NOT NULL REFERENCES "facturas_proveedor"("id"),
+  "usuario_id" INT NOT NULL REFERENCES "usuarios"("id"),
+  "monto" DECIMAL(10,2) NOT NULL CHECK ("monto" > 0),
+  "fecha_pago" DATE NOT NULL DEFAULT CURRENT_DATE
+);''',
+            '''CREATE INDEX idx_pagos_proveedor_factura ON "pagos_proveedor"("factura_id");''',
+            ABONO_FACTURA_PROVEEDOR,
+        ),
+    ),
+    Paso(
+        nombre="cuentas_por_cobrar",
+        comprobacion="SELECT to_regclass('public.cuentas_por_cobrar') IS NOT NULL",
+        sql='''
+CREATE TABLE "cuentas_por_cobrar" (
+  "id" SERIAL PRIMARY KEY,
+  "orden_id" INT UNIQUE REFERENCES "ordenes"("id"),
+  "usuario_id" INT REFERENCES "usuarios"("id"),
+  "cliente_nombre" VARCHAR(150),
+  "numero_oc" VARCHAR(50),
+  "numero_factura" VARCHAR(50),
+  "fecha_factura" DATE,
+  "venta_neto" DECIMAL(10,2) CHECK ("venta_neto" >= 0),
+  "iva" DECIMAL(10,2) CHECK ("iva" >= 0),
+  -- NULL es "sin dato" (margen desconocido); 0 es un servicio sin costo.
+  "costo" DECIMAL(10,2) CHECK ("costo" >= 0),
+  "estado" VARCHAR(20) NOT NULL DEFAULT 'PENDIENTE_FACTURA'
+      CHECK ("estado" IN ('PENDIENTE_FACTURA', 'POR_COBRAR', 'PAGADA', 'ANULADA')),
+  "observaciones" TEXT,
+  "created_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updated_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "cuenta_cobrar_con_origen"
+      CHECK ("orden_id" IS NOT NULL OR ("cliente_nombre" IS NOT NULL
+             AND "numero_factura" IS NOT NULL AND "venta_neto" IS NOT NULL AND "iva" IS NOT NULL)),
+  CONSTRAINT "cuenta_cobrar_estado_coherente"
+      CHECK (("estado" = 'PENDIENTE_FACTURA' AND "numero_factura" IS NULL AND "fecha_factura" IS NULL)
+             OR ("estado" IN ('POR_COBRAR', 'PAGADA') AND "numero_factura" IS NOT NULL
+                 AND "fecha_factura" IS NOT NULL AND "venta_neto" IS NOT NULL AND "iva" IS NOT NULL)
+             OR "estado" = 'ANULADA'),
+  CONSTRAINT "cuenta_cobrar_sin_vacios"
+      CHECK ("cliente_nombre" <> '' AND "numero_oc" <> '' AND "numero_factura" <> '')
+);
+CREATE INDEX idx_cuentas_por_cobrar_estado ON "cuentas_por_cobrar"("estado");
+CREATE TRIGGER trg_cuentas_por_cobrar_updated_at
+  BEFORE UPDATE ON "cuentas_por_cobrar"
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+''',
+        declara=(
+            '''CREATE TABLE "cuentas_por_cobrar" (
+  "id" SERIAL PRIMARY KEY,
+  "orden_id" INT UNIQUE REFERENCES "ordenes"("id"),
+  "usuario_id" INT REFERENCES "usuarios"("id"),
+  "cliente_nombre" VARCHAR(150),
+  "numero_oc" VARCHAR(50),
+  "numero_factura" VARCHAR(50),
+  "fecha_factura" DATE,
+  "venta_neto" DECIMAL(10,2) CHECK ("venta_neto" >= 0),
+  "iva" DECIMAL(10,2) CHECK ("iva" >= 0),
+  -- NULL es "sin dato" (margen desconocido); 0 es un servicio sin costo.
+  "costo" DECIMAL(10,2) CHECK ("costo" >= 0),
+  "estado" VARCHAR(20) NOT NULL DEFAULT 'PENDIENTE_FACTURA'
+      CHECK ("estado" IN ('PENDIENTE_FACTURA', 'POR_COBRAR', 'PAGADA', 'ANULADA')),
+  "observaciones" TEXT,
+  "created_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updated_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "cuenta_cobrar_con_origen"
+      CHECK ("orden_id" IS NOT NULL OR ("cliente_nombre" IS NOT NULL
+             AND "numero_factura" IS NOT NULL AND "venta_neto" IS NOT NULL AND "iva" IS NOT NULL)),
+  CONSTRAINT "cuenta_cobrar_estado_coherente"
+      CHECK (("estado" = 'PENDIENTE_FACTURA' AND "numero_factura" IS NULL AND "fecha_factura" IS NULL)
+             OR ("estado" IN ('POR_COBRAR', 'PAGADA') AND "numero_factura" IS NOT NULL
+                 AND "fecha_factura" IS NOT NULL AND "venta_neto" IS NOT NULL AND "iva" IS NOT NULL)
+             OR "estado" = 'ANULADA'),
+  CONSTRAINT "cuenta_cobrar_sin_vacios"
+      CHECK ("cliente_nombre" <> '' AND "numero_oc" <> '' AND "numero_factura" <> '')
+);''',
+            '''CREATE INDEX idx_cuentas_por_cobrar_estado ON "cuentas_por_cobrar"("estado");''',
+            '''CREATE TRIGGER trg_cuentas_por_cobrar_updated_at
+  BEFORE UPDATE ON "cuentas_por_cobrar"
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();''',
+        ),
+    ),
+    Paso(
+        nombre="pagos_cobro",
+        comprobacion="SELECT to_regclass('public.pagos_cobro') IS NOT NULL",
+        sql='''
+CREATE TABLE "pagos_cobro" (
+  "id" SERIAL PRIMARY KEY,
+  "cuenta_id" INT NOT NULL REFERENCES "cuentas_por_cobrar"("id"),
+  "usuario_id" INT NOT NULL REFERENCES "usuarios"("id"),
+  "monto" DECIMAL(10,2) NOT NULL CHECK ("monto" > 0),
+  "fecha_pago" DATE NOT NULL DEFAULT CURRENT_DATE
+);
+CREATE INDEX idx_pagos_cobro_cuenta ON "pagos_cobro"("cuenta_id");
+''' + ABONO_CUENTA_COBRAR,
+        declara=(
+            '''CREATE TABLE "pagos_cobro" (
+  "id" SERIAL PRIMARY KEY,
+  "cuenta_id" INT NOT NULL REFERENCES "cuentas_por_cobrar"("id"),
+  "usuario_id" INT NOT NULL REFERENCES "usuarios"("id"),
+  "monto" DECIMAL(10,2) NOT NULL CHECK ("monto" > 0),
+  "fecha_pago" DATE NOT NULL DEFAULT CURRENT_DATE
+);''',
+            '''CREATE INDEX idx_pagos_cobro_cuenta ON "pagos_cobro"("cuenta_id");''',
+            ABONO_CUENTA_COBRAR,
+        ),
+    ),
+    Paso(
+        nombre="cuentas_por_cobrar.alta_desde_orden",
+        comprobacion="""
+            SELECT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_ordenes_alta_cuenta_cobrar')
+        """,
+        sql=ALTA_CUENTA_COBRAR + ANULA_CUENTA_COBRAR,
+        declara=(ALTA_CUENTA_COBRAR, ANULA_CUENTA_COBRAR),
     ),
 ]
 

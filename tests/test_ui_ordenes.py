@@ -15,8 +15,8 @@ from conftest import patente_de_prueba, rut_de_prueba
 from src.auth import Sesion
 from src.database import SessionLocal
 from src.models import (
-    Cliente, DetalleOrden, KardexMovimiento, Mecanico, Orden, PagoOrden, Producto, Servicio,
-    Usuario, Vehiculo,
+    Cliente, CuentaPorCobrar, DetalleOrden, KardexMovimiento, Mecanico, Orden, PagoCobro,
+    PagoOrden, Producto, Servicio, Usuario, Vehiculo,
 )
 from src.ui.ordenes import COLUMNAS_HISTORIAL, TIPOS_DESCUENTO
 
@@ -41,6 +41,13 @@ def limpiar():
                     db.flush()
                     db.query(KardexMovimiento).filter_by(orden_id=orden.id).delete()
                     db.query(PagoOrden).filter_by(orden_id=orden.id).delete()
+                    # Una orden con folio de Mercado Público abrió su cuenta por
+                    # cobrar sola; la cuenta apunta a la orden, así que va antes.
+                    for cuenta in db.scalars(select(CuentaPorCobrar).where(
+                            CuentaPorCobrar.orden_id == orden.id)):
+                        db.query(PagoCobro).filter_by(cuenta_id=cuenta.id).delete()
+                        db.delete(cuenta)
+                    db.flush()
                     db.delete(orden)
                 db.delete(vehiculo)
             db.delete(cliente)
