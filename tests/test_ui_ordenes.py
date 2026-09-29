@@ -748,7 +748,8 @@ def test_el_flyer_descuenta_aceite_y_filtros_y_sirve_una_vez(app, taller, sin_mo
 
     widget.guardar_orden("ABIERTA")
     assert sin_modales[-1] == "Falta el folio del flyer"
-    widget.valor_descuento.setValue(folio)
+    assert not widget.folio_flyer.isHidden() and widget.valor_descuento.isHidden()
+    widget.folio_flyer.setText(str(folio))
 
     # Sin nada que descontar, el folio no se gasta.
     fila_aceite = next(f for f in range(widget.tabla_carrito.rowCount())
@@ -771,7 +772,7 @@ def test_el_flyer_descuenta_aceite_y_filtros_y_sirve_una_vez(app, taller, sin_mo
     filas = [widget.tabla_abiertas.item(f, 0).text() for f in range(widget.tabla_abiertas.rowCount())]
     widget.tabla_abiertas.selectRow(filas.index(str(orden_id)))
     widget.retomar_orden()
-    assert widget.valor_descuento.value() == folio
+    assert widget.folio_flyer.text() == str(folio)
     widget.agregar_al_carrito(taller.producto_id, 1)
     assert widget.totales.descuento.text() == "- $2.580"
     widget.guardar_orden("ENTREGADA")
@@ -784,12 +785,13 @@ def test_el_flyer_descuenta_aceite_y_filtros_y_sirve_una_vez(app, taller, sin_mo
     elegir_mecanico(widget, taller)
     widget.spin_kilometraje.setValue(60000)
     widget.tipo_descuento.setCurrentIndex(TIPOS_DESCUENTO.index("Flyer (10 %)"))
-    widget.valor_descuento.setValue(folio)
+    widget.folio_flyer.setText(str(folio))
     widget.guardar_orden()
     assert sin_modales[-1] == "Flyer ya usado"
 
     widget.tipo_descuento.setCurrentIndex(TIPOS_DESCUENTO.index("Gremio/Sindicato (15 %)"))
     assert not widget.valor_descuento.isEnabled()
+    assert widget.folio_flyer.isHidden()
     assert widget.totales.descuento.text() == "- $1.935"
     widget.guardar_orden()
     with SessionLocal() as db:

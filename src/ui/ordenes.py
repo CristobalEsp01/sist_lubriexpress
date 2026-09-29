@@ -8,9 +8,10 @@ Igual que en ventas, la orden se escribe en una sola transacción y son los
 triggers de Postgres los que descuentan el stock y dejan el rastro en el Kardex:
 este módulo nunca toca "stock_actual" (ver database/schema_lubriexpress.sql).
 """
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import QRegularExpression, Qt, QUrl
 from PySide6.QtGui import (
-    QDesktopServices, QImage, QKeySequence, QPageSize, QPdfWriter, QShortcut, QTextDocument,
+    QDesktopServices, QImage, QKeySequence, QPageSize, QPdfWriter, QRegularExpressionValidator,
+    QShortcut, QTextDocument,
 )
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QInputDialog,
@@ -546,6 +547,12 @@ class OrdenesWidget(QTabWidget):
         self.valor_descuento.setEnabled(False)
         self.tipo_descuento.currentIndexChanged.connect(self._cambiar_tipo_descuento)
         self.valor_descuento.valueChanged.connect(self.recalcular_total)
+        # El número impreso en el flyer se escribe como el folio de Mercado
+        # Público: un campo de texto, no un contador con flechas.
+        self.folio_flyer = QLineEdit(placeholderText="N° del flyer")
+        self.folio_flyer.setValidator(QRegularExpressionValidator(QRegularExpression(r"\d{0,4}")))
+        self.folio_flyer.setMaximumWidth(120)
+        self.folio_flyer.hide()
 
         self.folio = QLineEdit(placeholderText="Folio MP")
         self.folio.setToolTip("Folio de Mercado Público: solo en las órdenes institucionales.")
@@ -611,7 +618,7 @@ class OrdenesWidget(QTabWidget):
         layout_der.addWidget(self.texto_observaciones, 1)
         layout_der.addWidget(QLabel("5. Descuento, folio y pago"))
         # El folio va con el descuento: en la fila del pago no cabe.
-        layout_der.addLayout(barra(self.tipo_descuento, self.valor_descuento, self.folio,
+        layout_der.addLayout(barra(self.tipo_descuento, self.valor_descuento, self.folio_flyer, self.folio,
                                    estira=2))
         layout_der.addLayout(barra(self.pagada, self.abono, self.combo_medio_pago, estira=1))
         layout_der.addStretch()
@@ -966,18 +973,16 @@ class OrdenesWidget(QTabWidget):
         porcentaje, pesos para el monto, el número impreso para el flyer, y
         apagado sin descuento o con gremio, que no pide nada."""
         self.valor_descuento.setValue(0)
-        self.valor_descuento.setEnabled(indice in (1, 2, 3))
+        self.valor_descuento.setEnabled(indice in (1, 2))
         self.valor_descuento.setSpecialValueText("")
+        # El flyer cambia el campo de monto por el del número impreso.
+        self.folio_flyer.clear()
+        self.folio_flyer.setVisible(indice == 3)
+        self.valor_descuento.setVisible(indice != 3)
         if indice == 1:
             self.valor_descuento.setRange(0, 100)
             self.valor_descuento.setPrefix("")
             self.valor_descuento.setSuffix(" %")
-        elif indice == 3:
-            self.valor_descuento.setRange(0, convenios.FOLIOS_FLYER[-1])
-            self.valor_descuento.setPrefix("N° ")
-            self.valor_descuento.setSuffix("")
-            self.valor_descuento.setGroupSeparatorShown(False)
-            self.valor_descuento.setSpecialValueText("N° del flyer")
         else:
             self.valor_descuento.setRange(0, 99_999_999)
             self.valor_descuento.setPrefix("$ ")
@@ -1321,7 +1326,8 @@ class OrdenesWidget(QTabWidget):
         if datos["convenio"]:
             tipo = next(t for t, c in CONVENIO_DEL_TIPO.items() if c == datos["convenio"])
             self.tipo_descuento.setCurrentIndex(tipo)
-            self.valor_descuento.setValue(datos["folio_flyer"] or 0)
+            if datos["folio_flyer"]:
+                self.folio_flyer.setText(str(datos["folio_flyer"]))
         elif datos["porcentaje"]:
             self.tipo_descuento.setCurrentIndex(1)
             self.valor_descuento.setValue(datos["porcentaje"])
@@ -1401,7 +1407,7 @@ class OrdenesWidget(QTabWidget):
                 return
 
         convenio = CONVENIO_DEL_TIPO.get(self.tipo_descuento.currentIndex())
-        folio_flyer = self.valor_descuento.value() if convenio == "FLYER" else None
+        folio_flyer = int(self.folio_flyer.text() or 0) if convenio == "FLYER" else None
         if folio_flyer is not None and not self._flyer_disponible(folio_flyer):
             return
 
