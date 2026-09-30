@@ -50,8 +50,8 @@ def sesion():
 
 @pytest.mark.parametrize("rol, supervisa, pestanas", [
     ("USUARIO_NORMAL", False, 6),
-    ("SUPERVISOR", True, 6),
-    ("ADMINISTRADOR", True, 7),
+    ("SUPERVISOR", True, 7),
+    ("ADMINISTRADOR", True, 8),
 ])
 def test_el_rol_manda_en_inventario_y_en_las_pestanas(app, sesion, avisos, rol, supervisa, pestanas):
     """Un botón apagado no basta: el slot vuelve a preguntar, que es lo que
@@ -79,10 +79,13 @@ def test_el_rol_manda_en_inventario_y_en_las_pestanas(app, sesion, avisos, rol, 
 
     ventana = VentanaPrincipal()
     assert ventana.pestanias.count() == pestanas
-    assert ventana.reportes.lista.count() == (6 if administra else 2)   # Ingresos y Reabastecimiento
-    if pestanas == 7:
-        assert ventana.pestanias.tabText(6) == "Usuarios"
-        ventana.pestanias.setCurrentIndex(6)
+    # Finanzas, como Usuarios, existe solo para quien puede usarla.
+    nombres = [ventana.pestanias.tabText(i) for i in range(ventana.pestanias.count())]
+    assert ("Finanzas" in nombres) == supervisa
+    assert ventana.reportes.lista.count() == (7 if administra else 2)   # Ingresos y Reabastecimiento
+    if administra:
+        assert ventana.pestanias.tabText(7) == "Usuarios"
+        ventana.pestanias.setCurrentIndex(7)
         ventana.usuarios.tabla.selectRow(0)  # elegir una fila es lo que junta los connect
         assert ventana.usuarios.boton_editar.isEnabled()
 
@@ -186,3 +189,81 @@ def test_el_administrador_da_de_alta_mecanicos_sin_cuenta(app, sesion, avisos):
         with SessionLocal() as db:
             db.query(Mecanico).filter(Mecanico.nombre == nombre).delete()
             db.commit()
+
+
+def test_cerrar_sesion_pregunta_cierra_y_vuelve_al_login(app, sesion, monkeypatch):
+    """El botón pide confirmación; con "No" no pasa nada, con "Sí" la sesión
+    queda cerrada y la ventana avisa a main.py para que muestre el login."""
+    from PySide6.QtWidgets import QMessageBox
+
+    from src.auth import Sesion
+    from src.ui import VentanaPrincipal
+
+    sesion("ADMINISTRADOR")
+    ventana = VentanaPrincipal()
+    assert ventana.pestanias.cornerWidget() is ventana.boton_cerrar_sesion
+
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.No)
+    assert ventana.cerrar_sesion() is False
+    assert Sesion.activa() and not ventana.sesion_cerrada
+
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
+    ventana.boton_cerrar_sesion.click()
+    assert not Sesion.activa() and ventana.sesion_cerrada
+    assert not ventana.isVisible()
+
+
+def test_main_vuelve_al_login_tras_cerrar_sesion_y_termina_con_la_x(app, monkeypatch):
+    """Dos vueltas: la primera cierra sesión y vuelve al login; en la segunda se
+    cierra la ventana sin cerrar sesión y la aplicación termina."""
+    import main
+    import src.ui as ui
+
+    logins, ventanas = [], []
+
+    class LoginFalso:
+        def exec(self):
+            logins.append(1)
+            return True
+
+    class VentanaFalsa:
+        def __init__(self):
+            self.sesion_cerrada = len(ventanas) == 0
+            ventanas.append(self)
+
+        def showMaximized(self): pass
+        def deleteLater(self): pass
+
+    class AppFalsa:
+        def exec(self):
+            return 7
+
+    monkeypatch.setattr(ui, "LoginDialog", LoginFalso)
+    monkeypatch.setattr(ui, "VentanaPrincipal", VentanaFalsa)
+    assert main.ejecutar_sesiones(AppFalsa()) == 7
+    assert len(logins) == 2 and len(ventanas) == 2
+
+    class LoginCancelado:
+        def exec(self):
+            return False
+
+    monkeypatch.setattr(ui, "LoginDialog", LoginCancelado)
+    assert main.ejecutar_sesiones(AppFalsa()) == 0
+
+
+def test_la_version_se_ve_en_el_login_y_en_la_ventana(app, sesion):
+    import re
+
+    from PySide6.QtWidgets import QLabel
+
+    from src.ui import LoginDialog, VentanaPrincipal
+    from src.version import VERSION
+
+    assert re.fullmatch(r"\d+\.\d+\.\d+", VERSION)
+    sesion("ADMINISTRADOR")
+    ventana = VentanaPrincipal()
+    assert f"v{VERSION}" in ventana.statusBar().currentMessage()
+    assert f"v{VERSION}" in ventana.windowTitle()
+    login = LoginDialog()
+    textos = [e.text() for e in login.findChildren(QLabel)]
+    assert any(f"v{VERSION}" in t for t in textos)

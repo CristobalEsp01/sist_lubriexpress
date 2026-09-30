@@ -6,6 +6,7 @@ from sqlalchemy import select
 from ..auth import Sesion, verificar_password
 from ..database import SessionLocal
 from ..models import Usuario
+from ..version import VERSION
 from .comunes import layout_de_dialogo
 from .tema import ESPACIO_FORMULARIO
 
@@ -24,7 +25,7 @@ class LoginDialog(QDialog):
 
         titulo = QLabel("Lubri-Express")
         titulo.setProperty("clase", "titulo")
-        subtitulo = QLabel("Sistema de Gestión de Taller — inicia sesión para abrir el turno")
+        subtitulo = QLabel(f"Sistema de Gestión de Taller · v{VERSION} — inicia sesión para abrir el turno")
         subtitulo.setProperty("clase", "resumen")
 
         self.username = QLineEdit(placeholderText="Usuario")
