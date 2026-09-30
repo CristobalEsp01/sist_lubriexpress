@@ -67,6 +67,53 @@ def leer_xlsx(ruta) -> list[dict]:
     return [{nombres[i]: f.get(i) for i in range(ancho)} for f in filas[1:]]
 
 
+RELS = "http://schemas.openxmlformats.org/package/2006/relationships"
+DOC_RELS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+
+
+def leer_hojas(ruta) -> dict[str, list[tuple[int, dict[int, str | None]]]]:
+    """Todas las hojas: {nombre: [(número de fila, {columna: texto})]}.
+
+    A diferencia de `leer_xlsx`, no supone encabezados: devuelve la grilla tal
+    cual, con el número de fila que Excel muestra, para planillas donde la
+    tabla empieza en la fila 4 y hay totales sueltos. Los valores vienen como
+    texto (números en coma flotante, fechas como serial, errores como
+    "#DIV/0!"); de las celdas con fórmula se toma el último valor calculado.
+    """
+    with zipfile.ZipFile(ruta) as z:
+        compartidas = []
+        if "xl/sharedStrings.xml" in z.namelist():
+            for si in ET.fromstring(z.read("xl/sharedStrings.xml")).findall("m:si", NS):
+                compartidas.append("".join(t.text or "" for t in si.iter(T)))
+        libro = ET.fromstring(z.read("xl/workbook.xml"))
+        destinos = {
+            r.get("Id"): r.get("Target")
+            for r in ET.fromstring(z.read("xl/_rels/workbook.xml.rels")).iter(f"{{{RELS}}}Relationship")
+        }
+        hojas = {}
+        for hoja in libro.find("m:sheets", NS):
+            destino = destinos[hoja.get(f"{{{DOC_RELS}}}id")].lstrip("/")
+            ruta_hoja = destino if destino.startswith("xl/") else f"xl/{destino}"
+            xml = ET.fromstring(z.read(ruta_hoja))
+            filas = []
+            for fila in xml.iter(f"{{{NS['m']}}}row"):
+                celdas = {}
+                for c in fila.findall("m:c", NS):
+                    v = c.find("m:v", NS)
+                    tipo = c.get("t")
+                    if tipo == "s":
+                        valor = compartidas[int(v.text)]
+                    elif tipo == "inlineStr":
+                        valor = "".join(t.text or "" for t in c.iter(T))
+                    else:
+                        valor = v.text if v is not None else None
+                    if valor is not None:
+                        celdas[_columna(c.get("r"))] = valor
+                filas.append((int(fila.get("r")), celdas))
+            hojas[hoja.get("name")] = filas
+    return hojas
+
+
 _PAQUETE = {
     "[Content_Types].xml": (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
