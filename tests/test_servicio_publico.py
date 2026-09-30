@@ -8,7 +8,7 @@ from datetime import date
 
 import pytest
 from conftest import patente_de_prueba, rut_de_prueba
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from src import finanzas

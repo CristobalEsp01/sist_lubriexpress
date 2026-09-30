@@ -4,7 +4,7 @@ Lo que importa vive en la base: el costo que se congela, la cuenta que abre
 sola una orden de Mercado Público, y el estado que deciden los abonos. Cada
 prueba corre en una transacción que se revierte, como las de los triggers.
 """
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 from conftest import patente_de_prueba, rut_de_prueba
@@ -395,3 +395,133 @@ def test_el_mismo_numero_de_factura_puede_repetirse_entre_proveedores(db, datos,
     db.add(FacturaProveedor(proveedor=otro, usuario_id=usuario.id, numero_factura=factura.numero_factura,
                             fecha_compra=date(2026, 1, 2), fecha_vencimiento=date(2026, 2, 1), monto=1))
     db.flush()   # no revienta
+
+
+# --- listados, mora y resúmenes -----------------------------------------------
+
+def suyas(filas, *cuentas):
+    """Las filas de estas cuentas: la base de desarrollo puede tener otras."""
+    ids = {c.id for c in cuentas}
+    return [f for f in filas if f.id in ids]
+
+
+def test_la_mora_parte_pasado_el_dia_30_desde_la_factura():
+    factura = date(2026, 8, 1)
+    assert finanzas.dias_de_mora_cobro(factura, date(2026, 8, 31)) == 0     # día 30: aún a tiempo
+    assert finanzas.dias_de_mora_cobro(factura, date(2026, 9, 1)) == 1
+    assert finanzas.dias_de_mora_cobro(factura, date(2026, 9, 30)) == 30
+    assert finanzas.dias_de_mora_cobro(None, date(2026, 9, 30)) == 0
+
+
+def test_el_listado_muestra_lo_estimado_antes_de_facturar_y_lo_congelado_despues(db, datos):
+    usuario, producto, vehiculo = datos
+    orden = orden_de(db, usuario, vehiculo, folio_mercado_publico="L-1", subtotal=100000,
+                     impuesto=19000, total_final=119000)
+    db.add(DetalleOrden(orden=orden, producto=producto, cantidad=1, precio_unitario_cobrado=100000))
+    db.flush()
+    db.refresh(orden)
+    cuenta = cuenta_de(db, orden)
+
+    antes, = suyas(finanzas.cuentas_por_cobrar(db, date(2026, 9, 1)), cuenta)
+    assert (antes.estado, antes.estimado, antes.saldo) == ("PENDIENTE_FACTURA", True, None)
+    assert (antes.neto, antes.monto, antes.costo, antes.margen) == (100000, 119000, 20000, 80000)
+    assert antes.cliente == "SEREMI QA" and antes.numero_oc == "L-1"
+
+    finanzas.registrar_factura(db, cuenta, "10", date(2026, 8, 1), usuario.id)
+    despues, = suyas(finanzas.cuentas_por_cobrar(db, date(2026, 9, 11)), cuenta)
+    assert (despues.estimado, despues.saldo, despues.dias_mora) == (False, 119000, 11)
+
+
+def test_el_resumen_suma_saldos_morosos_pendientes_y_margen_del_mes(db, datos):
+    usuario, _, vehiculo = datos
+    hoy = date(2026, 9, 20)
+    a_tiempo = finanzas.crear_cuenta_manual(db, cliente_nombre="A", numero_factura="1",
+        fecha_factura=date(2026, 9, 10), venta_neto=100000, costo=60000, usuario_id=usuario.id)
+    morosa = finanzas.crear_cuenta_manual(db, cliente_nombre="B", numero_factura="2",
+        fecha_factura=date(2026, 7, 1), venta_neto=200000, usuario_id=usuario.id)   # sin costo
+    finanzas.registrar_pago_cobro(db, morosa, 50000, date(2026, 9, 1), usuario.id)
+    orden = orden_de(db, usuario, vehiculo, folio_mercado_publico="R-1", total_final=119000,
+                     impuesto=19000)
+    db.refresh(orden)
+
+    filas = suyas(finanzas.cuentas_por_cobrar(db, hoy), a_tiempo, morosa, cuenta_de(db, orden))
+    resumen = finanzas.resumen_por_cobrar(filas, hoy)
+    assert resumen["por_cobrar"] == 119000 + (238000 - 50000)
+    assert (resumen["moroso"], resumen["morosas"]) == (238000 - 50000, 1)
+    assert (resumen["sin_factura"], resumen["sin_factura_monto"]) == (1, 119000)
+    # Del mes solo cuenta la de septiembre; la otra facturó en julio.
+    assert (resumen["margen_mes"], resumen["margen_mes_sin_dato"]) == (40000, 0)
+
+
+def test_un_abono_no_pasa_del_saldo_y_al_completarlo_la_cuenta_queda_pagada(db, datos):
+    usuario, _, _ = datos
+    cuenta = finanzas.crear_cuenta_manual(db, cliente_nombre="C", numero_factura="3",
+        fecha_factura=date(2026, 9, 1), venta_neto=100000, usuario_id=usuario.id)   # 119.000
+    hoy = date(2026, 9, 5)
+
+    with pytest.raises(ValueError, match="supera el saldo"):
+        finanzas.registrar_pago_cobro(db, cuenta, 119001, hoy, usuario.id)
+    with pytest.raises(ValueError, match="mayor que cero"):
+        finanzas.registrar_pago_cobro(db, cuenta, 0, hoy, usuario.id)
+
+    finanzas.registrar_pago_cobro(db, cuenta, 19000, hoy, usuario.id)
+    assert (cuenta.estado, cuenta.saldo) == ("POR_COBRAR", 100000)
+    finanzas.registrar_pago_cobro(db, cuenta, 100000, hoy, usuario.id)
+    assert (cuenta.estado, cuenta.saldo) == ("PAGADA", 0)
+    with pytest.raises(ValueError, match="no admite pagos"):
+        finanzas.registrar_pago_cobro(db, cuenta, 1, hoy, usuario.id)
+
+
+def test_solo_se_anula_una_cuenta_manual_sin_pagos(db, datos):
+    usuario, _, vehiculo = datos
+    manual = finanzas.crear_cuenta_manual(db, cliente_nombre="D", numero_factura="4",
+        fecha_factura=date(2026, 9, 1), venta_neto=1000, usuario_id=usuario.id)
+    con_pago = finanzas.crear_cuenta_manual(db, cliente_nombre="E", numero_factura="5",
+        fecha_factura=date(2026, 9, 1), venta_neto=1000, usuario_id=usuario.id)
+    finanzas.registrar_pago_cobro(db, con_pago, 100, date(2026, 9, 2), usuario.id)
+    de_orden = cuenta_de(db, orden_de(db, usuario, vehiculo, folio_mercado_publico="A-9"))
+
+    finanzas.anular_cuenta_manual(db, manual)
+    assert manual.estado == "ANULADA"
+    for cuenta in (con_pago, de_orden):
+        with pytest.raises(ValueError):
+            finanzas.anular_cuenta_manual(db, cuenta)
+
+
+def test_proveedores_facturas_vencimiento_mora_y_pagos(db, datos):
+    usuario, _, _ = datos
+    with pytest.raises(ValueError, match="RUT"):
+        finanzas.crear_proveedor(db, "Lubricantes QA", "12.345.678-9")
+    with pytest.raises(ValueError, match="nombre"):
+        finanzas.crear_proveedor(db, "  ")
+    rut = rut_de_prueba()
+    proveedor = finanzas.crear_proveedor(db, f"Lubricantes QA {rut}", rut.replace(".", "").replace("-", ""), 45)
+    assert proveedor.rut == rut
+
+    compra = date(2026, 9, 1)
+    con_plazo = finanzas.registrar_factura_proveedor(db, proveedor, " F-1 ", compra, 500000, usuario.id)
+    assert (con_plazo.numero_factura, con_plazo.fecha_vencimiento) == ("F-1", compra + timedelta(days=45))
+    fijada = finanzas.registrar_factura_proveedor(
+        db, proveedor, "F-2", compra, 200000, usuario.id, fecha_vencimiento=date(2026, 9, 10))
+    with pytest.raises(ValueError, match="anterior"):
+        finanzas.registrar_factura_proveedor(db, proveedor, "F-3", compra, 1, usuario.id,
+                                             fecha_vencimiento=date(2026, 8, 31))
+    with pytest.raises(ValueError, match="mayor que cero"):
+        finanzas.registrar_factura_proveedor(db, proveedor, "F-4", compra, 0, usuario.id)
+
+    hoy = date(2026, 9, 15)
+    filas = [f for f in finanzas.facturas_por_pagar(db, hoy) if f.proveedor_id == proveedor.id]
+    assert {f.numero_factura: f.dias_mora for f in filas} == {"F-1": 0, "F-2": 5}
+    assert finanzas.resumen_por_pagar(filas) == {"por_pagar": 700000, "vencido": 200000, "vencidas": 1}
+
+    with pytest.raises(ValueError, match="supera el saldo"):
+        finanzas.registrar_pago_proveedor(db, fijada, 200001, hoy, usuario.id)
+    finanzas.registrar_pago_proveedor(db, fijada, 200000, hoy, usuario.id)
+    assert (fijada.estado, fijada.saldo) == ("PAGADA", 0)
+
+    finanzas.anular_factura_proveedor(db, con_plazo)
+    assert con_plazo.estado == "ANULADA"
+    with pytest.raises(ValueError, match="pendiente y sin pagos"):
+        finanzas.anular_factura_proveedor(db, fijada)
+    filas = [f for f in finanzas.facturas_por_pagar(db, hoy) if f.proveedor_id == proveedor.id]
+    assert finanzas.resumen_por_pagar(filas)["por_pagar"] == 0

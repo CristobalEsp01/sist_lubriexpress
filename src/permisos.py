@@ -25,6 +25,12 @@ PERMISOS = {
     # Poner a mano el precio del Servicio Público para cuadrar una orden de
     # Mercado Público con su presupuesto.
     "precio_libre": {"SUPERVISOR", "ADMINISTRADOR"},
+    # La pestaña Finanzas: cuentas por cobrar y por pagar. Quien alimenta el
+    # módulo es el supervisor, así que la ve completa salvo el margen.
+    "finanzas": {"SUPERVISOR", "ADMINISTRADOR"},
+    # Margen de las cuentas por cobrar (venta neto − costo). El costo lo ve
+    # también el supervisor, para revisar montos; el margen solo el dueño.
+    "margen": {"ADMINISTRADOR"},
     # Dar de alta usuarios y mecánicos, y asignar roles.
     "usuarios": {"ADMINISTRADOR"},
 }
