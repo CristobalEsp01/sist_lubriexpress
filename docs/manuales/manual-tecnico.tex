@@ -295,7 +295,7 @@ schtasks /create /tn "Respaldo Lubri-Express" /tr "\"C:\Lubri-Express\lubriexpre
 Windows corta el comando en el espacio y busca un programa que no existe: la tarea
 se crea sin quejarse, pero cada ejecución termina con el resultado
 \texttt{-2147024894} (\texttt{0x80070002}, archivo no encontrado) y no se hace ningún
-respaldo. Con \texttt{schtasks /query /tn "Respaldo Lubri-Express" /v /fo list} se ve el
+respaldo. Con \texttt{schtasks /query /tn \textquotedbl Respaldo Lubri-Express\textquotedbl{} /v /fo list} se ve el
 \emph{Último resultado}; tiene que decir \texttt{0}. El \texttt{/f} reemplaza una tarea
 que ya existía.
 
@@ -447,8 +447,9 @@ que es justamente lo que el sistema anterior no hacía.
   \item El ejecutable abre y muestra la ventana de inicio de sesión.
   \item Se entra con el administrador creado por consola.
   \item Los botones de los diálogos están en español.
-  \item Las pestañas abren sin errores: siete para el supervisor y ocho para el
-        administrador, que ve además \textbf{Finanzas} y \textbf{Usuarios}.
+  \item Las pestañas abren sin errores: seis para el usuario normal, siete para
+        el supervisor (suma \textbf{Finanzas}) y ocho para el administrador
+        (suma también \textbf{Usuarios}).
   \item Una venta de prueba baja el stock y aparece en el Kardex.
   \item Una orden de prueba se guarda y exporta su PDF.
   \item \texttt{Documentos\textbackslash Lubri-Express\textbackslash} se crea al
