@@ -25,7 +25,7 @@ from .comunes import (
 from .carga_excel import CargaExcelDialog
 from .tema import ALERTA, CANAL_PANEL, ESPACIO_BARRA, EXITO, TINTA_SUAVE, fuente_tabular
 
-COLUMNAS_PRODUCTO = ["Nombre", "Marca", "Categoría", "Ubicación", "Stock", "Mín.", "Costo", "Venta neto"]
+COLUMNAS_PRODUCTO = ["Nombre", "Marca", "Categoría", "Ubicación", "Stock", "Mín.", "Costo", "Venta c/IVA"]
 COLUMNAS_KARDEX = ["Fecha", "Tipo", "Cantidad", "Saldo", "Costo unit.", "Usuario", "Origen"]
 COLUMNAS_INGRESO = ["Producto", "Stock Actual", "Ingreso", "Nuevo Stock", "Costo unit.",
                     "Venta neto", "Ubicación"]
@@ -781,7 +781,8 @@ class InventarioWidget(QWidget):
                 if columna == 0:
                     item.setData(Qt.UserRole, pid)
                 self.tabla.setItem(fila, columna, item)
-            numeros = [(str(stock), stock), (str(minimo), minimo), (clp(costo), costo), (clp(venta), venta)]
+            numeros = [(str(stock), stock), (str(minimo), minimo), (clp(costo), costo),
+                       (clp(con_iva(venta)), con_iva(venta))]
             for desplazamiento, (texto, valor) in enumerate(numeros):
                 self.tabla.setItem(fila, 4 + desplazamiento, ItemNumerico(texto, valor))
 

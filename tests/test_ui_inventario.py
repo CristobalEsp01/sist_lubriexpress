@@ -157,6 +157,23 @@ def test_el_listado_marca_lo_critico_sin_esconder_los_inactivos(app, limpiar, bo
     assert [widget.tabla.item(f, 0).text() for f in range(widget.tabla.rowCount())] == [NOMBRE]
 
 
+def test_el_listado_muestra_la_venta_con_iva(app, limpiar, bodeguero_qa):
+    """La columna de venta es lo que paga el cliente (neto + IVA), no el neto."""
+    from src.ui import InventarioWidget
+
+    with SessionLocal() as db:
+        db.add(Producto(nombre=NOMBRE, precio_costo=1000, precio_venta=10000,
+                        stock_actual=3, stock_minimo=1))
+        db.commit()
+
+    widget = InventarioWidget()
+    widget.busqueda.setText(NOMBRE)
+    columnas = [widget.tabla.horizontalHeaderItem(c).text() for c in range(widget.tabla.columnCount())]
+    assert columnas[-1] == "Venta c/IVA"
+    celda = widget.tabla.item(0, 7)
+    assert celda.text() == "$11.900"
+
+
 def test_el_historial_de_kardex_ordena_y_dice_de_dónde_viene(db):
     from src.ui.inventario import movimientos_de, origen_de
 
