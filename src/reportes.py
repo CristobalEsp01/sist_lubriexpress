@@ -24,8 +24,8 @@ VIGENTE = Orden.estado != "ANULADA"
 
 COLUMNAS_INGRESOS = ["Fecha", "Ventas", "Total ventas", "Órdenes", "Total órdenes", "Neto", "IVA",
                      "Ajuste", "Total"]
-COLUMNAS_SEGMENTOS = ["Fecha", "Docs. público", "Público general", "Órdenes MP", "Mercado Público",
-                      "Total", "% Mercado Público"]
+COLUMNAS_SEGMENTOS = ["Fecha", "N° público", "Público general", "N° MP", "Mercado Público",
+                      "Total", "% MP"]
 COLUMNAS_PRODUCTOS = ["Producto", "Marca", "Cantidad", "Monto neto", "% del total"]
 COLUMNAS_USUARIOS = ["Usuario", "Ventas", "Total ventas", "Órdenes", "Total órdenes", "Total"]
 COLUMNAS_MECANICOS = ["Mecánico", "Órdenes", "Total órdenes"]

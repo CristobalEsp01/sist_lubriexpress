@@ -31,6 +31,17 @@ Si la contraseña no es correcta, o la cuenta está desactivada, el aviso aparec
 en la misma ventana. Las contraseñas las cambia un administrador desde la
 pestaña \textbf{Usuarios}.
 
+\subsection{Cerrar sesión}
+
+El botón \textbf{Cerrar sesión}, arriba a la derecha, termina el turno y vuelve
+a la pantalla de inicio de sesión. Antes pregunta, porque lo que esté a medio
+hacer ---una venta o una orden sin guardar--- se pierde. Sirve para cambiar de
+usuario sin cerrar el programa: quien entra después ve las pestañas que su rol
+permite, no las de quien salió. Cerrar la ventana con la X termina el programa.
+
+La versión del sistema aparece en la pantalla de inicio y en la barra de abajo;
+conviene decirla al pedir ayuda.
+
 \subsection{Qué puede hacer cada rol}
 
 El sistema tiene tres roles. Los botones que un rol no puede usar aparecen
@@ -47,15 +58,19 @@ Clientes y vehículos & Sí & Sí & Sí \\
 Consultar inventario y Kardex & Sí & Sí & Sí \\
 Ver los reportes de ingresos por período y de reabastecimiento & Sí & Sí & Sí \\
 Registrar dinero y gastos en la caja del día & Sí & Sí & Sí \\
+Cerrar sesión & Sí & Sí & Sí \\
 \midrule
 Crear y editar productos & --- & Sí & Sí \\
 Ingresar mercadería & --- & Sí & Sí \\
 Ajustar stock por recuento & --- & Sí & Sí \\
 Cargar inventario desde Excel & --- & Sí & Sí \\
 Fijar el mínimo de una categoría & --- & Sí & Sí \\
+Usar Finanzas: cuentas por cobrar y por pagar, con el costo de cada cuenta & --- & Sí & Sí \\
+Poner a mano el precio del Servicio Público & --- & Sí & Sí \\
 \midrule
 Ver el precio de costo, en el listado y en el Kardex, y el inventario valorizado & --- & --- & Sí \\
-Ver los reportes de ventas, usuarios, mecánicos y descuentos & --- & --- & Sí \\
+Ver los reportes de ventas, usuarios, mecánicos, descuentos y el balance entre público general y Mercado Público & --- & --- & Sí \\
+Ver el margen de las cuentas por cobrar & --- & --- & Sí \\
 Crear usuarios, asignar roles y registrar mecánicos & --- & --- & Sí \\
 \bottomrule
 \end{tabular}
@@ -317,8 +332,8 @@ el precio del aceite.
 
 \begin{itemize}
   \item \textbf{Flyer (10 \%)}: aceite de motor y todos los filtros (aceite,
-        aire, polen, petróleo y bencina). Se escribe al lado el \textbf{número
-        impreso en el flyer}, del 1 al 1000. Cada flyer sirve una sola vez: si
+        aire, polen, petróleo y bencina). Se escribe directamente, en el campo
+        de al lado, el \textbf{número impreso en el flyer}, del 1 al 1000. Cada flyer sirve una sola vez: si
         el número ya se usó, el sistema dice en qué orden. Anular esa orden lo
         deja libre de nuevo.
   \item \textbf{Gremio/Sindicato (15 \%)}: aceite de motor y filtros de aceite,
@@ -329,17 +344,56 @@ Qué productos entran lo decide su \textbf{categoría} en Inventario. Un filtro
 con una categoría genérica como ``FILTRO'' recibe el descuento del flyer, pero
 no el de gremio hasta que se le asigne su tipo.
 
-El \textbf{folio de Mercado Público} se llena solo en las órdenes
-institucionales; es lo que después permite separarlas de los clientes normales
-en el historial.
+El \textbf{folio de Mercado Público} se anota solo en las órdenes
+institucionales, con el botón \textbf{Insertar folio MP}: abre una ventana donde
+se escribe el \textbf{ID de la orden de compra}. Queda a la vista arriba, en la
+tarjeta del vehículo, sobre el mecánico, y el botón pasa a decir \textbf{Cambiar
+folio MP}; para quitarlo se abre de nuevo y se deja vacío. Es lo que permite separarlas de los clientes normales en el
+historial y lo que las lleva a \textbf{Finanzas}: una orden con folio no se cobra
+en esta pantalla, porque el organismo paga después contra factura. Por eso, al
+escribir el folio, \textbf{Pagada} y \textbf{Abono} se apagan; el pago se anota
+en Finanzas (sección~\ref{sec:finanzas}). Si se quita el folio, la cuenta que
+esperaba factura se anula, y si se vuelve a escribir, revive. Una orden con el
+Servicio Público (más abajo) no admite quitarle el folio mientras lo lleve.
 
-El pago se anota al cerrar la orden. Si el cliente paga todo, se marca la
+En las órdenes normales, el pago se anota al cerrar la orden. Si el cliente paga todo, se marca la
 casilla \textbf{Pagada}. Si paga una parte —un abono al dejar el auto y el resto
 al retirarlo— se escribe lo que dejó en \textbf{Abono}, que no acepta más que el
 total de la orden. Cuando se cobra algo, hay que elegir el \textbf{medio de pago};
 sin cobro, el campo queda apagado. El saldo se cobra después, desde el detalle
 de la orden en el historial; no hay que anotarlo en ninguna parte ni llevar la
 cuenta a mano.
+
+\subsection{El Servicio Público}
+
+\pantalla{orden_mercado_publico}{Orden de Mercado Público con el Servicio
+Público: el botón está junto al catálogo.}
+
+Un organismo de Mercado Público aprueba un presupuesto, y la orden tiene que
+sumar \emph{exactamente} ese monto. Para cuadrarla existe el \textbf{Servicio
+Público}, un servicio sin precio fijo: el precio lo pone quien arma la orden.
+
+El botón \textbf{Servicio Público}, junto al catálogo, se enciende cuando la orden
+ya tiene folio de Mercado Público (\textbf{Insertar folio MP}) y quien la arma es supervisor o administrador;
+con otro rol, o sin folio, no se puede usar. Se agrega una sola vez por orden y
+con cantidad 1.
+
+\dialogo{dialogo_servicio_publico}{El total del presupuesto y el precio neto se
+siguen entre sí.}
+
+\begin{itemize}
+  \item \textbf{Descripción}: qué se hizo. Es opcional y sale en la línea de la
+        orden.
+  \item \textbf{Total del presupuesto (con IVA)}: lo que aprobó el organismo.
+        Al escribirlo, el sistema calcula el precio neto que hace falta,
+        \emph{tomando en cuenta el resto de la orden}.
+  \item \textbf{Precio del servicio (neto)}: se puede escribir directo; entonces
+        el total se recalcula. Abajo dice cuánto queda la orden con IVA.
+\end{itemize}
+
+Si por los redondeos del IVA ningún precio da el total exacto, el diálogo lo
+avisa y dice a cuánto queda del presupuesto. Para cambiar el precio después,
+doble clic sobre la línea en la orden.
 
 \subsection{Historial y PDF para el cliente}
 
@@ -467,7 +521,7 @@ archivarlo al cierre.
 
 \pantalla{reportes}{Ingresos del período, con su gráfico.}
 
-Arriba se elige el rango de fechas. Hay seis reportes; fuera del
+Arriba se elige el rango de fechas. Hay siete reportes; fuera del
 administrador, los demás roles ven solo el de ingresos por período y el de
 reabastecimiento:
 
@@ -485,6 +539,13 @@ reabastecimiento:
         —general, flyer o gremio—, quién la ingresó, cuánto se descontó y el
         total. Con ``Mes pasado'' es el reporte mensual. Doble clic sobre una
         fila abre la orden.
+  \item \textbf{Público vs Mercado Público}: cuánto entró del público general
+        ---ventas de mostrador y órdenes sin folio--- y cuánto de Mercado
+        Público ---órdenes con folio---, día por día o mes por mes según el
+        rango, con el porcentaje de Mercado Público y un gráfico de barras de
+        los dos. Los montos son con IVA y no incluyen las órdenes anuladas. Las
+        cuentas ingresadas a mano en Finanzas no entran: solo lo que pasó por
+        el sistema.
   \item \textbf{Reabastecimiento}: qué hay que reponer. Solo cuenta los
         productos que tienen mínimo; arriba dice cuántos no lo tienen. Si la
         lista sale vacía y ese número es alto, falta fijar mínimos
@@ -493,6 +554,9 @@ reabastecimiento:
 
 \pantalla{reabastecimiento}{Reabastecimiento: los productos en su mínimo o por
 debajo, ordenados por lo que falta.}
+
+\pantalla{reporte_publico_vs_mp}{Público vs Mercado Público: lo que entró de
+cada lado, con su gráfico.}
 
 \textbf{Exportar a Excel} guarda el reporte que está a la vista en
 \texttt{Documentos\textbackslash Lubri-Express\textbackslash Reportes}, y
@@ -504,6 +568,101 @@ su total, pero sin el detalle de qué insumos llevaron —el sistema viejo no lo
 guardaba—. Por eso \emph{Ventas por producto} refleja lo vendido desde que se
 usa este sistema, mientras que \emph{Ingresos por período} sí cubre todo el
 historial.
+
+\section{Finanzas}
+\label{sec:finanzas}
+
+La pestaña \textbf{Finanzas} la ven el supervisor y el administrador. Lleva la
+plata que se espera cobrar de los organismos de Mercado Público y la que hay que
+pagarle a los proveedores. Tiene dos partes: \textbf{Por cobrar} y \textbf{Por
+pagar}.
+
+\subsection{Por cobrar}
+
+\pantalla{finanzas_por_cobrar}{Cuentas por cobrar. Arriba, las cifras; abajo, una
+fila por factura.}
+
+Cada orden con folio de Mercado Público abre sola su cuenta. La cuenta pasa por
+estos estados, que se ven en la primera columna:
+
+\begin{itemize}
+  \item \textbf{Por facturar}: la orden ya se entregó y falta emitir la factura.
+        Las órdenes que siguen abiertas en el taller no aparecen hasta que se
+        entregan.
+  \item \textbf{Por cobrar}: ya hay factura y el organismo no ha pagado.
+  \item \textbf{Morosa}: pasaron más de 30 días desde la factura sin que se
+        pagara completa. La pastilla dice cuántos días.
+  \item \textbf{Pagada}: los abonos cubren la factura. Sale de la vista normal;
+        se ve con el filtro \emph{Pagadas}.
+  \item \textbf{Anulada}: se ve con el filtro \emph{Anuladas}.
+\end{itemize}
+
+Arriba hay cuatro cifras: cuánto hay \textbf{por cobrar}, cuánto de eso está
+\textbf{moroso}, cuánto hay \textbf{por facturar} y el \textbf{margen del mes}
+(esta última la ve solo el administrador). El buscador encuentra por cliente,
+orden de compra o número de factura, y la lista de al lado filtra por estado
+(\emph{Vigentes} muestra lo que falta facturar o cobrar).
+
+\subsubsection*{Registrar la factura}
+
+Se elige la cuenta \textbf{Por facturar} y \textbf{Registrar factura}: se anota el
+número y la fecha de emisión. Desde ese momento se \textbf{congelan} el neto, el
+IVA y el costo con que se facturó: si después alguien edita la orden, lo
+facturado no se mueve.
+
+\subsubsection*{Registrar un abono}
+
+Con la cuenta \textbf{Por cobrar} elegida, \textbf{Registrar abono} pide el monto
+y la fecha. No acepta más que el saldo. Cuando los abonos completan la factura,
+la cuenta pasa sola a \textbf{Pagada}. Los abonos quedan registrados y no se
+pueden borrar ni corregir.
+
+\subsubsection*{Ingresar una cuenta anterior}
+
+Para facturas que vienen de antes del sistema, o de una venta que nunca pasó por
+una orden: \textbf{Ingresar cuenta anterior} pide cliente, número de factura,
+fecha de emisión y neto (el total con IVA se muestra al lado). La orden de compra
+y las observaciones son opcionales. El \textbf{costo} también, pero conviene
+anotarlo: sin él, el margen de esa cuenta queda ``sin dato'' en vez de
+inflarse. Estas cuentas se pueden \textbf{anular} mientras no tengan abonos; las
+que vienen de una orden no.
+
+\subsubsection*{Qué ve cada uno}
+
+El supervisor ve el \textbf{costo} de cada cuenta, para revisar que los montos
+calzan, pero no el margen. El administrador ve también el \textbf{margen}. Si la
+ventana es angosta, la columna de costo se oculta y el costo aparece al dejar el
+mouse sobre el margen.
+
+\subsection{Por pagar}
+
+\pantalla{finanzas_por_pagar}{Facturas de proveedores, con su vencimiento.}
+
+Acá se anotan las facturas que el taller le debe a sus proveedores. Cada una
+lleva proveedor, número, fecha de compra, monto y \textbf{vencimiento}.
+
+\begin{itemize}
+  \item \textbf{Nueva factura}: se elige el proveedor (o \textbf{Nuevo\ldots} para
+        crear uno, con nombre y RUT opcional), y se anota el número, la fecha
+        de compra y el monto. El vencimiento lo propone el plazo de crédito del
+        proveedor, y se puede cambiar. Un proveedor no puede tener dos facturas
+        con el mismo número.
+  \item \textbf{Registrar pago}: monto y fecha; se pueden hacer varios pagos
+        (cuotas) hasta completar el monto, y entonces la factura pasa a
+        \textbf{Pagada}.
+  \item \textbf{Vencida}: la fecha de vencimiento ya pasó y queda saldo; la
+        columna \emph{Mora} dice cuántos días.
+  \item \textbf{Anular}: solo facturas pendientes y sin pagos.
+\end{itemize}
+
+Las cifras de arriba son el total por pagar y cuánto de eso está vencido.
+
+\subsection{Importar las planillas anteriores}
+
+Las planillas de Excel con las que se llevaba esto antes se pueden cargar de una
+vez. No se hace desde la pantalla, sino con una herramienta que se corre una sola
+vez, y la explica el \emph{Manual técnico}. Por defecto solo muestra un informe
+de lo que haría, sin guardar nada.
 
 \section{Usuarios}
 
@@ -524,6 +683,15 @@ aparecer al abrir una orden y sus órdenes lo siguen nombrando. Sin ningún
 mecánico activo no se puede guardar una orden.
 
 \section{Preguntas frecuentes}
+
+\subsection*{No puedo marcar como pagada una orden de Mercado Público}
+Es lo esperado: una orden con folio de Mercado Público se paga en la pestaña
+\textbf{Finanzas}, contra la factura, no en la orden. En la orden, \textbf{Pagada}
+y \textbf{Abono} quedan apagados mientras tenga folio.
+
+\subsection*{El botón Servicio Público está apagado}
+Necesita dos cosas: que la orden tenga el folio de Mercado Público escrito y que
+quien la arma sea supervisor o administrador.
 
 \subsection*{El producto no aparece al vender}
 Puede estar desactivado. En Inventario se ve en gris y su fila lo dice.

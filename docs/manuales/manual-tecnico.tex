@@ -189,6 +189,58 @@ Los productos migrados quedan con stock mínimo cero, así que todo lo que esté
 cero aparece como crítico. Se corrige en Inventario con \textbf{Mínimo por
 categoría}, una categoría a la vez.
 
+\section{Importar las planillas de cobrar y pagar}
+\label{sec:importar}
+
+Las planillas de Excel con que se llevaban las cuentas por cobrar y por pagar
+antes de la pestaña \textbf{Finanzas} se pueden cargar con un script. Es una
+herramienta de una sola vez, como la migración: corre desde el código fuente y las
+planillas no viven en el repositorio, así que se le pasa su ruta.
+
+\begin{lstlisting}
+.venv\Scripts\python scripts\importar_planillas.py --cobrar "C:\ruta\X_COBRAR.xlsx" --pagar "C:\ruta\X_PAGAR.xlsx"
+\end{lstlisting}
+
+Así, \textbf{no escribe nada}: muestra un informe de lo que haría. Se revisa, y
+si está bien se repite el mismo comando con \texttt{--aplicar}. Se puede pasar
+solo una de las dos planillas.
+
+\subsection{Qué dice el informe}
+
+\begin{itemize}
+  \item \textbf{Por cobrar}: cuántas cuentas se crearían, cuántas pagadas y cuáles
+        quedan por cobrar. Las filas \textbf{sin factura} no se importan: una
+        cuenta sin orden detrás exige factura, así que esas órdenes siguen en la
+        planilla hasta que se emitan. El informe las lista con el motivo.
+  \item \textbf{Por pagar}: las facturas distintas, cuáles quedan con saldo y las
+        repetidas que se descartaron (una misma factura aparece en varias hojas).
+        Las filas de cuotas, que no traen proveedor ni número, se cuentan como
+        pagos de la factura de arriba.
+  \item \textbf{Proveedores}: la planilla escribe cada proveedor de varias maneras
+        (``Lub Chile'', ``Lubchile Ltda.'' \ldots). El script las unifica y el
+        informe muestra cada grupo (nombre en la planilla $\rightarrow$ nombre
+        que se usará). Hay que mirarlo: los casos dudosos se dejan separados.
+  \item \textbf{Avisos}: lo que se importa pero conviene revisar, como una factura
+        marcada ``Pagado'' con un abono menor al monto (se toma como pagada
+        completa) o un pago con fecha anterior a la compra.
+\end{itemize}
+
+\subsection{Aplicar y deshacer}
+
+Con \texttt{--aplicar}, antes de escribir se hace un \textbf{respaldo}, y si falla
+no se toca nada; todo entra en \textbf{una sola transacción}. Lo importado queda a
+nombre de un usuario inactivo (\texttt{importacion\_planillas}) y con la
+observación ``Importada de planilla'' más la hoja y la fila de origen. Volver a
+correrlo \textbf{no duplica}: lo que ya existe, por número de factura, se salta.
+
+\begin{lstlisting}
+.venv\Scripts\python scripts\importar_planillas.py --deshacer --aplicar
+\end{lstlisting}
+
+\texttt{--deshacer} saca todo lo importado, con sus pagos, y también pide
+\texttt{--aplicar} para confirmar. Los proveedores creados se dejan, porque no
+llevan marca y pueden tener facturas ingresadas a mano.
+
 \section{Respaldos}
 
 \subsection{Respaldar}
@@ -301,6 +353,26 @@ La batería de pruebas corre contra una base PostgreSQL real:
 Si la base no está levantada, las pruebas que la necesitan se saltan solas en
 vez de fallar.
 
+\section{Versiones}
+
+El sistema numera sus versiones \texttt{MAYOR.MENOR.PARCHE}. El número vive en un
+solo lugar, \texttt{src/version.py}, y de ahí sale el que muestran el inicio de
+sesión, el título de la ventana y la barra de estado.
+
+\begin{itemize}
+  \item \textbf{PARCHE} (1.1.\textbf{1}): corrige errores, sin funciones nuevas.
+  \item \textbf{MENOR} (1.\textbf{2}.0): agrega una función o un módulo sin romper lo
+        anterior.
+  \item \textbf{MAYOR} (\textbf{2}.0.0): un cambio grande, por ejemplo una
+        reestructuración de la base o de cómo se usa el sistema.
+\end{itemize}
+
+El número se cambia \textbf{a mano} al cerrar una versión. Cada una lleva su
+encabezado en las \emph{Notas del parche}, un commit y una etiqueta de git
+(\texttt{v1.1.1}), y se empaqueta después de todo eso, para que los ejecutables
+lleven el número correcto. Si la versión cambia el esquema de la base, hay que
+correr \texttt{actualizar.exe} en el equipo del taller antes de abrirla.
+
 \section{Actualizar a una versión nueva}
 
 Con la base ya en uso, \textbf{no se recrea}: se actualiza. El paso 2 es el que
@@ -375,13 +447,17 @@ que es justamente lo que el sistema anterior no hacía.
   \item El ejecutable abre y muestra la ventana de inicio de sesión.
   \item Se entra con el administrador creado por consola.
   \item Los botones de los diálogos están en español.
-  \item Las siete pestañas abren sin errores.
+  \item Las pestañas abren sin errores: siete para el supervisor y ocho para el
+        administrador, que ve además \textbf{Finanzas} y \textbf{Usuarios}.
   \item Una venta de prueba baja el stock y aparece en el Kardex.
   \item Una orden de prueba se guarda y exporta su PDF.
   \item \texttt{Documentos\textbackslash Lubri-Express\textbackslash} se crea al
         exportar.
   \item \texttt{respaldar.exe} deja un archivo y lo copia a OneDrive.
   \item \texttt{actualizar.exe} dice que el esquema ya está al día.
+  \item El número de versión de la barra de estado es el de la carpeta que se copió.
+  \item Con la sesión de administrador, \textbf{Finanzas} abre sin errores y
+        \textbf{Cerrar sesión} vuelve al inicio de sesión.
   \item Un gasto registrado en \textbf{Caja} aparece en el día correcto ---si
         cayera en el día siguiente, el huso horario del servidor no está
         llegando a la conexión---.
