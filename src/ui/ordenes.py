@@ -8,6 +8,8 @@ Igual que en ventas, la orden se escribe en una sola transacción y son los
 triggers de Postgres los que descuentan el stock y dejan el rastro en el Kardex:
 este módulo nunca toca "stock_actual" (ver database/schema_lubriexpress.sql).
 """
+from html import escape
+
 from PySide6.QtCore import QRegularExpression, Qt, QUrl
 from PySide6.QtGui import (
     QDesktopServices, QImage, QKeySequence, QPageSize, QPdfWriter, QRegularExpressionValidator,
@@ -431,6 +433,13 @@ class OrdenesWidget(QTabWidget):
         mecanico.addWidget(QLabel("Mecánico *"))
         mecanico.addWidget(self.combo_mecanico)
 
+        # El folio de Mercado Público, sobre el mecánico; aparece solo cuando la
+        # orden lo tiene. Ahí no le quita ancho a los datos del vehículo.
+        self.label_folio = QLabel()
+        self.label_folio.setProperty("clase", "tarjeta-texto")
+        self.label_folio.hide()
+        mecanico.insertWidget(0, self.label_folio)
+
         fila_tarjeta = QHBoxLayout(self.tarjeta)
         fila_tarjeta.setContentsMargins(14, 10, 14, 10)
         fila_tarjeta.setSpacing(16)
@@ -555,8 +564,17 @@ class OrdenesWidget(QTabWidget):
         self.folio_flyer.setMaximumWidth(120)
         self.folio_flyer.hide()
 
-        self.folio = QLineEdit(placeholderText="Folio MP")
-        self.folio.setToolTip("Folio de Mercado Público: solo en las órdenes institucionales.")
+        # El folio (el ID de la orden de compra de Mercado Público) se pide en un
+        # diálogo y se ve en la tarjeta del vehículo. El campo de texto sigue
+        # siendo quien lo guarda, pero no se muestra: así el resto de la pantalla
+        # lo lee como siempre.
+        self.folio = QLineEdit(self)
+        self.folio.hide()
+        self.boton_folio = QPushButton("Insertar folio MP")
+        self.boton_folio.setAutoDefault(False)
+        self.boton_folio.setToolTip("Folio de Mercado Público: solo en las órdenes institucionales.")
+        self.boton_folio.clicked.connect(self.pedir_folio)
+        self.folio.textChanged.connect(self._mostrar_folio)
         self.folio.textChanged.connect(self._actualizar_boton_servicio_publico)
         self.pagada = QCheckBox("Pagada")
         self.pagada.toggled.connect(self._cambiar_pago)
@@ -620,7 +638,7 @@ class OrdenesWidget(QTabWidget):
         layout_der.addWidget(self.texto_observaciones, 1)
         layout_der.addWidget(QLabel("5. Descuento, folio y pago"))
         # El folio va con el descuento: en la fila del pago no cabe.
-        layout_der.addLayout(barra(self.tipo_descuento, self.valor_descuento, self.folio_flyer, self.folio,
+        layout_der.addLayout(barra(self.tipo_descuento, self.valor_descuento, self.folio_flyer, self.boton_folio,
                                    estira=2))
         layout_der.addLayout(barra(self.pagada, self.abono, self.combo_medio_pago, estira=1))
         layout_der.addStretch()
@@ -963,6 +981,28 @@ class OrdenesWidget(QTabWidget):
         if pagada:
             self.abono.setValue(0)
         self._actualizar_medio()
+
+    def _mostrar_folio(self, folio: str) -> None:
+        """El folio va en la tarjeta del vehículo, y el botón pasa a cambiarlo."""
+        folio = folio.strip()
+        self.label_folio.setText(f"Folio MP: <b>{escape(folio)}</b>")
+        self.label_folio.setVisible(bool(folio))
+        self.boton_folio.setText("Cambiar folio MP" if folio else "Insertar folio MP")
+
+    def pedir_folio(self) -> None:
+        """Pide el ID de la orden de compra. Vacío, quita el folio, salvo que la
+        orden lleve el Servicio Público, que no existe sin él."""
+        dialogo = DialogoFolioMP(self.folio.text().strip(), self)
+        if dialogo.exec() != QDialog.Accepted:
+            return
+        nuevo = dialogo.folio.text().strip()
+        if not nuevo and self._fila_servicio_publico() is not None:
+            QMessageBox.warning(
+                self, "La orden lleva el Servicio Público",
+                "El Servicio Público es solo de Mercado Público: quítalo de la orden "
+                "antes de borrar el folio.")
+            return
+        self.folio.setText(nuevo)
 
     def _cambiar_folio(self, folio: str) -> None:
         """Una orden de Mercado Público no se cobra acá: el organismo paga la
@@ -1587,6 +1627,32 @@ class OrdenesWidget(QTabWidget):
                 return
 
         self._volver_al_reposo()
+
+
+class DialogoFolioMP(QDialog):
+    """El ID de la orden de compra de Mercado Público. Vacío quita el folio."""
+
+    def __init__(self, actual: str = "", parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Folio de Mercado Público")
+        self.setModal(True)
+        self.setMinimumWidth(380)
+        self.folio = QLineEdit(actual)
+        self.folio.setMaxLength(50)
+        self.folio.setPlaceholderText("Ej: 1001-15-LE26")
+        self.folio.returnPressed.connect(self.accept)
+        ayuda = QLabel("Con folio, la orden se cobra en Finanzas y no se paga aquí."
+                       + (" Déjalo vacío para quitarlo." if actual else ""))
+        ayuda.setProperty("clase", "resumen")
+        ayuda.setWordWrap(True)
+
+        layout = layout_de_dialogo(self)
+        layout.addWidget(QLabel("ID de la orden de compra"))
+        layout.addWidget(self.folio)
+        layout.addWidget(ayuda)
+        layout.addWidget(botonera(self))
+        self.folio.setFocus()
+        self.folio.selectAll()
 
 
 class DialogoServicioPublico(QDialog):

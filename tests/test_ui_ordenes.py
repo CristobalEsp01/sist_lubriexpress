@@ -1024,3 +1024,52 @@ def test_el_dialogo_avisa_cuando_el_total_no_se_puede_lograr_exacto(app):
     dialogo.presupuesto.setValue(20_000)          # el resto ya supera el presupuesto
     assert dialogo.neto.value() == 0
     assert "ya supera" in dialogo.aviso.text()
+
+
+def test_el_folio_mp_se_pide_en_un_dialogo_y_se_ve_en_la_tarjeta(app, taller, sin_modales, monkeypatch):
+    """El botón abre el diálogo; el folio queda visible junto a los datos del
+    vehículo y el botón pasa a cambiarlo. Vacío lo quita, salvo que la orden
+    lleve el Servicio Público."""
+    from PySide6.QtWidgets import QDialog
+
+    from src.ui import ordenes
+    from src.ui.ordenes import DialogoFolioMP
+
+    widget = ordenes.OrdenesWidget()
+    widget.show()
+    widget._iniciar_nueva_orden(taller.vehiculo_id)
+    assert widget.label_folio.isHidden() and widget.boton_folio.text() == "Insertar folio MP"
+    assert not widget.folio.isVisible()          # el campo ya no se muestra
+
+    respuesta = {"texto": "1001-15-LE26", "acepta": True}
+
+    def exec_(self):
+        self.folio.setText(respuesta["texto"])
+        return QDialog.Accepted if respuesta["acepta"] else QDialog.Rejected
+
+    monkeypatch.setattr(DialogoFolioMP, "exec", exec_)
+    widget.boton_folio.click()
+    assert widget.folio.text() == "1001-15-LE26"
+    assert widget.label_folio.isVisible() and "1001-15-LE26" in widget.label_folio.text()
+    assert widget.boton_folio.text() == "Cambiar folio MP"
+    assert not widget.pagada.isEnabled()          # se cobra en Finanzas
+
+    respuesta["acepta"] = False                   # cancelar no cambia nada
+    respuesta["texto"] = "OTRO"
+    widget.boton_folio.click()
+    assert widget.folio.text() == "1001-15-LE26"
+
+    # Con el Servicio Público en la orden, no se puede dejar sin folio.
+    _como("SUPERVISOR", taller)
+    widget._insertar_en_carrito({"servicio_id": taller.servicio_id, "descripcion": "x"},
+                                "Servicio Público – x", 1000, 1)
+    respuesta.update(acepta=True, texto="  ")
+    widget.boton_folio.click()
+    assert widget.folio.text() == "1001-15-LE26" and sin_modales[-1] == "La orden lleva el Servicio Público"
+
+    # Sin él, vacío quita el folio y todo vuelve a como estaba.
+    widget.tabla_carrito.setRowCount(0)
+    widget.boton_folio.click()
+    assert widget.folio.text() == "" and widget.label_folio.isHidden()
+    assert widget.boton_folio.text() == "Insertar folio MP" and widget.pagada.isEnabled()
+    assert DialogoFolioMP("2048-7").folio.text() == "2048-7"
