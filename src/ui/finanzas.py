@@ -6,7 +6,8 @@ los proveedores con su vencimiento. Las reglas y las cifras viven en
 `src/finanzas.py`; acá solo se muestran y se piden los datos.
 
 El supervisor ve el costo de cada cuenta, para revisar que los montos calzan;
-el margen es solo del administrador (permiso "margen").
+el margen es solo del administrador (permiso "margen"), que ve el costo en el
+tooltip del margen: las dos columnas no caben a 960 px.
 """
 from datetime import date
 
@@ -395,8 +396,10 @@ class PorCobrarWidget(QWidget):
             "No hay cuentas con este filtro.",
         )
         self.tabla.itemSelectionChanged.connect(self._al_seleccionar)
-        if not self.ve_margen:
-            self.tabla.setColumnHidden(COLUMNAS_COBRO.index("Margen"), True)
+        # Una de las dos: con Costo y Margen, a 960 px el cliente no se lee. El
+        # administrador ve el margen, con el costo en su tooltip.
+        oculta = "Costo" if self.ve_margen else "Margen"
+        self.tabla.setColumnHidden(COLUMNAS_COBRO.index(oculta), True)
 
         layout = layout_de_pantalla(self)
         layout.setSpacing(ESPACIO_PANTALLA)
@@ -480,6 +483,7 @@ class PorCobrarWidget(QWidget):
         t.item(n, 6).setToolTip(
             f"Total con IVA {'estimado ' if f.estimado else ''}{clp(f.monto)}"
             + ("" if f.estimado else f" · pagado {clp(f.pagado)}"))
+        t.item(n, 8).setToolTip("Costo sin dato" if f.costo is None else f"Costo {clp(f.costo)}")
 
     # -- acciones ------------------------------------------------------
 

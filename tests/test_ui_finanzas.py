@@ -208,6 +208,11 @@ def test_el_supervisor_ve_el_costo_pero_no_el_margen(app, taller):
     dueno = ui.PorCobrarWidget()
     assert not dueno.tabla.isColumnHidden(ui.COLUMNAS_COBRO.index("Margen"))
     assert not dueno.cifras._bloques["margen_mes"].isHidden()
+    # Margen = neto − costo. Con las dos columnas, a 960 px el cliente quedaba
+    # en 73 px; el costo pasa al tooltip del margen.
+    assert dueno.tabla.isColumnHidden(ui.COLUMNAS_COBRO.index("Costo"))
+    fila = elegir(dueno, taller.cuenta_id)
+    assert dueno.tabla.item(fila, ui.COLUMNAS_COBRO.index("Margen")).toolTip() == "Costo $0"
 
 
 def test_un_usuario_normal_no_opera_finanzas(app, taller, sin_modales):

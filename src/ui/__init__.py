@@ -47,7 +47,7 @@ class VentanaPrincipal(QMainWindow):
         self.pestanias.addTab(self.inventario, "Inventario")
         self.pestanias.addTab(self.ventas, "Ventas")
         self.pestanias.addTab(self.clientes, "Clientes")
-        self.pestanias.addTab(self.ordenes, "Órdenes de Trabajo")
+        self.pestanias.addTab(self.ordenes, "Órdenes")
         self.caja = CajaWidget(self)
         self.pestanias.addTab(self.caja, "Caja")
         self.reportes = ReportesWidget(self)

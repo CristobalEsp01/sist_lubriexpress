@@ -251,6 +251,40 @@ def test_main_vuelve_al_login_tras_cerrar_sesion_y_termina_con_la_x(app, monkeyp
     assert main.ejecutar_sesiones(AppFalsa()) == 0
 
 
+def test_en_la_ventana_minima_caben_las_pestanas_del_administrador(sesion):
+    """Con Finanzas y "Cerrar sesión", a 960 px "Usuarios" quedaba detrás de las
+    flechas de scroll de la barra, tapadas por el botón. En otro proceso y con
+    el tema aplicado, que es lo que decide el ancho de cada pestaña."""
+    import subprocess
+    import sys
+
+    from conftest import RAIZ
+
+    usuario_id = sesion("ADMINISTRADOR")
+    script = f"""
+import os
+os.environ["QT_QPA_PLATFORM"] = "offscreen"
+from types import SimpleNamespace
+from PySide6.QtWidgets import QApplication
+app = QApplication([])
+from src.ui import tema
+tema.aplicar(app)
+from src.auth import Sesion
+Sesion.iniciar(SimpleNamespace(id={usuario_id}, nombre="QA", rol="ADMINISTRADOR"))
+from src.ui import VentanaPrincipal
+v = VentanaPrincipal()
+v.resize(960, 640)
+v.show()
+app.processEvents()
+barra = v.pestanias.tabBar()
+print(sum(barra.tabRect(i).width() for i in range(barra.count())) + v.boton_cerrar_sesion.width(), v.width())
+"""
+    salida = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True,
+                            cwd=RAIZ, timeout=60)
+    ocupado, disponible = map(int, salida.stdout.split()[-2:])
+    assert ocupado <= disponible, salida.stderr
+
+
 def test_la_version_se_ve_en_el_login_y_en_la_ventana(app, sesion):
     import re
 
