@@ -27,7 +27,8 @@ from ..auth import Sesion
 from ..database import SessionLocal
 from ..documentos import estado_de_pago, html_de_orden
 from ..models import (
-    Cliente, DetalleOrden, Mecanico, Orden, PagoOrden, Producto, Servicio, Usuario, Vehiculo,
+    Cliente, CuentaPorCobrar, DetalleOrden, Mecanico, Orden, PagoOrden, Producto, Servicio,
+    Usuario, Vehiculo,
 )
 from ..permisos import puede
 from ..precios import iva_de
@@ -559,6 +560,7 @@ class OrdenesWidget(QTabWidget):
         self.folio.textChanged.connect(self._actualizar_boton_servicio_publico)
         self.pagada = QCheckBox("Pagada")
         self.pagada.toggled.connect(self._cambiar_pago)
+        self.folio.textChanged.connect(self._cambiar_folio)
         # El taller cobra por partes: un abono al dejar el auto y el saldo al
         # retirarlo. Acá se anota lo que el cliente paga al cerrar la orden; el
         # resto se registra después, desde el historial.
@@ -961,6 +963,18 @@ class OrdenesWidget(QTabWidget):
         if pagada:
             self.abono.setValue(0)
         self._actualizar_medio()
+
+    def _cambiar_folio(self, folio: str) -> None:
+        """Una orden de Mercado Público no se cobra acá: el organismo paga la
+        factura después, y eso se registra en Finanzas (la base lo exige)."""
+        publica = bool(folio.strip())
+        if publica:
+            self.pagada.setChecked(False)
+            self.abono.setValue(0)
+        self.pagada.setEnabled(not publica)
+        self.abono.setEnabled(not publica and not self.pagada.isChecked())
+        self.pagada.setToolTip(
+            "Orden de Mercado Público: el pago se registra en Finanzas." if publica else "")
 
     def _actualizar_medio(self, *_) -> None:
         cobra = self.pagada.isChecked() or self.abono.value() > 0
@@ -1833,13 +1847,19 @@ class DialogoDetalleOrden(QDialog):
             orden = db.get(Orden, self.orden_id)
             texto = estado_de_pago(orden.estado_pago, orden.monto_pagado, self.total)
             self.saldo, anulada = orden.saldo, orden.estado == "ANULADA"
+            # La de Mercado Público la cobra Finanzas contra su factura.
+            en_finanzas = db.scalar(select(CuentaPorCobrar.id).where(
+                CuentaPorCobrar.orden_id == self.orden_id,
+                CuentaPorCobrar.estado != "ANULADA")) is not None
         self.info.setText(self._cabecera + texto + self._folio)
         # Una orden anulada no tiene qué cobrar: el trabajo no se hizo y su
         # stock volvió a la bodega.
-        self.boton_pago.setEnabled(self.saldo > 0 and not anulada)
+        self.boton_pago.setEnabled(self.saldo > 0 and not anulada and not en_finanzas)
         self.boton_pago.setToolTip(
             "Esta orden está anulada." if anulada
-            else "" if self.saldo > 0 else "No queda saldo por cobrar."
+            else "No queda saldo por cobrar." if self.saldo <= 0
+            else "Orden de Mercado Público: el pago se registra en Finanzas." if en_finanzas
+            else ""
         )
 
     def registrar_pago(self) -> None:

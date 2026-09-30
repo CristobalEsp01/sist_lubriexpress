@@ -14,7 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from src import finanzas
 from src.models import (
     Cliente, CuentaPorCobrar, DetalleOrden, DetalleVenta, FacturaProveedor, Orden,
-    PagoCobro, PagoProveedor, Producto, Proveedor, Servicio, Usuario, Vehiculo, Venta,
+    PagoCobro, PagoOrden, PagoProveedor, Producto, Proveedor, Servicio, Usuario, Vehiculo, Venta,
 )
 
 
@@ -156,6 +156,23 @@ def test_anular_la_orden_anula_la_cuenta_solo_si_no_hay_factura(db, datos):
 
     assert cuenta_de(db, sin_factura).estado == "ANULADA"
     assert cuenta_de(db, facturada).estado == "POR_COBRAR"   # una nota de crédito, a mano
+
+
+def test_quitar_el_folio_anula_la_cuenta_y_volver_a_ponerlo_la_revive(db, datos):
+    """Sin esto la cuenta quedaba "por facturar" para siempre, con una OC que
+    la orden ya no tiene."""
+    usuario, _, vehiculo = datos
+    orden = orden_de(db, usuario, vehiculo, folio_mercado_publico="Q-1")
+
+    orden.folio_mercado_publico = None
+    db.flush()
+    db.refresh(cuenta := cuenta_de(db, orden))
+    assert cuenta.estado == "ANULADA"
+
+    orden.folio_mercado_publico = "Q-2"
+    db.flush()
+    db.refresh(cuenta)
+    assert (cuenta.estado, cuenta.numero_oc) == ("PENDIENTE_FACTURA", "Q-2")
 
 
 def test_las_ordenes_que_ya_existian_no_abren_cuenta(db, datos):
@@ -318,6 +335,37 @@ def test_un_pago_de_mas_no_se_rechaza_y_salda_la_cuenta(db, datos):
     assert (cuenta.estado, cuenta.saldo) == ("PAGADA", 0)
 
 
+def test_pagar_la_cuenta_paga_la_orden_y_editar_el_total_no_lo_deshace(db, datos):
+    """El pago de Mercado Público se registra en Finanzas: la orden lo refleja
+    sin un abono propio, que la caja contaría como plata del día."""
+    usuario, _, vehiculo = datos
+    orden = orden_de(db, usuario, vehiculo, folio_mercado_publico="P-1",
+                     total_final=119000, impuesto=19000)
+    cuenta = cuenta_de(db, orden)
+    finanzas.registrar_factura(db, cuenta, "702", date(2026, 9, 1), usuario.id)
+    finanzas.registrar_pago_cobro(db, cuenta, 119000, date(2026, 9, 20), usuario.id)
+    db.refresh(orden)
+    assert orden.estado_pago is True and orden.saldo == 0
+
+    orden.total_final = 120000
+    db.flush()
+    db.refresh(orden)
+    assert orden.estado_pago is True
+
+
+def test_una_orden_con_cuenta_por_cobrar_no_acepta_pagos_en_ordenes(db, datos):
+    usuario, _, vehiculo = datos
+    publica = orden_de(db, usuario, vehiculo, folio_mercado_publico="P-2", total_final=1000)
+    rechazada(db, lambda: db.add(PagoOrden(orden_id=publica.id, usuario_id=usuario.id,
+                                           monto=1000, medio_pago="TRANSFERENCIA")))
+
+    particular = orden_de(db, usuario, vehiculo, total_final=1000)
+    db.add(PagoOrden(orden_id=particular.id, usuario_id=usuario.id, monto=1000))
+    db.flush()
+    db.refresh(particular)
+    assert particular.estado_pago is True
+
+
 def test_no_se_abona_lo_que_aun_no_tiene_factura(db, datos):
     usuario, _, vehiculo = datos
     pendiente = cuenta_de(db, orden_de(db, usuario, vehiculo, folio_mercado_publico="C-1"))
@@ -430,6 +478,17 @@ def test_el_listado_muestra_lo_estimado_antes_de_facturar_y_lo_congelado_despues
     finanzas.registrar_factura(db, cuenta, "10", date(2026, 8, 1), usuario.id)
     despues, = suyas(finanzas.cuentas_por_cobrar(db, date(2026, 9, 11)), cuenta)
     assert (despues.estimado, despues.saldo, despues.dias_mora) == (False, 119000, 11)
+
+
+def test_una_orden_abierta_aparece_por_facturar_recien_al_entregarla(db, datos):
+    usuario, _, vehiculo = datos
+    orden = orden_de(db, usuario, vehiculo, folio_mercado_publico="L-2", estado="ABIERTA")
+    cuenta = cuenta_de(db, orden)
+    assert suyas(finanzas.cuentas_por_cobrar(db), cuenta) == []
+
+    orden.estado = "ENTREGADA"
+    db.flush()
+    assert [f.estado for f in suyas(finanzas.cuentas_por_cobrar(db), cuenta)] == ["PENDIENTE_FACTURA"]
 
 
 def test_el_resumen_suma_saldos_morosos_pendientes_y_margen_del_mes(db, datos):

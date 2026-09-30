@@ -216,9 +216,7 @@ def test_lo_que_queda_en_el_carrito_es_lo_que_se_guarda(app, taller, sin_modales
     widget.valor_descuento.setValue(10)
     assert widget.totales.descuento.text() == "- $5.370"
     assert widget.total.text() == "$57.510"           # 48.330 + 9.183 = 57.513
-    widget.folio.setText("MP-2026-001")
-    widget.pagada.setChecked(True)
-    widget.combo_medio_pago.setCurrentText("Efectivo")
+    widget.folio.setText("MP-2026-001")     # se cobra en Finanzas, no acá
 
     # Soltar la selección apaga el botón. Qt conserva la celda actual, así que
     # preguntar por currentRow() lo dejaba encendido sobre una fila que ya no
@@ -255,7 +253,7 @@ def test_lo_que_queda_en_el_carrito_es_lo_que_se_guarda(app, taller, sin_modales
                 int(orden.impuesto), int(orden.ajuste_redondeo), int(orden.total_final)
                 ) == (53700, 10, 0, 9183, -3, 57510)
         assert orden.descuento_aplicado == 5370
-        assert (orden.folio_mercado_publico, orden.estado_pago) == ("MP-2026-001", True)
+        assert (orden.folio_mercado_publico, orden.estado_pago) == ("MP-2026-001", False)
 
         detalles = db.scalars(
             select(DetalleOrden).where(DetalleOrden.orden_id == orden.id).order_by(DetalleOrden.id)
@@ -485,6 +483,43 @@ def test_la_orden_se_cierra_con_un_abono_y_el_saldo_se_cobra_despues(app, taller
         orden = db.get(Orden, orden_id)
         assert orden.estado_pago and orden.monto_pagado == 15350
         assert [p.medio_pago for p in orden.pagos] == ["EFECTIVO", "TARJETA"]
+
+
+def test_una_orden_de_mercado_publico_se_cobra_en_finanzas(app, taller, sin_modales):
+    """El organismo paga la factura semanas después, por transferencia, y eso se
+    anota en Finanzas. Cobrarla acá metería esa plata en la caja del día y la
+    cuenta seguiría figurando por cobrar."""
+    from datetime import date
+
+    from src import finanzas
+    from src.ui import ordenes
+
+    widget = ordenes.OrdenesWidget()
+    widget._iniciar_nueva_orden(taller.vehiculo_id)
+    widget.agregar_al_carrito(taller.producto_id, 1)
+    elegir_mecanico(widget, taller)
+    widget.spin_kilometraje.setValue(120000)
+    widget.pagada.setChecked(True)
+    widget.folio.setText("MP-COBRO-1")
+    assert not widget.pagada.isChecked() and not widget.pagada.isEnabled()
+    assert not widget.abono.isEnabled() and "Finanzas" in widget.pagada.toolTip()
+    widget.folio.setText("")
+    assert widget.pagada.isEnabled() and widget.abono.isEnabled()
+    widget.folio.setText("MP-COBRO-1")
+    widget.guardar_orden()
+
+    with SessionLocal() as db:
+        orden_id = db.scalar(select(Orden.id).where(Orden.vehiculo_id == taller.vehiculo_id))
+    dialogo = ordenes.DialogoDetalleOrden(orden_id, widget)
+    assert not dialogo.boton_pago.isEnabled() and "Finanzas" in dialogo.boton_pago.toolTip()
+
+    with SessionLocal() as db:
+        cuenta = db.scalar(select(CuentaPorCobrar).where(CuentaPorCobrar.orden_id == orden_id))
+        finanzas.registrar_factura(db, cuenta, "QA-1", date.today(), taller.usuario_id)
+        finanzas.registrar_pago_cobro(db, cuenta, cuenta.monto, date.today(), taller.usuario_id)
+        db.commit()
+    dialogo._refrescar_pago()
+    assert "Pagada" in dialogo.info.text()
 
 
 def test_desde_el_historial_el_aviso_por_whatsapp_cita_el_numero_de_la_orden(app, taller,

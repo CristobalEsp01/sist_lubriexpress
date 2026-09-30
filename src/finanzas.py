@@ -167,7 +167,11 @@ def _fila_cobro(cuenta: CuentaPorCobrar, hoy: date) -> FilaCobro:
 
 
 def cuentas_por_cobrar(db, hoy: date | None = None) -> list[FilaCobro]:
-    """Todas las cuentas, las más antiguas primero; la pantalla filtra por estado."""
+    """Todas las cuentas, las más antiguas primero; la pantalla filtra por estado.
+
+    La de una orden que sigue en el taller no aparece: se factura una vez
+    entregada, y hasta entonces su monto todavía puede cambiar.
+    """
     hoy = hoy or date.today()
     cuentas = db.scalars(
         select(CuentaPorCobrar)
@@ -177,7 +181,8 @@ def cuentas_por_cobrar(db, hoy: date | None = None) -> list[FilaCobro]:
                  .selectinload(Vehiculo.cliente))
         .order_by(CuentaPorCobrar.id)
     ).all()
-    return [_fila_cobro(cuenta, hoy) for cuenta in cuentas]
+    return [_fila_cobro(cuenta, hoy) for cuenta in cuentas
+            if cuenta.estado != "PENDIENTE_FACTURA" or cuenta.orden.estado == "ENTREGADA"]
 
 
 def resumen_por_cobrar(filas: list[FilaCobro], hoy: date | None = None) -> dict[str, int]:

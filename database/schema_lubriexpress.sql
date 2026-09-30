@@ -637,13 +637,16 @@ CREATE TRIGGER trg_pagos_orden_estado
 -- entregarla— lo abonado ya no alcanza, y el estado tiene que decirlo. Sin
 -- esto, una orden abierta que se pagó al dejar el auto seguiría marcada como
 -- pagada después de cargarle un repuesto más.
+-- Una orden de Mercado Público no tiene abonos: la paga su cuenta por cobrar
+-- (trigger de las cuentas por cobrar), y eso tampoco lo deshace el total.
 CREATE OR REPLACE FUNCTION fn_estado_pago_al_cambiar_total() RETURNS TRIGGER AS $$
 BEGIN
   NEW."estado_pago" := (
     SELECT COALESCE(SUM(p."monto"), 0) >= NEW."total_final"
       FROM "pagos_orden" p
      WHERE p."orden_id" = NEW."id"
-  );
+  ) OR EXISTS (SELECT 1 FROM "cuentas_por_cobrar" c
+                WHERE c."orden_id" = NEW."id" AND c."estado" = 'PAGADA');
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
@@ -742,13 +745,15 @@ CREATE TRIGGER trg_ordenes_folio_servicio_publico
 -- mira lo que pasa desde ahora: las órdenes que ya existían no generan cuenta,
 -- porque cuáles siguen pendientes lo decide el taller, ingresándolas a mano.
 -- Si el folio cambia antes de facturar, la cuenta lo sigue; ya facturada, no.
+-- Una cuenta anulada porque le quitaron el folio vuelve si se lo ponen de
+-- nuevo (la de una orden anulada no: el WHEN no deja pasar esas órdenes).
 CREATE OR REPLACE FUNCTION fn_alta_cuenta_cobrar() RETURNS TRIGGER AS $$
 BEGIN
   INSERT INTO "cuentas_por_cobrar" ("orden_id", "numero_oc")
   VALUES (NEW."id", NEW."folio_mercado_publico")
   ON CONFLICT ("orden_id") DO UPDATE
-     SET "numero_oc" = EXCLUDED."numero_oc"
-   WHERE "cuentas_por_cobrar"."estado" = 'PENDIENTE_FACTURA';
+     SET "numero_oc" = EXCLUDED."numero_oc", "estado" = 'PENDIENTE_FACTURA'
+   WHERE "cuentas_por_cobrar"."estado" IN ('PENDIENTE_FACTURA', 'ANULADA');
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
@@ -776,6 +781,46 @@ CREATE TRIGGER trg_ordenes_anula_cuenta_cobrar
   FOR EACH ROW
   WHEN (NEW."estado" = 'ANULADA' AND OLD."estado" IS DISTINCT FROM 'ANULADA')
   EXECUTE FUNCTION fn_anular_cuenta_cobrar();
+
+-- Lo mismo si le quitan el folio: ya no es de Mercado Público, y la cuenta
+-- quedaría esperando una factura que nadie va a emitir.
+CREATE TRIGGER trg_ordenes_quita_folio_cuenta_cobrar
+  AFTER UPDATE OF "folio_mercado_publico" ON "ordenes"
+  FOR EACH ROW
+  WHEN (NEW."folio_mercado_publico" IS NULL OR NEW."folio_mercado_publico" = '')
+  EXECUTE FUNCTION fn_anular_cuenta_cobrar();
+
+-- El pago de una orden de Mercado Público se registra en Finanzas: cuando su
+-- cuenta queda pagada, la orden también. En Órdenes no se le registran abonos
+-- (trigger de abajo), porque entrarían a la caja del día y la cuenta seguiría
+-- figurando por cobrar.
+CREATE OR REPLACE FUNCTION fn_orden_pagada_por_cuenta() RETURNS TRIGGER AS $$
+BEGIN
+  UPDATE "ordenes" SET "estado_pago" = TRUE WHERE "id" = NEW."orden_id";
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_cuentas_por_cobrar_paga_orden
+  AFTER UPDATE OF "estado" ON "cuentas_por_cobrar"
+  FOR EACH ROW
+  WHEN (NEW."estado" = 'PAGADA' AND NEW."orden_id" IS NOT NULL)
+  EXECUTE FUNCTION fn_orden_pagada_por_cuenta();
+
+CREATE OR REPLACE FUNCTION fn_pago_orden_sin_cuenta() RETURNS TRIGGER AS $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM "cuentas_por_cobrar"
+              WHERE "orden_id" = NEW."orden_id" AND "estado" <> 'ANULADA') THEN
+    RAISE EXCEPTION USING ERRCODE = 'check_violation',
+      MESSAGE = 'La orden ' || NEW."orden_id" || ' es de Mercado Público: su pago se registra en Finanzas.';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_pagos_orden_sin_cuenta
+  BEFORE INSERT ON "pagos_orden"
+  FOR EACH ROW EXECUTE FUNCTION fn_pago_orden_sin_cuenta();
 
 -- Solo se abona una cuenta facturada y sin saldar; el pago que la completa la
 -- pasa a PAGADA. Un pago de más no se rechaza: los organismos a veces pagan

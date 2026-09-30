@@ -45,10 +45,13 @@ consola de psql abierta.
 | `trg_kardex_movimiento_manual` | `INSERT` en `kardex_movimientos` de tipo `ENTRADA` o `AJUSTE_MANUAL` | Mueve el stock y calcula `stock_resultante` |
 | `trg_detalle_ordenes_devolucion` | `DELETE` en `detalle_ordenes` con `producto_id` | Devuelve el stock y escribe `DEVOLUCION_ORDEN` en el Kardex |
 | `trg_pagos_orden_estado` | `INSERT` en `pagos_orden` | Recalcula `ordenes.estado_pago` con la suma de los abonos |
-| `trg_ordenes_estado_pago` | `UPDATE` de `ordenes.total_final` | Recalcula `estado_pago`: si el total creció, lo abonado ya no alcanza |
+| `trg_ordenes_estado_pago` | `UPDATE` de `ordenes.total_final` | Recalcula `estado_pago`: si el total creció, lo abonado ya no alcanza. Una orden cuya cuenta por cobrar está `PAGADA` sigue pagada |
 | `trg_detalle_ordenes_costo` / `trg_detalle_ventas_costo` | `INSERT` en `detalle_ordenes` / `detalle_ventas` | Copia `productos.precio_costo` a `costo_unitario` de la línea, si no trae uno. Los servicios quedan en `NULL` |
-| `trg_ordenes_alta_cuenta_cobrar` | `INSERT` en `ordenes`, o `UPDATE` de `folio_mercado_publico`, con folio | Abre la cuenta por cobrar de la orden en `PENDIENTE_FACTURA`; antes de facturar, la sigue si el folio cambia |
+| `trg_ordenes_alta_cuenta_cobrar` | `INSERT` en `ordenes`, o `UPDATE` de `folio_mercado_publico`, con folio | Abre la cuenta por cobrar de la orden en `PENDIENTE_FACTURA`; antes de facturar, la sigue si el folio cambia, y la revive si estaba anulada por falta de folio |
 | `trg_ordenes_anula_cuenta_cobrar` | `UPDATE` de `ordenes.estado` a `ANULADA` | Anula la cuenta si aún no tiene factura |
+| `trg_ordenes_quita_folio_cuenta_cobrar` | `UPDATE` de `folio_mercado_publico` a vacío | Igual: anula la cuenta si aún no tiene factura |
+| `trg_cuentas_por_cobrar_paga_orden` | `UPDATE` de `cuentas_por_cobrar.estado` a `PAGADA`, con orden | Pasa `ordenes.estado_pago` a `TRUE` |
+| `trg_pagos_orden_sin_cuenta` | `INSERT` en `pagos_orden` | Lo rechaza si la orden tiene una cuenta por cobrar no anulada: ese pago se registra en Finanzas |
 | `trg_pagos_cobro_abono` | `INSERT` en `pagos_cobro` | Rechaza el pago si la cuenta no está `POR_COBRAR`; si los abonos completan el monto, la pasa a `PAGADA` |
 | `trg_detalle_ordenes_servicio_publico` | `INSERT` en `detalle_ordenes` de un servicio con `precio_variable` | Lo rechaza si la orden no tiene folio de Mercado Público, si la cantidad no es 1 o si la orden ya lo tiene |
 | `trg_ordenes_folio_servicio_publico` | `UPDATE` de `folio_mercado_publico` a vacío | Lo rechaza si la orden lleva el servicio de precio variable: primero se quita la línea |
@@ -218,7 +221,14 @@ no mueve lo facturado. Solo cuenta lo que pasa desde que existe el trigger; las
 - **Una factura que cubre dos órdenes** repite su número en cada cuenta; no hay
   tabla de facturas que las agrupe.
 - **Anular la orden** anula la cuenta solo si aún no tiene factura. Con factura
-  emitida, deshacerla es una nota de crédito y lo decide una persona.
+  emitida, deshacerla es una nota de crédito y lo decide una persona. Quitarle el
+  folio hace lo mismo, y ponérselo de nuevo la revive.
+- **La orden se paga en Finanzas.** Una orden con cuenta por cobrar no admite
+  abonos en `pagos_orden`: entrarían a la caja del día y la cuenta seguiría por
+  cobrar. Cuando la cuenta queda `PAGADA`, la orden pasa a pagada.
+- **El listado muestra la cuenta al entregar la orden.** Mientras la orden sigue
+  `ABIERTA` su cuenta existe, pero `finanzas.cuentas_por_cobrar` no la devuelve:
+  todavía no hay nada que facturar.
 
 **Los abonos deciden el estado**, como en las órdenes: `pagos_cobro` y
 `pagos_proveedor` solo se agregan, y el trigger pasa la cuenta a `PAGADA` cuando lo

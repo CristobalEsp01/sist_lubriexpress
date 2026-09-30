@@ -84,22 +84,21 @@ CREATE TRIGGER trg_detalle_ordenes_devolucion
   EXECUTE FUNCTION fn_devolver_stock_orden();
 '''
 
-ESTADO_PAGO_AL_CAMBIAR_TOTAL = '''
--- Y al revés: si cambia el total de una orden —se le agregó una línea antes de
--- entregarla— lo abonado ya no alcanza, y el estado tiene que decirlo. Sin
--- esto, una orden abierta que se pagó al dejar el auto seguiría marcada como
--- pagada después de cargarle un repuesto más.
+FN_ESTADO_PAGO_AL_CAMBIAR_TOTAL = '''
 CREATE OR REPLACE FUNCTION fn_estado_pago_al_cambiar_total() RETURNS TRIGGER AS $$
 BEGIN
   NEW."estado_pago" := (
     SELECT COALESCE(SUM(p."monto"), 0) >= NEW."total_final"
       FROM "pagos_orden" p
      WHERE p."orden_id" = NEW."id"
-  );
+  ) OR EXISTS (SELECT 1 FROM "cuentas_por_cobrar" c
+                WHERE c."orden_id" = NEW."id" AND c."estado" = 'PAGADA');
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+'''
 
+ESTADO_PAGO_AL_CAMBIAR_TOTAL = FN_ESTADO_PAGO_AL_CAMBIAR_TOTAL + '''
 CREATE TRIGGER trg_ordenes_estado_pago
   BEFORE UPDATE OF "total_final" ON "ordenes"
   FOR EACH ROW
@@ -127,18 +126,20 @@ CREATE TRIGGER trg_detalle_ventas_costo
   FOR EACH ROW EXECUTE FUNCTION fn_congelar_costo();
 '''
 
-ALTA_CUENTA_COBRAR = '''
+FN_ALTA_CUENTA_COBRAR = '''
 CREATE OR REPLACE FUNCTION fn_alta_cuenta_cobrar() RETURNS TRIGGER AS $$
 BEGIN
   INSERT INTO "cuentas_por_cobrar" ("orden_id", "numero_oc")
   VALUES (NEW."id", NEW."folio_mercado_publico")
   ON CONFLICT ("orden_id") DO UPDATE
-     SET "numero_oc" = EXCLUDED."numero_oc"
-   WHERE "cuentas_por_cobrar"."estado" = 'PENDIENTE_FACTURA';
+     SET "numero_oc" = EXCLUDED."numero_oc", "estado" = 'PENDIENTE_FACTURA'
+   WHERE "cuentas_por_cobrar"."estado" IN ('PENDIENTE_FACTURA', 'ANULADA');
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+'''
 
+ALTA_CUENTA_COBRAR = FN_ALTA_CUENTA_COBRAR + '''
 CREATE TRIGGER trg_ordenes_alta_cuenta_cobrar
   AFTER INSERT OR UPDATE OF "folio_mercado_publico" ON "ordenes"
   FOR EACH ROW
@@ -162,6 +163,46 @@ CREATE TRIGGER trg_ordenes_anula_cuenta_cobrar
   FOR EACH ROW
   WHEN (NEW."estado" = 'ANULADA' AND OLD."estado" IS DISTINCT FROM 'ANULADA')
   EXECUTE FUNCTION fn_anular_cuenta_cobrar();
+'''
+
+QUITA_FOLIO_CUENTA_COBRAR = '''
+CREATE TRIGGER trg_ordenes_quita_folio_cuenta_cobrar
+  AFTER UPDATE OF "folio_mercado_publico" ON "ordenes"
+  FOR EACH ROW
+  WHEN (NEW."folio_mercado_publico" IS NULL OR NEW."folio_mercado_publico" = '')
+  EXECUTE FUNCTION fn_anular_cuenta_cobrar();
+'''
+
+CUENTA_PAGADA_PAGA_ORDEN = '''
+CREATE OR REPLACE FUNCTION fn_orden_pagada_por_cuenta() RETURNS TRIGGER AS $$
+BEGIN
+  UPDATE "ordenes" SET "estado_pago" = TRUE WHERE "id" = NEW."orden_id";
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_cuentas_por_cobrar_paga_orden
+  AFTER UPDATE OF "estado" ON "cuentas_por_cobrar"
+  FOR EACH ROW
+  WHEN (NEW."estado" = 'PAGADA' AND NEW."orden_id" IS NOT NULL)
+  EXECUTE FUNCTION fn_orden_pagada_por_cuenta();
+'''
+
+PAGO_ORDEN_SIN_CUENTA = '''
+CREATE OR REPLACE FUNCTION fn_pago_orden_sin_cuenta() RETURNS TRIGGER AS $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM "cuentas_por_cobrar"
+              WHERE "orden_id" = NEW."orden_id" AND "estado" <> 'ANULADA') THEN
+    RAISE EXCEPTION USING ERRCODE = 'check_violation',
+      MESSAGE = 'La orden ' || NEW."orden_id" || ' es de Mercado Público: su pago se registra en Finanzas.';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_pagos_orden_sin_cuenta
+  BEFORE INSERT ON "pagos_orden"
+  FOR EACH ROW EXECUTE FUNCTION fn_pago_orden_sin_cuenta();
 '''
 
 ABONO_CUENTA_COBRAR = '''
@@ -801,6 +842,20 @@ INSERT INTO "servicios" ("nombre", "categoria", "precio_venta", "activo", "preci
         """,
         sql=VALIDA_SERVICIO_PUBLICO + FOLIO_CON_SERVICIO_PUBLICO,
         declara=(VALIDA_SERVICIO_PUBLICO, FOLIO_CON_SERVICIO_PUBLICO),
+    ),
+    # Reemplaza dos funciones que ya existían en una base con la 1.1.0; por eso
+    # van sin su trigger, que sigue siendo el mismo.
+    Paso(
+        nombre="cuentas_por_cobrar.pago_en_finanzas",
+        comprobacion="""
+            SELECT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_ordenes_quita_folio_cuenta_cobrar')
+               AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_cuentas_por_cobrar_paga_orden')
+               AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_pagos_orden_sin_cuenta')
+        """,
+        sql=(FN_ALTA_CUENTA_COBRAR + FN_ESTADO_PAGO_AL_CAMBIAR_TOTAL + QUITA_FOLIO_CUENTA_COBRAR
+             + CUENTA_PAGADA_PAGA_ORDEN + PAGO_ORDEN_SIN_CUENTA),
+        declara=(FN_ALTA_CUENTA_COBRAR, FN_ESTADO_PAGO_AL_CAMBIAR_TOTAL, QUITA_FOLIO_CUENTA_COBRAR,
+                 CUENTA_PAGADA_PAGA_ORDEN, PAGO_ORDEN_SIN_CUENTA),
     ),
 ]
 
