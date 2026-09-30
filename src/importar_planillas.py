@@ -252,9 +252,26 @@ def unificar_proveedores(nombres: list[str]) -> dict[str, str]:
     return {nombre: elegido[clave_de_proveedor(nombre)] for nombre in nombres}
 
 
+def _pagos_en_cuotas(monto: int, filas: list, aviso) -> tuple[tuple[int, date], ...]:
+    """Cada fila (abono, fecha, estado) es un pago; si la última dice pagado, lo
+    que falte se suma a ese pago, igual que con una sola fila."""
+    pagos, restante = [], monto
+    for abono, pago, _ in filas:
+        if abono and pago and restante > 0:
+            pagos.append((min(abono, restante), pago))
+            restante -= pagos[-1][0]
+    if restante and pagos and filas[-1][2] == "pagado":
+        aviso(f"figura pagada pero las cuotas suman {monto - restante:,} de {monto:,}: se toma "
+              "como pagada completa".replace(",", "."))
+        pagos[-1] = (pagos[-1][0] + restante, pagos[-1][1])
+    return tuple(pagos)
+
+
 def _pagos_de(estado: str | None, monto: int, abono: int | None, pago: date | None,
-              aviso) -> tuple[tuple[int, date], ...]:
+              aviso, cuotas=()) -> tuple[tuple[int, date], ...]:
     """Qué se pagó, según el ESTADO que la planilla escribió a mano."""
+    if cuotas:
+        return _pagos_en_cuotas(monto, [(abono, pago, estado), *cuotas], aviso)
     if estado == "pagado":
         if pago is None:
             aviso("figura pagada sin fecha de pago: queda pendiente")
@@ -277,9 +294,15 @@ def _pagos_de(estado: str | None, monto: int, abono: int | None, pago: date | No
 
 
 def leer_por_pagar(ruta) -> Lectura:
-    """Una factura por cada (proveedor, número), con sus pagos."""
+    """Una factura por cada (proveedor, número), con sus pagos.
+
+    Un pago en cuotas se anota como la factura con su primer abono y, debajo,
+    filas sin proveedor ni factura con el abono y la fecha de cada cuota: esas
+    filas son pagos de la última factura leída en la hoja.
+    """
     lectura = Lectura()
     crudas = []
+    cuotas: dict[int, list] = defaultdict(list)     # índice en crudas -> (abono, fecha, estado)
     for hoja, filas in leer_hojas(ruta).items():
         cabecera = _encabezados(filas, "PROVEEDOR")
         if cabecera is None:
@@ -290,6 +313,7 @@ def leer_por_pagar(ruta) -> Lectura:
         if faltan:
             lectura.avisos.append(f"Hoja {hoja}: faltan las columnas {', '.join(faltan)}.")
             continue
+        ultima = None
         for fila, celdas in filas:
             if fila <= primera:
                 continue
@@ -297,13 +321,17 @@ def leer_por_pagar(ruta) -> Lectura:
                 return celdas.get(col[nombre]) if nombre in col else None
             proveedor, factura = texto(dato("PROVEEDOR")), numero_de_factura(dato("FACTURA"))
             monto = entero(dato("MONTO"))
+            estado = (texto(dato("ESTADO")) or "").lower() or None
             if proveedor is None and factura is None:
-                if monto:
+                abono, pago = entero(dato("ABONO")), fecha(dato("FECHA PAGO"))
+                if ultima is not None and abono and pago:
+                    cuotas[ultima].append((abono, pago, estado))
+                elif monto:
                     lectura.omitidas.append(Omitida(
                         hoja, fila, "sin proveedor ni factura",
                         f"monto {monto:,} · probablemente la cuota de otra factura".replace(",", ".")))
                 continue
-            estado = (texto(dato("ESTADO")) or "").lower() or None
+            ultima = None
             detalle = f"{proveedor or '?'} · factura {factura or '?'}"
             if estado and estado.startswith("nota de cr"):
                 lectura.omitidas.append(Omitida(hoja, fila, "nota de crédito", detalle))
@@ -318,10 +346,11 @@ def leer_por_pagar(ruta) -> Lectura:
             crudas.append((hoja, fila, proveedor, factura, compra, fecha(dato("FECHA CREDITO")),
                            monto, entero(dato("ABONO")), fecha(dato("FECHA PAGO")), estado,
                            texto(dato("OBSERVACIONES"))))
+            ultima = len(crudas) - 1
 
     nombres = unificar_proveedores([c[2] for c in crudas])
     vistas: dict[tuple[str, str], FacturaLeida] = {}
-    for hoja, fila, proveedor, factura, compra, vence, monto, abono, pago, estado, obs in crudas:
+    for i, (hoja, fila, proveedor, factura, compra, vence, monto, abono, pago, estado, obs) in enumerate(crudas):
         unico = nombres[proveedor]
         clave = (clave_de_proveedor(proveedor), factura)
         detalle = f"{unico} · factura {factura}"
@@ -345,7 +374,7 @@ def leer_por_pagar(ruta) -> Lectura:
         elif vence < compra:
             aviso("el crédito vence antes de la compra: se dejó igual a la compra")
             vence = compra
-        pagos = _pagos_de(estado, monto, abono, pago, aviso)
+        pagos = _pagos_de(estado, monto, abono, pago, aviso, cuotas.get(i, ()))
         if pagos and pagos[0][1] < compra:
             aviso("pagada antes de la fecha de compra (¿año mal escrito?): se importó igual")
         notas = [obs] if obs else []

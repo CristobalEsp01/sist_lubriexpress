@@ -167,6 +167,28 @@ def test_por_pagar_unifica_proveedores_y_junta_repetidas(planilla_pagar):
     assert any("sin fecha de crédito" in a for a in lectura.avisos)
 
 
+def test_las_cuotas_en_filas_sueltas_son_pagos_de_la_factura_de_arriba(tmp_path):
+    """Así anota la planilla un pago en cuotas: la factura con su primer abono y,
+    debajo, filas sin proveedor ni factura con el saldo, el abono y la fecha.
+    Descartarlas dejaba la factura con deuda (REFAX 3620384, $1.135.418)."""
+    ruta = tmp_path / "cuotas.xlsx"
+    compra = date(2025, 1, 4)
+    hacer_xlsx(ruta, {"2025": [
+        PAGAR,
+        ["REFAX", "3620384", compra, date(2025, 2, 3), 1703042, 567624, date(2025, 2, 13), "Abono", "Cuota 1/3"],
+        [None, None, None, date(2025, 3, 3), 1135418, 585418, date(2025, 3, 10), "Abono", "Cuota 2/3"],
+        [None, None, None, date(2025, 4, 3), 550000, 500000, date(2025, 4, 9), "abono", "Cuota 3/3"],
+        ["Liqui Moly", "505067", compra, date(2025, 2, 3), 1107102, 607102, date(2025, 2, 13), "Pagado", None],
+        [None, None, None, None, 500000, 500000, date(2025, 8, 4), "Pagado", None],
+    ]})
+    lectura = imp.leer_por_pagar(ruta)
+    pagos = {f.numero: f.pagos for f in lectura.items}
+    assert pagos["3620384"] == ((567624, date(2025, 2, 13)), (585418, date(2025, 3, 10)),
+                                (500000, date(2025, 4, 9)))
+    assert pagos["505067"] == ((607102, date(2025, 2, 13)), (500000, date(2025, 8, 4)))
+    assert lectura.omitidas == [] and lectura.avisos == []
+
+
 def test_aplicar_por_pagar_crea_proveedor_facturas_y_pagos(db, planilla_pagar):
     ruta, nombre = planilla_pagar
     plan = imp.planificar_por_pagar(db, imp.leer_por_pagar(ruta))
