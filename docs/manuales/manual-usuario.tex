@@ -81,7 +81,9 @@ Crear usuarios, asignar roles y registrar mecánicos & --- & --- & Sí \\
 Todos los precios del catálogo —productos y servicios— se guardan \textbf{sin
 IVA}. El impuesto se calcula al cobrar, se muestra desglosado y queda guardado
 en la boleta o en la orden. Por eso, al crear un producto, el formulario pide el
-precio neto y muestra al lado cuánto es con IVA.
+precio neto y muestra al lado cuánto es con IVA. La excepción es la lista de
+Inventario, que en su última columna (\emph{Venta c/IVA}) muestra lo que paga
+el cliente, para no tener que sumar el impuesto de cabeza.
 
 \section{Inventario}
 
@@ -139,6 +141,13 @@ una sola vez.}
 
 Recién al confirmar se mueve el stock, y queda una entrada en el Kardex por cada
 producto.
+
+Luego el sistema pregunta si se quiere \textbf{registrar la factura de la
+compra en Finanzas}. Con \emph{Sí} se abre la ventana de nueva factura de
+proveedor (sección~\ref{sec:por-pagar}) con el total ya propuesto: el costo de
+lo ingresado más IVA. Ese total es solo una sugerencia; se corrige con el de la
+factura. Con \emph{No} no pasa nada más, y en ningún caso se deshace el
+ingreso.
 
 El costo que se escriba pasa a ser el del producto en el catálogo, y además
 queda guardado en esa entrada del Kardex. Por eso, meses después, el historial
@@ -635,6 +644,7 @@ ventana es angosta, la columna de costo se oculta y el costo aparece al dejar el
 mouse sobre el margen.
 
 \subsection{Por pagar}
+\label{sec:por-pagar}
 
 \pantalla{finanzas_por_pagar}{Facturas de proveedores, con su vencimiento.}
 
