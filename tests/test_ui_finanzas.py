@@ -208,11 +208,25 @@ def test_el_supervisor_ve_el_costo_pero_no_el_margen(app, taller):
     dueno = ui.PorCobrarWidget()
     assert not dueno.tabla.isColumnHidden(ui.COLUMNAS_COBRO.index("Margen"))
     assert not dueno.cifras._bloques["margen_mes"].isHidden()
-    # Margen = neto − costo. Con las dos columnas, a 960 px el cliente quedaba
-    # en 73 px; el costo pasa al tooltip del margen.
-    assert dueno.tabla.isColumnHidden(ui.COLUMNAS_COBRO.index("Costo"))
+    # Margen = neto − costo. Con la ventana ancha (maximizada) se ven las dos
+    # columnas; a 960 px, con las dos, el cliente quedaba en 73 px, así que el
+    # costo se apaga y pasa al tooltip del margen.
+    costo = ui.COLUMNAS_COBRO.index("Costo")
+    dueno.resize(1366, 700)
+    dueno._ajustar_columnas()
+    assert not dueno.tabla.isColumnHidden(costo)
+    dueno.resize(960, 700)
+    dueno._ajustar_columnas()
+    assert dueno.tabla.isColumnHidden(costo)
     fila = elegir(dueno, taller.cuenta_id)
     assert dueno.tabla.item(fila, ui.COLUMNAS_COBRO.index("Margen")).toolTip() == "Costo $0"
+
+    # El supervisor ve el costo a cualquier ancho.
+    _como("SUPERVISOR", taller)
+    supervisor = ui.PorCobrarWidget()
+    supervisor.resize(960, 700)
+    supervisor._ajustar_columnas()
+    assert not supervisor.tabla.isColumnHidden(costo)
 
 
 def test_un_usuario_normal_no_opera_finanzas(app, taller, sin_modales):

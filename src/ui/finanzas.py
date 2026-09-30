@@ -48,6 +48,9 @@ FILTROS_COBRO = ["Vigentes", "Morosas", "Por facturar", "Pagadas", "Anuladas", "
 FILTROS_PAGAR = ["Pendientes", "Vencidas", "Pagadas", "Anuladas", "Todas"]
 # El total con IVA y lo pagado van en el tooltip del saldo, y los días de mora
 # en la pastilla del estado: con doce columnas el cliente quedaba cortado.
+# Ancho desde el que caben Costo y Margen a la vez sin apretar al cliente; el
+# portátil del taller (1366 px, maximizada) lo supera de sobra.
+ANCHO_PARA_COSTO_Y_MARGEN = 1100
 COLUMNAS_COBRO = ["Estado", "Cliente", "OC", "Factura", "Emitida", "Neto",
                   "Saldo", "Costo", "Margen"]
 COLUMNAS_PAGAR = ["Estado", "Proveedor", "Factura", "Compra", "Vence", "Total", "Pagado",
@@ -396,10 +399,13 @@ class PorCobrarWidget(QWidget):
             "No hay cuentas con este filtro.",
         )
         self.tabla.itemSelectionChanged.connect(self._al_seleccionar)
-        # Una de las dos: con Costo y Margen, a 960 px el cliente no se lee. El
-        # administrador ve el margen, con el costo en su tooltip.
-        oculta = "Costo" if self.ve_margen else "Margen"
-        self.tabla.setColumnHidden(COLUMNAS_COBRO.index(oculta), True)
+        # El supervisor ve el costo y no el margen. El administrador ve las dos
+        # columnas si la ventana es ancha; si no (960 px, el mínimo) se apaga
+        # el costo, que queda en el tooltip del margen: con las dos, el cliente
+        # se leía en 73 px. Ver `_ajustar_columnas`.
+        if not self.ve_margen:
+            self.tabla.setColumnHidden(COLUMNAS_COBRO.index("Margen"), True)
+        self._ajustar_columnas()
 
         layout = layout_de_pantalla(self)
         layout.setSpacing(ESPACIO_PANTALLA)
@@ -493,6 +499,18 @@ class PorCobrarWidget(QWidget):
             return None
         cuenta_id = self.tabla.item(fila, 0).data(Qt.UserRole)
         return next((f for f in self._filas if f.id == cuenta_id), None)
+
+    def resizeEvent(self, evento) -> None:
+        super().resizeEvent(evento)
+        self._ajustar_columnas()
+
+    def _ajustar_columnas(self) -> None:
+        """Al administrador se le muestra el costo junto al margen cuando cabe
+        (`ANCHO_PARA_COSTO_Y_MARGEN`); en una ventana angosta el costo pasa al
+        tooltip del margen. Al supervisor, que no ve el margen, no se le toca."""
+        if self.ve_margen:
+            self.tabla.setColumnHidden(COLUMNAS_COBRO.index("Costo"),
+                                       self.width() < ANCHO_PARA_COSTO_Y_MARGEN)
 
     def _al_seleccionar(self) -> None:
         f = self._elegida()
