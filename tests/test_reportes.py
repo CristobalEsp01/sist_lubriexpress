@@ -222,6 +222,63 @@ def test_reabastecimiento_lista_solo_lo_que_tiene_minimo(db):
     assert reportes.productos_sin_minimo(db) == sin_minimo_antes + 1
 
 
+def test_publico_vs_mercado_publico(db, app, monkeypatch):
+    """Mercado Público es toda orden con folio; el resto es público general.
+    Las anuladas no cuentan y el rango se agrupa igual que Ingresos por período."""
+    usuario = Usuario(nombre=f"Seg {rut_de_prueba()}", username=f"qa_seg_{rut_de_prueba()}",
+                      password_hash="x", rol="SUPERVISOR")
+    vehiculo = Vehiculo(cliente=Cliente(nombre_completo="Cliente seg"), patente=patente_de_prueba())
+    db.add_all([usuario, vehiculo])
+    db.flush()
+
+    def orden(total, folio=None, estado="ENTREGADA"):
+        return Orden(vehiculo=vehiculo, usuario=usuario, fecha_creacion=datetime(2019, 3, 10, 9),
+                     kilometraje_ingreso=1, subtotal=total, impuesto=0, total_final=total,
+                     folio_mercado_publico=folio, estado=estado)
+
+    db.add_all([
+        Venta(usuario=usuario, fecha_venta=datetime(2019, 3, 10, 10), impuesto=0, total_final=10000),
+        orden(20000), orden(5000, folio="  "),                       # folio en blanco: público
+        orden(100000, folio="1234-56-LE19"), orden(50000, folio="9-9-L1", estado="ANULADA"),
+        orden(7000, folio=None, estado="ANULADA"),
+        Orden(vehiculo=vehiculo, usuario=usuario, fecha_creacion=datetime(2019, 3, 11), kilometraje_ingreso=1,
+              subtotal=1, impuesto=0, total_final=1, folio_mercado_publico="X"),   # fuera del rango
+    ])
+    db.flush()
+
+    filas, por_mes = reportes.ingresos_por_segmento(db, DIA, DIA)
+    assert filas == [(DIA, 3, 35000, 1, 100000, 135000, 74.1)] and not por_mes
+    assert reportes.ingresos_por_segmento(db, DIA, date(2019, 12, 31))[1] is True
+    assert reportes.ingresos_por_segmento(db, date(2019, 3, 1), date(2019, 3, 9))[0] == []
+
+    # Su total coincide con el de Ingresos por período: nada se cuenta dos veces ni se pierde.
+    ingresos, _ = reportes.ingresos_por_periodo(db, DIA, DIA)
+    assert ingresos[0][8] == filas[0][5]
+
+
+def test_el_balance_es_solo_del_administrador_y_grafica_dos_series(app, monkeypatch):
+    from src.ui import reportes as pantalla
+
+    for rol in ("USUARIO_NORMAL", "SUPERVISOR"):
+        monkeypatch.setattr(Sesion, "rol", rol)
+        titulos = [d.titulo for d in pantalla.ReportesWidget().definiciones]
+        assert "Público vs Mercado Público" not in titulos
+
+    monkeypatch.setattr(Sesion, "rol", "ADMINISTRADOR")
+    widget = pantalla.ReportesWidget()
+    widget.lista.setCurrentRow([d.titulo for d in widget.definiciones].index("Público vs Mercado Público"))
+    widget.filas = [(DIA, 3, 35000, 1, 100000, 135000, 74.1)]
+    widget.por_mes = False
+    widget._llenar_tabla(widget.definicion())
+    widget._llenar_resumen(widget.definicion())
+    assert widget.tabla.item(0, 0).text() == "10-03-2019"
+    assert widget.tabla.item(0, 6).text() == "74,1 %"
+    widget._dibujar_grafico(widget.definicion())
+    chart = widget.grafico.chart()
+    assert [b.label() for b in chart.series()[0].barSets()] == ["Público general", "Mercado Público"]
+    assert chart.legend().isVisible()
+
+
 def test_la_pantalla_grafica_solo_lo_que_se_lee(app, monkeypatch):
     """Un gráfico de 12 productos con el nombre cortado en '...' no decía nada
     que la tabla no dijera mejor."""
@@ -232,9 +289,11 @@ def test_la_pantalla_grafica_solo_lo_que_se_lee(app, monkeypatch):
 
     titulos = [d.titulo for d in widget.definiciones]
     assert titulos == ["Ingresos por período", "Ventas por producto", "Por usuario",
-                       "Por mecánico", "Órdenes con descuento", "Reabastecimiento"]
+                       "Por mecánico", "Órdenes con descuento", "Público vs Mercado Público",
+                       "Reabastecimiento"]
     con_grafico = {d.titulo for d in widget.definiciones if d.grafico}
-    assert con_grafico == {"Ingresos por período", "Por usuario", "Por mecánico"}
+    assert con_grafico == {"Ingresos por período", "Público vs Mercado Público", "Por usuario",
+                           "Por mecánico"}
 
     # Los ejes en pesos chilenos y con marcas redondas.
     widget.lista.setCurrentRow(0)

@@ -28,7 +28,7 @@ from .comunes import (
     layout_de_pantalla, reordenar,
 )
 from .ordenes import DialogoDetalleOrden
-from .tema import ACENTO, CANAL_PANEL, ESPACIO_PANTALLA, TINTA_SUAVE
+from .tema import ACENTO, CANAL_PANEL, ESPACIO_PANTALLA, INFO, TINTA_SUAVE
 
 CARPETA = "Reportes"
 MAX_BARRAS = 12  # más barras de nombres que eso no se leen; el detalle está en la tabla
@@ -42,12 +42,15 @@ class Definicion:
     `permiso` quién lo ve (permisos.py); sin permiso, lo ve cualquiera."""
 
     def __init__(self, titulo, ayuda, columnas, pesos, numericas, orden, graficada,
-                 funcion, fechas=True, horizontal=False, grafico=True, permiso="reportes"):
+                 funcion, fechas=True, horizontal=False, grafico=True, permiso="reportes",
+                 series=None):
         self.titulo, self.ayuda, self.columnas = titulo, ayuda, columnas
         self.pesos, self.numericas, self.orden = pesos, numericas, orden
         self.graficada, self.funcion = graficada, funcion
         self.fechas, self.horizontal, self.grafico = fechas, horizontal, grafico
         self.permiso = permiso
+        # Columnas que se grafican juntas (barras agrupadas); por defecto, solo `graficada`.
+        self.series = series or (graficada,)
 
 
 REPORTES = [
@@ -73,6 +76,11 @@ REPORTES = [
         "Órdenes con descuento", "Toda orden con descuento general, flyer o gremio, y quién la ingresó.",
         reportes.COLUMNAS_DESCUENTOS, {6, 7}, (0, 6, 7), 0, 6,
         reportes.descuentos, grafico=False),
+    Definicion(
+        "Público vs Mercado Público",
+        "Cuánto entró del público general (mostrador y órdenes sin folio) y cuánto de Mercado Público (órdenes con folio).",
+        reportes.COLUMNAS_SEGMENTOS, {2, 4, 5}, (1, 2, 3, 4, 5, 6), 0, 5,
+        reportes.ingresos_por_segmento, series=(2, 4)),
     Definicion(
         "Reabastecimiento", "Productos con mínimo que están en él o por debajo. No depende del período.",
         reportes.COLUMNAS_REABASTECIMIENTO, set(), (3, 4, 5), 5, 5,
@@ -269,7 +277,7 @@ class ReportesWidget(QWidget):
         with SessionLocal() as db:
             if not definicion.fechas:
                 self.filas, self.por_mes = definicion.funcion(db), False
-            elif definicion.funcion is reportes.ingresos_por_periodo:
+            elif definicion.funcion in (reportes.ingresos_por_periodo, reportes.ingresos_por_segmento):
                 self.filas, self.por_mes = definicion.funcion(db, desde, hasta)
             else:
                 self.filas, self.por_mes = definicion.funcion(db, desde, hasta), False
@@ -299,7 +307,7 @@ class ReportesWidget(QWidget):
         return str(valor)
 
     def _llenar_tabla(self, definicion: Definicion) -> None:
-        if definicion.funcion is reportes.ingresos_por_periodo:
+        if definicion.funcion in (reportes.ingresos_por_periodo, reportes.ingresos_por_segmento):
             self.tabla.horizontalHeaderItem(0).setText("Mes" if self.por_mes else "Fecha")
         self.tabla.setSortingEnabled(False)
         self.tabla.setRowCount(len(self.filas))
@@ -339,6 +347,12 @@ class ReportesWidget(QWidget):
             cifras = [(clp(total), "total del período"),
                       (clp(sum(f[6] for f in self.filas)), "IVA"),
                       (f"{sum(f[1] + f[3] for f in self.filas)}", "documentos")]
+        elif definicion.funcion is reportes.ingresos_por_segmento:
+            publico, mercado = sum(f[2] for f in self.filas), sum(f[4] for f in self.filas)
+            parte = lambda x: f"{100 * x / total:.1f} %".replace(".", ",") if total else "0 %"
+            cifras = [(clp(total), "total del período"),
+                      (clp(publico), f"público general · {parte(publico)}"),
+                      (clp(mercado), f"Mercado Público · {parte(mercado)}")]
         elif definicion.funcion is reportes.ventas_por_producto:
             cifras = [(clp(total), "vendido en el período"),
                       (f"{sum(f[2] for f in self.filas)}", "unidades"),
@@ -383,16 +397,19 @@ class ReportesWidget(QWidget):
         if definicion.horizontal:
             filas = sorted(filas[:MAX_BARRAS], key=lambda f: f[definicion.graficada])
 
-        barras = QBarSet(definicion.columnas[definicion.graficada])
-        barras.setColor(QColor(ACENTO))
-        for fila in filas:
-            barras.append(float(fila[definicion.graficada]))
         serie = QHorizontalBarSeries() if definicion.horizontal else QBarSeries()
-        serie.append(barras)
+        for columna, color in zip(definicion.series, (ACENTO, INFO)):
+            barras = QBarSet(definicion.columnas[columna])
+            barras.setColor(QColor(color))
+            for fila in filas:
+                barras.append(float(fila[columna]))
+            serie.append(barras)
 
         chart = QChart()
         chart.addSeries(serie)
-        chart.legend().hide()
+        chart.legend().setVisible(len(definicion.series) > 1)
+        if len(definicion.series) > 1:
+            chart.legend().setAlignment(Qt.AlignBottom)
         chart.setBackgroundVisible(False)
         chart.setMargins(chart.margins().__class__(0, 0, 0, 0))
         # Pesos chilenos en el eje: $13.005.390, no $13,005,390.

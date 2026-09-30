@@ -24,6 +24,8 @@ VIGENTE = Orden.estado != "ANULADA"
 
 COLUMNAS_INGRESOS = ["Fecha", "Ventas", "Total ventas", "Órdenes", "Total órdenes", "Neto", "IVA",
                      "Ajuste", "Total"]
+COLUMNAS_SEGMENTOS = ["Fecha", "Docs. público", "Público general", "Órdenes MP", "Mercado Público",
+                      "Total", "% Mercado Público"]
 COLUMNAS_PRODUCTOS = ["Producto", "Marca", "Cantidad", "Monto neto", "% del total"]
 COLUMNAS_USUARIOS = ["Usuario", "Ventas", "Total ventas", "Órdenes", "Total órdenes", "Total"]
 COLUMNAS_MECANICOS = ["Mecánico", "Órdenes", "Total órdenes"]
@@ -64,6 +66,38 @@ def ingresos_por_periodo(db, desde: date, hasta: date) -> list[tuple]:
     return [
         (dia, nv, tv, no, to, tv + to - iva - ajuste, iva, ajuste, tv + to)
         for dia, (nv, tv, no, to, iva, ajuste) in sorted(dias.items())
+    ], por_mes
+
+
+def ingresos_por_segmento(db, desde: date, hasta: date) -> tuple[list[tuple], bool]:
+    """Cuánto entró del público general y cuánto de Mercado Público, por día
+    (por mes si el rango pasa de 62 días, como `ingresos_por_periodo`).
+
+    Mercado Público es toda orden con folio; el público general, las ventas de
+    mostrador y las órdenes sin folio. Total con IVA, como el resto de los
+    reportes; las órdenes anuladas no cuentan. No incluye las cuentas por
+    cobrar ingresadas a mano: eso no pasó por el taller.
+    """
+    ini, fin = _rango(desde, hasta)
+    por_mes = (hasta - desde).days > 62
+    clave = (lambda f: f.date().replace(day=1)) if por_mes else (lambda f: f.date())
+    dias = defaultdict(lambda: [0, 0, 0, 0])      # n público, $ público, n MP, $ MP
+    for fecha, total in db.execute(
+        select(Venta.fecha_venta, Venta.total_final).where(Venta.fecha_venta >= ini, Venta.fecha_venta < fin)
+    ):
+        d = dias[clave(fecha)]
+        d[0] += 1; d[1] += int(total)
+    con_folio = func.coalesce(func.trim(Orden.folio_mercado_publico), "") != ""
+    for fecha, total, es_mp in db.execute(
+        select(Orden.fecha_creacion, Orden.total_final, con_folio)
+        .where(Orden.fecha_creacion >= ini, Orden.fecha_creacion < fin, VIGENTE)
+    ):
+        d = dias[clave(fecha)]
+        i = 2 if es_mp else 0
+        d[i] += 1; d[i + 1] += int(total)
+    return [
+        (dia, npub, pub, nmp, mp, pub + mp, round(100 * mp / (pub + mp), 1) if pub + mp else 0.0)
+        for dia, (npub, pub, nmp, mp) in sorted(dias.items())
     ], por_mes
 
 
