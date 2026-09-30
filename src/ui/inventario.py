@@ -491,7 +491,45 @@ class IngresoMercaderiaDialog(QDialog):
                 return
 
         QMessageBox.information(self, "Éxito", "Mercadería ingresada correctamente al inventario.")
+        self._ofrecer_factura_proveedor(
+            sum(item["cantidad"] * item["costo"] for item in self.lista_ingreso))
         self.accept()
+
+    def _ofrecer_factura_proveedor(self, neto: int) -> None:
+        """Tras el ingreso, propone dejar la factura del proveedor en Por pagar.
+
+        Solo a quien puede usar Finanzas. El ingreso ya está guardado: si la
+        factura se descarta o falla, el stock no se toca. El total que se
+        propone es el costo de lo ingresado más IVA, y se puede corregir."""
+        if not puede("finanzas"):
+            return
+        respuesta = QMessageBox.question(
+            self, "Factura del proveedor",
+            "¿Quieres registrar la factura de esta compra en Finanzas, "
+            "en las cuentas por pagar a proveedores?",
+        )
+        if respuesta != QMessageBox.Yes:
+            return
+        from .finanzas import DialogoFacturaProveedor
+        from .. import finanzas
+        from ..models import Proveedor
+
+        dialogo = DialogoFacturaProveedor(self, monto_sugerido=con_iva(neto))
+        while dialogo.exec() == QDialog.Accepted:
+            try:
+                with SessionLocal() as db:
+                    finanzas.registrar_factura_proveedor(
+                        db, db.get(Proveedor, dialogo.proveedor.currentData()),
+                        dialogo.numero.text(), dialogo.compra.date().toPython(),
+                        dialogo.monto.value(), Sesion.usuario_id,
+                        fecha_vencimiento=dialogo.vence.date().toPython(),
+                        observaciones=dialogo.observaciones.text())
+                    db.commit()
+            except (ValueError, IntegrityError) as e:
+                QMessageBox.warning(self, "No se pudo ingresar", str(getattr(e, "orig", e)))
+                continue
+            QMessageBox.information(self, "Por pagar", "Factura registrada en cuentas por pagar.")
+            return
 
 class AjusteStockDialog(QDialog):
     """Recuento físico: se anota lo que hay en la repisa y la diferencia entra

@@ -31,6 +31,15 @@ def limpiar():
         db.commit()
 
 
+@pytest.fixture(autouse=True)
+def sin_pregunta_de_factura(monkeypatch):
+    """Tras un ingreso el sistema pregunta por la factura del proveedor; las
+    pruebas que no hablan de eso dicen que no, o la pregunta esperaría a alguien."""
+    from PySide6.QtWidgets import QMessageBox
+
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.No)
+
+
 @pytest.fixture
 def bodeguero_qa():
     """Sesión iniciada con un usuario comiteado, y limpieza del producto y los

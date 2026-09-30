@@ -289,3 +289,42 @@ def test_un_proveedor_nuevo_se_crea_desde_el_dialogo_de_la_factura(app, taller, 
     dialogo.nuevo_proveedor()
     assert dialogo.proveedor.currentText() == f"{PROVEEDOR} nuevo"
     assert dialogo.vence.date().toPython() == dialogo.compra.date().toPython() + timedelta(days=60)
+
+
+def test_tras_un_ingreso_de_mercaderia_se_ofrece_la_factura_del_proveedor(
+        app, taller, sin_modales, monkeypatch):
+    """Lo ingresado ya está guardado: decir que no no deshace nada, y decir que
+    sí abre la factura con el costo más IVA propuesto, que queda en Por pagar."""
+    from src.ui.inventario import IngresoMercaderiaDialog
+
+    with SessionLocal() as db:
+        proveedor = Proveedor(nombre=PROVEEDOR, plazo_credito_dias=30)
+        db.add(proveedor)
+        db.commit()
+        proveedor_id = proveedor.id
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: QMessageBox.Ok)
+    propuestos = []
+
+    def llenar(d):
+        propuestos.append(d.monto.value())
+        d.proveedor.setCurrentIndex(d.proveedor.findData(proveedor_id))
+        d.numero.setText("F-ING-1")
+    responder(monkeypatch, ui.DialogoFacturaProveedor, llenar)
+    dialogo = IngresoMercaderiaDialog()
+
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.No)
+    dialogo._ofrecer_factura_proveedor(100000)
+    assert propuestos == []
+    with SessionLocal() as db:
+        assert db.scalar(select(FacturaProveedor.id).where(
+            FacturaProveedor.proveedor_id == proveedor_id)) is None
+
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
+    dialogo._ofrecer_factura_proveedor(100000)
+    assert propuestos == [119000]
+    with SessionLocal() as db:
+        factura = db.scalar(select(FacturaProveedor).where(
+            FacturaProveedor.proveedor_id == proveedor_id))
+        assert (factura.numero_factura, int(factura.monto), factura.estado) == (
+            "F-ING-1", 119000, "PENDIENTE")
+    assert sin_modales == []

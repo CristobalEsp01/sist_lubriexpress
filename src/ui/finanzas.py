@@ -285,7 +285,7 @@ class DialogoFacturaProveedor(QDialog):
     """Una factura de proveedor. El vencimiento se propone con el plazo del
     proveedor y se puede corregir."""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, monto_sugerido: int = 0):
         super().__init__(parent)
         self.setWindowTitle("Nueva factura de proveedor")
         self.setModal(True)
@@ -299,6 +299,10 @@ class DialogoFacturaProveedor(QDialog):
         self.compra = _fecha()
         self.vence = _fecha(hasta_hoy=False)
         self.monto = _pesos()
+        if monto_sugerido > 0:
+            # Desde un ingreso de mercadería: costo + IVA, a confirmar con la factura.
+            self.monto.setValue(monto_sugerido)
+            self.monto.setToolTip("Calculado con el costo ingresado más IVA: corrígelo con el total de la factura.")
         self.observaciones = QLineEdit(placeholderText="Opcional")
         self.observaciones.setMaxLength(200)
         self._plazos: dict[int, int] = {}
