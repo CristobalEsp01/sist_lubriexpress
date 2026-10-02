@@ -245,6 +245,12 @@ Cada vehículo cuelga de un cliente y se identifica por su patente, que es únic
 en todo el sistema. Además de marca, modelo y año, la ficha guarda el tipo, la
 versión, el VIN y el número de motor, que es lo que traía el sistema anterior.
 
+Cuando un auto cambia de dueño, se agrega al cliente nuevo con \textbf{Agregar
+vehículo} (o \textbf{Añadir Vehículo} al abrir la orden) escribiendo su patente:
+el sistema dice a nombre de quién está y ofrece \textbf{traspasarlo}. El auto
+conserva su ficha y su último servicio, y las órdenes anteriores siguen a nombre
+de quien las hizo: su PDF y lo que haya quedado debiendo no pasan al dueño nuevo.
+
 \section{Órdenes de trabajo}
 
 \pantalla{orden}{Orden en proceso. La tarjeta superior dice de qué vehículo se
