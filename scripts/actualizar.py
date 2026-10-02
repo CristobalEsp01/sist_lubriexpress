@@ -1005,8 +1005,11 @@ def main(argv: list[str]) -> int:
         cuantos, donde = rellenar_ubicaciones(db, aplicar=False)
         categorias = recategorizar_productos(db, aplicar=False)
         # Sin la columna no hay dónde enlazarlos: en ese caso se cuentan
-        # después de aplicar el esquema.
-        sin_columna = any(paso.nombre == "ordenes.mecanico_id" for paso in falta)
+        # después de aplicar el esquema. Lo mismo vale para cualquier columna
+        # de `ordenes` que el modelo ya tenga y la base todavía no: consultar
+        # `Orden` las pide todas, y la base antigua no las tiene.
+        sin_columna = any(paso.nombre in ("ordenes.mecanico_id", "ordenes.cliente_id")
+                          for paso in falta)
         tecnicos = Counter() if sin_columna else mecanicos_de_lo_migrado(db, aplicar=False)
 
     if not falta and not cuantos and not categorias and not tecnicos:
