@@ -1,6 +1,6 @@
 """Interfaz del mantenedor de Clientes y vehículos, sin pantalla."""
 import pytest
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 
 from conftest import patente_de_prueba, rut_de_prueba
 from src.database import SessionLocal
@@ -22,7 +22,7 @@ def limpiar_cliente():
             db.delete(v)
         db.commit()
         consulta = select(Cliente).where(
-            or_(Cliente.rut == RUT_QA, Cliente.nombre_completo == SIN_RUT_QA)
+            or_(Cliente.rut == RUT_QA, func.upper(Cliente.nombre_completo) == SIN_RUT_QA.upper())
         )
         for c in db.scalars(consulta):
             db.delete(c)
@@ -89,6 +89,51 @@ def test_el_rut_se_guarda_con_formato_unico_y_no_se_repite(app, limpiar_cliente,
 
     assert avisos == ["RUT repetido"]
     assert repetido.cliente_id is None
+
+
+def test_un_cliente_con_el_mismo_nombre_y_telefono_avisa_antes_de_crearse(
+        app, limpiar_cliente, avisos, monkeypatch):
+    """Dos personas pueden llamarse igual, pero con el mismo teléfono es casi
+    seguro la misma: el aviso deja decidir, y por defecto no crea."""
+    from PySide6.QtWidgets import QMessageBox
+
+    from src.ui import FormularioCliente
+
+    def nuevo(nombre, telefono):
+        f = FormularioCliente()
+        f.nombre.setText(nombre)
+        f.telefono.setText(telefono)
+        f.accept()
+        return f
+
+    def cuantos():
+        with SessionLocal() as db:
+            return db.query(Cliente).filter(
+                func.upper(Cliente.nombre_completo) == SIN_RUT_QA.upper()).count()
+
+    preguntas = []
+    respuesta = {"valor": QMessageBox.No}
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: preguntas.append(a[2]) or respuesta["valor"])
+
+    assert nuevo(SIN_RUT_QA, "+56 9 1234 5678").cliente_id is not None
+    assert preguntas == []                                  # el primero no tiene con quién chocar
+
+    # Mismo nombre (otras mayúsculas) y mismo teléfono (otro formato): pregunta, y con No no crea.
+    repetido = nuevo(SIN_RUT_QA.upper(), "912345678")
+    assert len(preguntas) == 1 and SIN_RUT_QA in preguntas[0]
+    assert repetido.cliente_id is None and cuantos() == 1
+
+    # Con Sí, se crea igual.
+    respuesta["valor"] = QMessageBox.Yes
+    assert nuevo(SIN_RUT_QA.upper(), "912345678").cliente_id is not None
+    assert cuantos() == 2
+
+    # Otro teléfono, o sin teléfono, no es el mismo cliente: no pregunta.
+    del preguntas[:]
+    assert nuevo(SIN_RUT_QA, "+56 9 8765 4321").cliente_id is not None
+    assert nuevo(SIN_RUT_QA, "").cliente_id is not None
+    assert preguntas == []
 
 
 def test_el_vehiculo_cuelga_del_cliente_y_los_botones_siguen_la_seleccion(

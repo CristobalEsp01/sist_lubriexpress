@@ -12,7 +12,7 @@ from ..database import SessionLocal
 from ..models import Cliente, Vehiculo
 from ..patente import PATENTE, normalizar_patente
 from ..rut import es_valido, formatear
-from ..texto import columna_normalizada, filtro_busqueda
+from ..texto import columna_normalizada, filtro_busqueda, normalizar
 from .comunes import (
     BADGE_ACENTO, BADGE_INFO, BADGE_NEUTRAL, ROL_INSIGNIA,
     ItemNumerico, barra, botonera, con_aviso_vacio, crear_tabla,
@@ -26,6 +26,27 @@ COLUMNAS_VEHICULO = ["Patente", "Marca", "Modelo", "Año", "Combustible", "Trans
 COMBUSTIBLES = ["", "Bencina", "Diésel", "Eléctrico", "Híbrido", "GLP"]
 TRANSMISIONES = ["", "Manual", "Automática", "CVT"]
 TRACCIONES = ["", "4x2", "4x4", "AWD"]
+
+
+def cliente_repetido(db, nombre: str, telefono: str | None) -> Cliente | None:
+    """El cliente que ya tiene ese nombre y ese teléfono, si lo hay.
+
+    Dos personas pueden llamarse igual, así que el nombre solo no basta: tiene
+    que coincidir también el teléfono. Se compara sin tildes ni mayúsculas, y
+    el teléfono por sus últimos 9 dígitos, para que "+56 9 1234 5678" y
+    "912345678" sean el mismo. Sin teléfono no hay con qué decidir.
+    """
+    digitos = "".join(c for c in (telefono or "") if c.isdigit())
+    if len(digitos) < 8:
+        return None
+    ultimos = digitos[-9:]
+    candidatos = db.scalars(
+        select(Cliente).where(
+            func.right(func.regexp_replace(Cliente.telefono, r"\D", "", "g"), len(ultimos)) == ultimos
+        )
+    )
+    buscado = normalizar(nombre)
+    return next((c for c in candidatos if normalizar(c.nombre_completo) == buscado), None)
 
 
 class FormularioCliente(QDialog):
@@ -92,8 +113,29 @@ class FormularioCliente(QDialog):
         if not self.nombre.text().strip():
             QMessageBox.warning(self, "Falta el nombre", "El cliente necesita un nombre.")
             return
+        if self.cliente_id is None and not self._confirmar_si_se_repite():
+            return
         if self.guardar():
             super().accept()
+
+    def _confirmar_si_se_repite(self) -> bool:
+        """Avisa si ya hay un cliente con este nombre y teléfono. Se puede crear
+        igual —hay homónimos de verdad—, pero ya no por descuido."""
+        with SessionLocal() as db:
+            existente = cliente_repetido(db, self.nombre.text(), self.telefono.text())
+            if existente is None:
+                return True
+            autos = db.scalar(select(func.count(Vehiculo.id)).where(Vehiculo.cliente_id == existente.id))
+            detalle = " · ".join(
+                [existente.nombre_completo, existente.rut or "sin RUT", existente.telefono or "",
+                 f"{autos} vehículo(s)"])
+        respuesta = QMessageBox.question(
+            self, "El cliente ya existe",
+            f"Ya hay un cliente con ese nombre y teléfono:\n\n{detalle}\n\n"
+            "Si es la misma persona, ciérralo y búscalo en la lista. ¿Crear otro de todas formas?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        return respuesta == QMessageBox.Yes
 
     def guardar(self) -> bool:
         rut = self.rut.text().strip()
