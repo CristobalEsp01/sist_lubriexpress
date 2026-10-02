@@ -237,6 +237,13 @@ guiones: \texttt{perez}, \texttt{Pérez} y \texttt{PEREZ} encuentran lo mismo, y
 A las personas no se les pide RUT —en el mesón no lo dan y frena la atención—;
 a las empresas sí, porque sin RUT no se les puede facturar.
 
+Si se crea un cliente cuyo \textbf{nombre y teléfono} coinciden con los de uno
+que ya existe, el sistema avisa antes de guardar y muestra a quién se parece
+(nombre, RUT, teléfono y cuántos vehículos tiene). Si es la misma persona, se
+cierra la ventana y se la busca en la lista; si de verdad es otra, se puede
+crear igual. Un mismo nombre con otro teléfono, o sin teléfono, no genera aviso,
+porque hay personas que se llaman igual.
+
 \subsection{Vehículos}
 
 \dialogo{dialogo_vehiculo}{Ficha del vehículo.}
