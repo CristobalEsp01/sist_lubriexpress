@@ -223,6 +223,10 @@ class FormularioVehiculo(QDialog):
 
     def guardar(self, patente: str) -> bool:
         with SessionLocal() as db:
+            if self.vehiculo_id is None:
+                existente = db.scalar(select(Vehiculo).where(Vehiculo.patente == patente))
+                if existente:
+                    return self._traspasar(db, existente)
             vehiculo = db.get(Vehiculo, self.vehiculo_id) if self.vehiculo_id else Vehiculo()
             vehiculo.cliente_id = self.cliente_id
             vehiculo.patente = patente
@@ -250,6 +254,26 @@ class FormularioVehiculo(QDialog):
                 )
                 return False
             self.vehiculo_id = vehiculo.id
+        return True
+
+    def _traspasar(self, db, vehiculo: Vehiculo) -> bool:
+        """La patente ya existe: el auto se vendió y llega con su dueño nuevo.
+        Cambia solo el dueño; la ficha del auto no se pisa con lo tecleado,
+        que muchas veces es solo la patente."""
+        if vehiculo.cliente_id != self.cliente_id:
+            comprador = db.get(Cliente, self.cliente_id)
+            modelo = " ".join(filter(None, (vehiculo.marca, vehiculo.modelo)))
+            if QMessageBox.question(
+                self, "Patente ya registrada",
+                f"La patente {vehiculo.patente}{f' ({modelo})' if modelo else ''} está a "
+                f"nombre de {vehiculo.cliente.nombre_completo}.\n\n"
+                f"¿Traspasarla a {comprador.nombre_completo}? Sus órdenes anteriores "
+                "siguen a nombre de quien las hizo.",
+            ) != QMessageBox.Yes:
+                return False
+            vehiculo.cliente_id = self.cliente_id
+            db.commit()
+        self.vehiculo_id = vehiculo.id
         return True
 
 

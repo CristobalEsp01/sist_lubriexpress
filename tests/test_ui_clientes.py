@@ -139,6 +139,45 @@ def test_el_vehiculo_cuelga_del_cliente_y_los_botones_siguen_la_seleccion(
     assert not hasattr(widget, "boton_whatsapp")
 
 
+def test_la_patente_de_otro_cliente_se_traspasa_con_sus_datos(
+    app, limpiar_cliente, avisos, monkeypatch
+):
+    """El auto se vendió y llega con su dueño nuevo: en vez de "Patente
+    repetida", se ofrece traspasarlo. Lo tecleado no pisa la ficha del auto,
+    que muchas veces es solo la patente."""
+    from PySide6.QtWidgets import QDialog, QMessageBox
+
+    from src.ui import FormularioVehiculo
+
+    with SessionLocal() as db:
+        vendedor = Cliente(rut=RUT_QA, nombre_completo=NOMBRE_QA)
+        comprador = Cliente(nombre_completo=SIN_RUT_QA)
+        auto = Vehiculo(cliente=vendedor, patente=PATENTE_QA, marca="Toyota", modelo="Yaris")
+        db.add_all([comprador, auto])
+        db.commit()
+        vendedor_id, comprador_id, auto_id = vendedor.id, comprador.id, auto.id
+
+    preguntas, respuesta = [], {"boton": QMessageBox.No}
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: preguntas.append(a[2]) or respuesta["boton"])
+
+    formulario = FormularioVehiculo(cliente_id=comprador_id)
+    formulario.patente.setText(PATENTE_QA.lower())
+    formulario.accept()
+    assert NOMBRE_QA in preguntas[0]  # se sabe de quién es antes de decidir
+    assert formulario.vehiculo_id is None and formulario.result() == QDialog.Rejected
+    with SessionLocal() as db:
+        assert db.get(Vehiculo, auto_id).cliente_id == vendedor_id
+
+    respuesta["boton"] = QMessageBox.Yes
+    formulario.accept()
+    assert formulario.vehiculo_id == auto_id and formulario.result() == QDialog.Accepted
+    with SessionLocal() as db:
+        v = db.get(Vehiculo, auto_id)
+        assert (v.cliente_id, v.marca, v.modelo) == (comprador_id, "Toyota", "Yaris")
+    assert avisos == []
+
+
 @pytest.mark.parametrize("tecleado, encuentra", [
     (PATENTE_QA, True),                                 # patente tal cual
     (PATENTE_QA.lower(), True),                         # en minúscula
