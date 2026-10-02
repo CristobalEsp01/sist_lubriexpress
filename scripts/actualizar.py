@@ -126,6 +126,20 @@ CREATE TRIGGER trg_detalle_ventas_costo
   FOR EACH ROW EXECUTE FUNCTION fn_congelar_costo();
 '''
 
+CONGELAR_CLIENTE = '''
+CREATE OR REPLACE FUNCTION fn_congelar_cliente() RETURNS TRIGGER AS $$
+BEGIN
+  SELECT "cliente_id" INTO NEW."cliente_id"
+    FROM "vehiculos" WHERE "id" = NEW."vehiculo_id";
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_ordenes_cliente
+  BEFORE INSERT ON "ordenes"
+  FOR EACH ROW EXECUTE FUNCTION fn_congelar_cliente();
+'''
+
 FN_ALTA_CUENTA_COBRAR = '''
 CREATE OR REPLACE FUNCTION fn_alta_cuenta_cobrar() RETURNS TRIGGER AS $$
 BEGIN
@@ -856,6 +870,27 @@ INSERT INTO "servicios" ("nombre", "categoria", "precio_venta", "activo", "preci
              + CUENTA_PAGADA_PAGA_ORDEN + PAGO_ORDEN_SIN_CUENTA),
         declara=(FN_ALTA_CUENTA_COBRAR, FN_ESTADO_PAGO_AL_CAMBIAR_TOTAL, QUITA_FOLIO_CUENTA_COBRAR,
                  CUENTA_PAGADA_PAGA_ORDEN, PAGO_ORDEN_SIN_CUENTA),
+    ),
+    # Las órdenes que ya existen quedan con el dueño actual de su auto, que es
+    # el que ya mostraban: el sistema antiguo no traía otro dato confiable.
+    Paso(
+        nombre="ordenes.cliente_id",
+        comprobacion="""
+            SELECT EXISTS (SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'ordenes' AND column_name = 'cliente_id')
+        """,
+        sql='''
+ALTER TABLE "ordenes" ADD COLUMN "cliente_id" INT REFERENCES "clientes"("id");
+UPDATE "ordenes" o SET "cliente_id" = v."cliente_id"
+  FROM "vehiculos" v WHERE v."id" = o."vehiculo_id";
+ALTER TABLE "ordenes" ALTER COLUMN "cliente_id" SET NOT NULL;
+CREATE INDEX idx_ordenes_cliente ON "ordenes"("cliente_id");
+''' + CONGELAR_CLIENTE,
+        declara=(
+            '"cliente_id" INT REFERENCES "clientes"("id")',
+            'CREATE INDEX idx_ordenes_cliente ON "ordenes"("cliente_id");',
+            CONGELAR_CLIENTE,
+        ),
     ),
 ]
 

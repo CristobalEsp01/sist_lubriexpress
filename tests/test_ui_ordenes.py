@@ -18,11 +18,12 @@ from src.models import (
     Cliente, CuentaPorCobrar, DetalleOrden, KardexMovimiento, Mecanico, Orden, PagoCobro,
     PagoOrden, Producto, Servicio, Usuario, Vehiculo,
 )
-from src.ui.ordenes import COLUMNAS_HISTORIAL, TIPOS_DESCUENTO
+from src.ui.ordenes import COLUMNAS_ABIERTAS, COLUMNAS_HISTORIAL, TIPOS_DESCUENTO
 
 NOMBRE_PRODUCTO = "QA Aceite de motor 10W40"
 NOMBRE_SERVICIO = "QA Cambio de aceite"
 NOMBRE_CLIENTE = "QA Dueño del taller"
+NOMBRE_COMPRADOR = "QA Comprador del auto"
 PREFIJO_MECANICO = "QA Mecánico sin cuenta"
 
 
@@ -30,8 +31,11 @@ PREFIJO_MECANICO = "QA Mecánico sin cuenta"
 def limpiar():
     yield
     with SessionLocal() as db:
-        cliente = db.scalar(select(Cliente).where(Cliente.nombre_completo == NOMBRE_CLIENTE))
-        if cliente:
+        # El comprador va en la misma pasada: tiene el auto, y las órdenes de
+        # ese auto apuntan al dueño anterior, así que los clientes van al final.
+        clientes = db.scalars(select(Cliente).where(
+            Cliente.nombre_completo.in_([NOMBRE_CLIENTE, NOMBRE_COMPRADOR]))).all()
+        for cliente in clientes:
             for vehiculo in db.scalars(select(Vehiculo).where(Vehiculo.cliente_id == cliente.id)):
                 for orden in db.scalars(select(Orden).where(Orden.vehiculo_id == vehiculo.id)):
                     # El detalle va primero: borrarlo dispara el trigger de
@@ -50,6 +54,8 @@ def limpiar():
                     db.flush()
                     db.delete(orden)
                 db.delete(vehiculo)
+        db.flush()
+        for cliente in clientes:
             db.delete(cliente)
         producto = db.scalar(select(Producto).where(Producto.nombre == NOMBRE_PRODUCTO))
         if producto:
@@ -1073,3 +1079,72 @@ def test_el_folio_mp_se_pide_en_un_dialogo_y_se_ve_en_la_tarjeta(app, taller, si
     assert widget.folio.text() == "" and widget.label_folio.isHidden()
     assert widget.boton_folio.text() == "Insertar folio MP" and widget.pagada.isEnabled()
     assert DialogoFolioMP("2048-7").folio.text() == "2048-7"
+
+
+def vender_el_auto(taller) -> None:
+    with SessionLocal() as db:
+        db.get(Vehiculo, taller.vehiculo_id).cliente = Cliente(nombre_completo=NOMBRE_COMPRADOR)
+        db.commit()
+
+
+def test_una_orden_guardada_sigue_a_nombre_de_quien_trajo_el_auto(
+        app, taller, sin_modales, monkeypatch, tmp_path):
+    """El auto se vendió después de atenderlo: el historial, el detalle y el
+    PDF de esa orden siguen nombrando a quien lo trajo, no al comprador."""
+    from src.ui import ordenes
+
+    with SessionLocal() as db:
+        orden = Orden(vehiculo_id=taller.vehiculo_id, usuario_id=taller.usuario_id,
+                      kilometraje_ingreso=1, subtotal=0, total_final=0)
+        db.add(orden)
+        db.commit()
+        orden_id = orden.id
+    vender_el_auto(taller)
+
+    widget = ordenes.OrdenesWidget()
+    widget.busqueda_historial.setText(NOMBRE_CLIENTE)  # se encuentra por quien la hizo
+    widget.cargar_historial()
+    columna = COLUMNAS_HISTORIAL.index("Cliente")
+    assert [widget.tabla_historial.item(f, columna).text()
+            for f in range(widget.tabla_historial.rowCount())] == [NOMBRE_CLIENTE]
+
+    assert NOMBRE_CLIENTE in ordenes.DialogoDetalleOrden(orden_id, widget).info.text()
+
+    paginas = []
+    original = ordenes.html_de_orden
+    monkeypatch.setattr(ordenes, "html_de_orden",
+                        lambda datos: paginas.append(original(datos)) or paginas[-1])
+    ordenes.guardar_pdf_de_orden(orden_id, tmp_path / "ot.pdf")
+    assert NOMBRE_CLIENTE in paginas[0] and NOMBRE_COMPRADOR not in paginas[0]
+
+
+def test_una_orden_abierta_no_cambia_de_cliente_si_el_auto_se_vende(
+        app, taller, sin_modales, monkeypatch):
+    """El auto se traspasa con una OT del dueño anterior todavía abierta: esa
+    OT sigue siendo suya, y la que se abra después ya es del comprador."""
+    from PySide6.QtWidgets import QMessageBox
+
+    from src.ui import ordenes
+
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
+    widget = ordenes.OrdenesWidget()
+    widget._iniciar_nueva_orden(taller.vehiculo_id)
+    widget.agregar_servicio_al_carrito(taller.servicio_id)
+    elegir_mecanico(widget, taller)
+    widget.spin_kilometraje.setValue(50000)
+    widget.guardar_orden("ABIERTA")
+    vender_el_auto(taller)
+
+    with SessionLocal() as db:
+        orden_id = db.scalar(select(Orden.id).where(Orden.vehiculo_id == taller.vehiculo_id))
+    widget.cargar_abiertas()
+    filas = [widget.tabla_abiertas.item(f, 0).text() for f in range(widget.tabla_abiertas.rowCount())]
+    fila = filas.index(str(orden_id))
+    assert widget.tabla_abiertas.item(fila, COLUMNAS_ABIERTAS.index("Cliente")).text() == NOMBRE_CLIENTE
+    widget.tabla_abiertas.selectRow(fila)
+    widget.retomar_orden()
+    assert widget.label_cliente.text().startswith(NOMBRE_CLIENTE)
+
+    nueva = ordenes.OrdenesWidget()
+    nueva._iniciar_nueva_orden(taller.vehiculo_id)
+    assert nueva.label_cliente.text().startswith(NOMBRE_COMPRADOR)

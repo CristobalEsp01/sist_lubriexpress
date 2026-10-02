@@ -163,6 +163,10 @@ CREATE TABLE "ordenes" (
   "folio_flyer" INT CHECK ("folio_flyer" BETWEEN 1 AND 1000),
   -- La pantalla lo exige; NULL en las órdenes guardadas antes de que existiera.
   "mecanico_id" INT REFERENCES "mecanicos"("id"),
+  -- A quién se le hizo. Lo copia fn_congelar_cliente del dueño del vehículo y
+  -- no se mueve más: un auto vendido cambia de dueño, sus órdenes no. El NOT
+  -- NULL va al final para que el paso de actualizar.py lo reproduzca tal cual.
+  "cliente_id" INT REFERENCES "clientes"("id") NOT NULL,
   CONSTRAINT descuento_exclusivo_orden
       CHECK (NOT ("descuento_porcentaje" > 0 AND "descuento_monto" > 0)),
   CONSTRAINT flyer_con_folio
@@ -424,6 +428,7 @@ CREATE TABLE "pagos_proveedor" (
 CREATE INDEX idx_vehiculos_cliente ON "vehiculos"("cliente_id");
 CREATE INDEX idx_productos_ubicacion ON "productos"("ubicacion_id");
 CREATE INDEX idx_ordenes_vehiculo ON "ordenes"("vehiculo_id");
+CREATE INDEX idx_ordenes_cliente ON "ordenes"("cliente_id");
 CREATE INDEX idx_ordenes_usuario ON "ordenes"("usuario_id");
 CREATE INDEX idx_ordenes_fecha ON "ordenes"("fecha_creacion");
 CREATE INDEX idx_detalle_ordenes_orden ON "detalle_ordenes"("orden_id");
@@ -681,6 +686,23 @@ CREATE TRIGGER trg_detalle_ordenes_costo
 CREATE TRIGGER trg_detalle_ventas_costo
   BEFORE INSERT ON "detalle_ventas"
   FOR EACH ROW EXECUTE FUNCTION fn_congelar_costo();
+
+-- =====================================================================
+-- Trigger: el cliente de una orden se congela al crearla
+-- =====================================================================
+-- Es el dueño que tenía el vehículo ese día. Cuando el auto se traspasa, sus
+-- órdenes anteriores (el PDF, lo que se debe) siguen siendo de quien lo trajo.
+CREATE OR REPLACE FUNCTION fn_congelar_cliente() RETURNS TRIGGER AS $$
+BEGIN
+  SELECT "cliente_id" INTO NEW."cliente_id"
+    FROM "vehiculos" WHERE "id" = NEW."vehiculo_id";
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_ordenes_cliente
+  BEFORE INSERT ON "ordenes"
+  FOR EACH ROW EXECUTE FUNCTION fn_congelar_cliente();
 
 -- =====================================================================
 -- Triggers: servicio de precio variable (Servicio Público)

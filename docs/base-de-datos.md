@@ -47,6 +47,7 @@ consola de psql abierta.
 | `trg_pagos_orden_estado` | `INSERT` en `pagos_orden` | Recalcula `ordenes.estado_pago` con la suma de los abonos |
 | `trg_ordenes_estado_pago` | `UPDATE` de `ordenes.total_final` | Recalcula `estado_pago`: si el total creció, lo abonado ya no alcanza. Una orden cuya cuenta por cobrar está `PAGADA` sigue pagada |
 | `trg_detalle_ordenes_costo` / `trg_detalle_ventas_costo` | `INSERT` en `detalle_ordenes` / `detalle_ventas` | Copia `productos.precio_costo` a `costo_unitario` de la línea, si no trae uno. Los servicios quedan en `NULL` |
+| `trg_ordenes_cliente` | `INSERT` en `ordenes` | Copia el dueño del vehículo a `cliente_id`. Si el auto se traspasa después, la orden sigue a nombre de quien lo trajo |
 | `trg_ordenes_alta_cuenta_cobrar` | `INSERT` en `ordenes`, o `UPDATE` de `folio_mercado_publico`, con folio | Abre la cuenta por cobrar de la orden en `PENDIENTE_FACTURA`; antes de facturar, la sigue si el folio cambia, y la revive si estaba anulada por falta de folio |
 | `trg_ordenes_anula_cuenta_cobrar` | `UPDATE` de `ordenes.estado` a `ANULADA` | Anula la cuenta si aún no tiene factura |
 | `trg_ordenes_quita_folio_cuenta_cobrar` | `UPDATE` de `folio_mercado_publico` a vacío | Igual: anula la cuenta si aún no tiene factura |

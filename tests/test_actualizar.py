@@ -13,7 +13,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from conftest import exigir_base_de_datos  # noqa: E402
+from conftest import exigir_base_de_datos, patente_de_prueba, rut_de_prueba  # noqa: E402
 from scripts import actualizar as A  # noqa: E402
 from test_models import SQL, columnas_del_esquema  # noqa: E402
 
@@ -78,6 +78,40 @@ def test_correrlo_dos_veces_no_deja_nada_pendiente():
 
     with engine.connect() as conexion:
         assert A.pendientes(conexion) == []
+
+
+def test_las_ordenes_que_ya_existian_quedan_con_el_dueno_de_su_vehiculo():
+    """En el taller hay miles de órdenes sin cliente propio: el paso les copia
+    el dueño de su auto, que es lo que ya mostraban. Se le quita la columna a
+    la base de desarrollo dentro de una transacción que se revierte."""
+    exigir_base_de_datos()
+    from src.database import engine
+
+    with engine.connect() as conexion:
+        def insertar(sql: str) -> int:
+            return conexion.exec_driver_sql(sql + ' RETURNING "id"').scalar()
+
+        try:
+            conexion.exec_driver_sql('DROP TRIGGER IF EXISTS trg_ordenes_cliente ON "ordenes"')
+            conexion.exec_driver_sql('ALTER TABLE "ordenes" DROP COLUMN IF EXISTS "cliente_id"')
+            cliente = insertar('''INSERT INTO "clientes" ("nombre_completo") VALUES ('QA dueño')''')
+            vehiculo = insertar(f'''INSERT INTO "vehiculos" ("cliente_id", "patente")
+                                    VALUES ({cliente}, '{patente_de_prueba()}')''')
+            usuario = insertar(f'''INSERT INTO "usuarios" ("nombre", "username", "password_hash", "rol")
+                                   VALUES ('QA', 'qa_{rut_de_prueba()}', 'x', 'ADMINISTRADOR')''')
+            orden = insertar(f'''INSERT INTO "ordenes" ("vehiculo_id", "usuario_id")
+                                 VALUES ({vehiculo}, {usuario})''')
+
+            paso, = [p for p in A.pendientes(conexion) if p.nombre == "ordenes.cliente_id"]
+            A.aplicar(conexion, paso)
+
+            assert conexion.exec_driver_sql(
+                f'SELECT "cliente_id" FROM "ordenes" WHERE "id" = {orden}').scalar() == cliente
+            assert conexion.exec_driver_sql(
+                """SELECT is_nullable FROM information_schema.columns
+                    WHERE table_name = 'ordenes' AND column_name = 'cliente_id'""").scalar() == "NO"
+        finally:
+            conexion.rollback()
 
 
 def test_si_el_respaldo_falla_no_se_toca_el_esquema(monkeypatch):

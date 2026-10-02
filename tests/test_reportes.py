@@ -159,6 +159,23 @@ def test_el_reporte_de_descuentos_junta_los_tres_tipos_y_quien_ingreso(db, app, 
     assert widget.resumen.itemAt(0).widget().findChild(QLabel).text() == "$500"
 
 
+def test_el_reporte_de_descuentos_nombra_al_cliente_de_la_orden(db):
+    """No al dueño de hoy: el auto pudo venderse después del descuento."""
+    usuario = Usuario(nombre="Mesón QA", username=f"qa_rep_{rut_de_prueba()}",
+                      password_hash="x", rol="USUARIO_NORMAL")
+    vehiculo = Vehiculo(cliente=Cliente(nombre_completo="Dueño anterior QA"),
+                        patente=patente_de_prueba())
+    orden = Orden(vehiculo=vehiculo, usuario=usuario, fecha_creacion=datetime(2019, 3, 10, 12),
+                  subtotal=10000, total_final=9500, descuento_monto=500)
+    db.add_all([usuario, vehiculo, orden])
+    db.flush()
+    vehiculo.cliente = Cliente(nombre_completo="Comprador QA")
+    db.flush()
+
+    assert [f[2] for f in reportes.descuentos(db, DIA, DIA) if f[0] == orden.id] == [
+        "Dueño anterior QA"
+    ]
+
 def test_al_abrir_se_ve_el_resumen_y_la_serie_en_el_tiempo_va_entera(app, monkeypatch):
     """Dos bugs de la pantalla. El resumen se armaba mientras la pestaña se
     mostraba y quedaba oculto hasta cambiar algo. Y el gráfico de ingresos

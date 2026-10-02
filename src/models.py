@@ -9,7 +9,7 @@ Dos cosas que el esquema hace y estas clases no muestran:
   hacer `db.refresh(producto)` para no leer un `stock_actual` viejo de la caché.
 """
 from sqlalchemy import (
-    Column, Integer, String, Boolean, Numeric, Date, DateTime, Text, ForeignKey, func
+    Column, Integer, String, Boolean, Numeric, Date, DateTime, Text, FetchedValue, ForeignKey, func
 )
 from sqlalchemy.orm import relationship
 
@@ -172,8 +172,13 @@ class Orden(Base):
     folio_flyer = Column(Integer)   # único entre las no anuladas
     # Quien trabajó el auto; `usuario` es quien registró la orden.
     mecanico_id = Column(Integer, ForeignKey("mecanicos.id"))
+    # El dueño del vehículo al crearla; lo pone el trigger fn_congelar_cliente
+    # y no sigue al auto si después se traspasa.
+    cliente_id = Column(Integer, ForeignKey("clientes.id"), nullable=False,
+                        server_default=FetchedValue())
 
     vehiculo = relationship("Vehiculo", back_populates="ordenes")
+    cliente = relationship("Cliente")
     usuario = relationship("Usuario")
     mecanico = relationship("Mecanico")
     detalles = relationship("DetalleOrden", back_populates="orden")

@@ -250,3 +250,20 @@ def test_agregarle_una_linea_a_una_orden_pagada_la_deja_debiendo(db, datos):
     db.flush()
     db.refresh(orden)
     assert orden.estado_pago is False
+
+
+def test_la_orden_se_queda_con_el_dueno_que_tenia_el_auto_al_abrirla(db, datos):
+    """Un auto vendido cambia de dueño, pero sus órdenes anteriores siguen
+    siendo de quien lo trajo: el PDF y la deuda son de esa persona."""
+    usuario, _, cliente, vehiculo = datos
+    antes = Orden(vehiculo=vehiculo, usuario=usuario, kilometraje_ingreso=1)
+    db.add(antes)
+    db.flush()
+
+    comprador = Cliente(rut=rut_de_prueba(), nombre_completo="Comprador QA")
+    vehiculo.cliente = comprador
+    despues = Orden(vehiculo=vehiculo, usuario=usuario, kilometraje_ingreso=2)
+    db.add(despues)
+    db.flush()
+
+    assert (antes.cliente_id, despues.cliente_id) == (cliente.id, comprador.id)

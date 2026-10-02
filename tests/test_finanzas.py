@@ -480,6 +480,16 @@ def test_el_listado_muestra_lo_estimado_antes_de_facturar_y_lo_congelado_despues
     assert (despues.estimado, despues.saldo, despues.dias_mora) == (False, 119000, 11)
 
 
+def test_la_cuenta_sigue_a_nombre_de_quien_trajo_el_auto(db, datos):
+    """Si el vehículo cambia de dueño, la cuenta no se va con él."""
+    usuario, _, vehiculo = datos
+    orden = orden_de(db, usuario, vehiculo, folio_mercado_publico="L-9")
+    vehiculo.cliente = Cliente(rut=rut_de_prueba(), nombre_completo="Comprador QA")
+    db.flush()
+
+    fila, = suyas(finanzas.cuentas_por_cobrar(db), cuenta_de(db, orden))
+    assert fila.cliente == "SEREMI QA"
+
 def test_una_orden_abierta_aparece_por_facturar_recien_al_entregarla(db, datos):
     usuario, _, vehiculo = datos
     orden = orden_de(db, usuario, vehiculo, folio_mercado_publico="L-2", estado="ABIERTA")

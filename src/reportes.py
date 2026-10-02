@@ -170,7 +170,7 @@ def descuentos(db, desde: date, hasta: date) -> list[tuple]:
     filas = []
     for orden, cliente, patente, usuario in db.execute(
         select(Orden, Cliente.nombre_completo, Vehiculo.patente, Usuario.nombre)
-        .join(Orden.vehiculo).join(Vehiculo.cliente).join(Orden.usuario)
+        .join(Orden.vehiculo).join(Orden.cliente).join(Orden.usuario)
         .where(Orden.fecha_creacion >= ini, Orden.fecha_creacion < fin, VIGENTE,
                (Orden.descuento_monto > 0) | (Orden.descuento_porcentaje > 0))
         .order_by(Orden.id)

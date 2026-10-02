@@ -117,7 +117,7 @@ def guardar_pdf_de_orden(orden_id: int, ruta) -> None:
     """La orden como PDF para el cliente (Propuesta 3.4): lo guardado, tal cual."""
     with SessionLocal() as db:
         orden = db.get(Orden, orden_id)
-        vehiculo, cliente = orden.vehiculo, orden.vehiculo.cliente
+        vehiculo, cliente = orden.vehiculo, orden.cliente
         datos = {
             "numero": orden.id, "fecha": orden.fecha_creacion,
             "cliente": cliente.nombre_completo, "rut": cliente.rut, "telefono": cliente.telefono,
@@ -723,7 +723,7 @@ class OrdenesWidget(QTabWidget):
         consulta = (
             select(Orden, Cliente, Vehiculo, Mecanico.nombre, cuantos_items)
             .join(Vehiculo, Orden.vehiculo_id == Vehiculo.id)
-            .join(Cliente, Vehiculo.cliente_id == Cliente.id)
+            .join(Cliente, Orden.cliente_id == Cliente.id)
             .outerjoin(Mecanico, Orden.mecanico_id == Mecanico.id)
             .where(Orden.estado == "ABIERTA")
             .order_by(Orden.id.desc())
@@ -796,7 +796,7 @@ class OrdenesWidget(QTabWidget):
             # Unimos las 4 tablas relacionadas
             select(Orden, Cliente, Vehiculo, Mecanico.nombre, pagado_de_la_orden)
             .join(Vehiculo, Orden.vehiculo_id == Vehiculo.id)
-            .join(Cliente, Vehiculo.cliente_id == Cliente.id)
+            .join(Cliente, Orden.cliente_id == Cliente.id)
             .outerjoin(Mecanico, Orden.mecanico_id == Mecanico.id)
             .order_by(Orden.id.desc()),
             self.busqueda_historial.text(),
@@ -876,13 +876,15 @@ class OrdenesWidget(QTabWidget):
         if dialogo.exec():
             self._iniciar_nueva_orden(dialogo.vehiculo_id_seleccionado)
 
-    def _iniciar_nueva_orden(self, vehiculo_id: int) -> None:
+    def _iniciar_nueva_orden(self, vehiculo_id: int, cliente_id: int | None = None) -> None:
+        """`cliente_id` es el de una orden retomada: si el auto se traspasó
+        mientras estaba abierta, sigue siendo de quien lo trajo."""
         # Guardamos el ID del vehículo en la memoria de la ventana para usarlo al guardar
         self.vehiculo_actual_id = vehiculo_id
 
         with SessionLocal() as db:
             vehiculo = db.get(Vehiculo, vehiculo_id)
-            cliente = db.get(Cliente, vehiculo.cliente_id)
+            cliente = db.get(Cliente, cliente_id or vehiculo.cliente_id)
             ultima = db.scalar(
                 select(Orden).where(Orden.vehiculo_id == vehiculo_id)
                 .order_by(Orden.fecha_creacion.desc(), Orden.id.desc()).limit(1)
@@ -1354,7 +1356,8 @@ class OrdenesWidget(QTabWidget):
                 for d in orden.detalles
             ]
             datos = {
-                "vehiculo_id": orden.vehiculo_id, "km": orden.kilometraje_ingreso or 0,
+                "vehiculo_id": orden.vehiculo_id, "cliente_id": orden.cliente_id,
+                "km": orden.kilometraje_ingreso or 0,
                 "folio": orden.folio_mercado_publico or "", "notas": orden.notas or "",
                 "porcentaje": int(orden.descuento_porcentaje),
                 "monto": int(orden.descuento_monto), "pagado": orden.monto_pagado,
@@ -1364,7 +1367,7 @@ class OrdenesWidget(QTabWidget):
 
         # Deja la tarjeta del vehículo y vacía el formulario; después se llena
         # con lo que la orden traía.
-        self._iniciar_nueva_orden(datos["vehiculo_id"])
+        self._iniciar_nueva_orden(datos["vehiculo_id"], datos["cliente_id"])
         self.orden_abierta_id = orden_id
         for item, nombre, precio, cantidad, detalle_id, categoria in lineas:
             self._insertar_en_carrito(item, nombre, precio, cantidad, detalle_id, categoria)
@@ -1797,7 +1800,7 @@ class DialogoDetalleOrden(QDialog):
         with SessionLocal() as db:
             orden = db.get(Orden, orden_id)
             vehiculo = db.get(Vehiculo, orden.vehiculo_id)
-            cliente = db.get(Cliente, vehiculo.cliente_id)
+            cliente = db.get(Cliente, orden.cliente_id)
             usuario = db.get(Usuario, orden.usuario_id)
             mecanico = orden.mecanico.nombre if orden.mecanico else SIN_MECANICO
 

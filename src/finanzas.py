@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from .models import (
-    CuentaPorCobrar, FacturaProveedor, Orden, PagoCobro, PagoProveedor, Proveedor, Vehiculo,
+    CuentaPorCobrar, FacturaProveedor, Orden, PagoCobro, PagoProveedor, Proveedor,
 )
 from .precios import clp, iva_de
 from .rut import es_valido, formatear
@@ -154,7 +154,7 @@ def _fila_cobro(cuenta: CuentaPorCobrar, hoy: date) -> FilaCobro:
         costo = cuenta.costo
         margen = cuenta.margen
         estimado = False
-    nombre = cuenta.cliente_nombre or (orden.vehiculo.cliente.nombre_completo if orden else "")
+    nombre = cuenta.cliente_nombre or (orden.cliente.nombre_completo if orden else "")
     mora = dias_de_mora_cobro(cuenta.fecha_factura, hoy) if cuenta.estado == "POR_COBRAR" else 0
     return FilaCobro(
         id=cuenta.id, orden_id=cuenta.orden_id, cliente=nombre,
@@ -177,8 +177,7 @@ def cuentas_por_cobrar(db, hoy: date | None = None) -> list[FilaCobro]:
         select(CuentaPorCobrar)
         .options(selectinload(CuentaPorCobrar.pagos),
                  selectinload(CuentaPorCobrar.orden).selectinload(Orden.detalles),
-                 selectinload(CuentaPorCobrar.orden).selectinload(Orden.vehiculo)
-                 .selectinload(Vehiculo.cliente))
+                 selectinload(CuentaPorCobrar.orden).selectinload(Orden.cliente))
         .order_by(CuentaPorCobrar.id)
     ).all()
     return [_fila_cobro(cuenta, hoy) for cuenta in cuentas
