@@ -417,6 +417,35 @@ restaurar.exe respaldos\lubriexpress-AAAAMMDD-HHMM.sql.gz
 
 El detalle de cada cambio de esquema está en \texttt{docs/base-de-datos.md}.
 
+\subsection{La versión 1.1.3: el cliente de cada orden}
+\label{sec:cliente-orden}
+
+Hasta la 1.1.2 una orden no sabía a qué cliente pertenecía: lo leía del vehículo,
+y el vehículo tiene un solo dueño. Si el auto pasaba a otra persona, todas sus
+órdenes anteriores pasaban con él, con su PDF y lo que se debía. Desde la 1.1.3
+la orden guarda su propio cliente, en \texttt{ordenes.cliente\_id}:
+
+\begin{itemize}
+  \item Lo copia el trigger \texttt{fn\_congelar\_cliente} al crear la orden, desde
+        el dueño del vehículo ese día, y no se mueve más. La aplicación no lo
+        escribe.
+  \item El historial y su búsqueda, las órdenes abiertas, el detalle, el PDF,
+        Finanzas y el reporte de descuentos leen el cliente de la orden, no el
+        del vehículo.
+  \item El \textbf{traspaso} de un auto, desde la ficha del vehículo, cambia solo
+        el dueño actual (\texttt{vehiculos.cliente\_id}). La ficha, el último
+        servicio y las órdenes anteriores quedan como estaban.
+\end{itemize}
+
+\textbf{Al actualizar}, el paso \texttt{ordenes.cliente\_id} de
+\texttt{actualizar.exe} agrega la columna y rellena las órdenes que ya existen con
+el dueño que su auto tiene hoy, que es el que ya mostraban: el sistema anterior
+no traía otro dato confiable. Por eso conviene correr el actualizador
+\textbf{antes} de traspasar cualquier auto. Un traspaso hecho antes de
+actualizar movería sus órdenes antiguas al dueño nuevo, y esa información no se
+puede reconstruir. La aplicación nueva sobre una base sin ese paso falla al leer
+órdenes: el actualizador va siempre antes.
+
 \section{Problemas frecuentes}
 
 \subsection*{``No se pudo conectar usando DATABASE\_URL''}
@@ -456,6 +485,9 @@ que es justamente lo que el sistema anterior no hacía.
         exportar.
   \item \texttt{respaldar.exe} deja un archivo y lo copia a OneDrive.
   \item \texttt{actualizar.exe} dice que el esquema ya está al día.
+  \item Una patente que ya pertenece a otro cliente ofrece \textbf{traspasarla}
+        (sección~\ref{sec:cliente-orden}), y las órdenes anteriores del auto
+        siguen a nombre de su dueño de entonces.
   \item El número de versión de la barra de estado es el de la carpeta que se copió.
   \item Con la sesión de administrador, \textbf{Finanzas} abre sin errores y
         \textbf{Cerrar sesión} vuelve al inicio de sesión.
