@@ -1,17 +1,16 @@
 """Mantenedor de Inventario: listado de productos, alta y edición."""
+from datetime import date
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QDialog, QFormLayout, QHBoxLayout,
+    QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QHBoxLayout,
     QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QPushButton, QSpinBox,
-    QSplitter, QTableWidgetItem, QVBoxLayout, QWidget, QFileDialog,
+    QSplitter, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
-from sqlalchemy.orm import joinedload
-
-import openpyxl 
 
 from ..auth import Sesion
 from ..database import SessionLocal
@@ -19,10 +18,11 @@ from ..models import CambioPrecio, KardexMovimiento, Producto, Ubicacion, Usuari
 from ..permisos import puede
 from ..precios import con_iva
 from ..texto import filtro_busqueda, normalizar
+from ..xlsx import escribir_xlsx
 from .comunes import (
     BADGE_ACENTO, BADGE_ALERTA, BADGE_EXITO, BADGE_INFO, BADGE_NEUTRAL, ROL_INSIGNIA,
-    ItemNumerico, SpinBoxConPrefijo, ajustar_columnas, barra, botonera, clp, con_aviso_vacio,
-    crear_tabla,
+    ItemNumerico, SpinBoxConPrefijo, ajustar_columnas, barra, botonera, carpeta_de_documentos,
+    clp, con_aviso_vacio, crear_tabla,
     exigir_permiso, hacer_buscable, layout_de_dialogo, layout_de_pantalla, reordenar,
 )
 from .carga_excel import CargaExcelDialog
@@ -706,9 +706,7 @@ class InventarioWidget(QWidget):
         self.boton_excel.clicked.connect(self.abrir_carga_excel)
         self.boton_minimos = QPushButton("Mínimo por categoría")
         self.boton_minimos.clicked.connect(self.fijar_minimos)
-
         self.boton_exportar = QPushButton("Exportar Excel")
-        self.boton_exportar.setProperty("clase", "secundario") # Opcional: darle un estilo
         self.boton_exportar.clicked.connect(self.exportar_a_excel)
 
         # El rol manda: el botón nace apagado y lo dice, y el slot vuelve a
@@ -720,10 +718,10 @@ class InventarioWidget(QWidget):
         self.boton_excel.setEnabled(self.supervisa)
         self.boton_minimos.setEnabled(self.supervisa)
         self.boton_exportar.setEnabled(self.supervisa)
-
         if not self.supervisa:
             for boton in (boton_nuevo, self.boton_editar, self.boton_ingreso,
-                          self.boton_ajuste, self.boton_excel, self.boton_minimos, self.boton_exportar):
+                          self.boton_ajuste, self.boton_excel, self.boton_exportar,
+                          self.boton_minimos):
                 boton.setToolTip("Reservado a supervisores y administradores")
 
         self.tabla = con_aviso_vacio(
@@ -753,11 +751,11 @@ class InventarioWidget(QWidget):
         # la caja de búsqueda hasta dejarla en "Bus…".
         barra_superior = barra(
             self.busqueda, self.solo_criticos, self.boton_vender, self.boton_editar,
-            boton_nuevo, self.boton_exportar, estira=0,
+            boton_nuevo, estira=0,
         )
         barra_bodega = barra(
             QLabel("Bodega:"), self.boton_ingreso, self.boton_ajuste, self.boton_excel,
-            self.boton_minimos, estira=5,
+            self.boton_exportar, self.boton_minimos, estira=6,
         )
 
         arriba = QWidget()
@@ -816,6 +814,7 @@ class InventarioWidget(QWidget):
                  p.stock_critico, p.activo)
                 for p in productos
             ]
+        self.filas = filas
 
         self.tabla.setSortingEnabled(False)
         self.tabla.setRowCount(len(filas))
@@ -982,56 +981,31 @@ class InventarioWidget(QWidget):
             self.recargar()
 
     def exportar_a_excel(self) -> None:
-        if not self.supervisa:
+        if not exigir_permiso("inventario", self):
             return
-            
-        ruta, _ = QFileDialog.getSaveFileName(
-            self, 
-            "Guardar Inventario", 
-            "Inventario_Actual.xlsx", 
-            "Archivos de Excel (*.xlsx)"
-        )
-        
+        sugerida = carpeta_de_documentos("Inventario") / f"inventario-{date.today():%Y-%m-%d}.xlsx"
+        ruta, _ = QFileDialog.getSaveFileName(self, "Exportar inventario", str(sugerida),
+                                              "Excel (*.xlsx)")
         if not ruta:
             return
-
         try:
-            with SessionLocal() as db:
-                productos = db.scalars(
-                    select(Producto)
-                    .options(joinedload(Producto.ubicacion)) # <--- LA MAGIA ESTÁ AQUÍ
-                    .where(Producto.activo.is_(True))
-                    .order_by(Producto.nombre)
-                ).all()
+            self.exportar_a(ruta)
+        except OSError as error:
+            # En Windows casi siempre es lo mismo: el archivo sigue abierto en Excel.
+            QMessageBox.warning(self, "No se pudo exportar",
+                                f"{error}\n\nSi el archivo está abierto en Excel, ciérralo y "
+                                "vuelve a intentar.")
+            return
+        QMessageBox.information(self, "Inventario exportado", f"Quedó en:\n{ruta}")
 
-            libro = openpyxl.Workbook()
-            hoja = libro.active
-            hoja.title = "Inventario Físico"
-
-            # Encabezados solicitados
-            encabezados = ["Nombre", "Precio Venta", "Costo", "Stock", "Ubicación"]
-            hoja.append(encabezados)
-
-            for celda in hoja[1]:
-                celda.font = openpyxl.styles.Font(bold=True)
-
-            for p in productos:
-                costo_real = float(p.precio_costo) if p.precio_costo and self.ve_costo else "Oculto"
-                
-                # Extraer la descripción de la ubicación de forma segura
-                nombre_ubicacion = p.ubicacion.descripcion if p.ubicacion else "Sin ubicación"
-                
-                fila = [
-                    p.nombre,
-                    float(p.precio_venta) if p.precio_venta else 0.0,
-                    costo_real,
-                    p.stock_actual,
-                    nombre_ubicacion # <--- CAMBIO AQUÍ
-                ]
-                hoja.append(fila)
-
-            libro.save(ruta)
-            QMessageBox.information(self, "Exportación exitosa", f"Inventario guardado en:\n{ruta}")
-
-        except Exception as e:
-            QMessageBox.critical(self, "Error al exportar", f"No se pudo guardar el archivo:\n{str(e)}")
+    def exportar_a(self, ruta) -> None:
+        """Lo que muestra el listado, con la búsqueda y el filtro puestos. El
+        costo sale solo para quien ve esa columna, y "Activo" reemplaza al gris
+        con que la tabla marca los inactivos."""
+        columnas = [c for c in COLUMNAS_PRODUCTO if c != "Costo" or self.ve_costo] + ["Activo"]
+        escribir_xlsx(ruta, columnas, [
+            [nombre, marca, categoria, ubicacion, stock, minimo,
+             *([int(costo)] if self.ve_costo else []), con_iva(venta), "Sí" if activo else "No"]
+            for (_, nombre, marca, categoria, ubicacion, stock, minimo, costo, venta, _, activo)
+            in self.filas
+        ])

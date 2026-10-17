@@ -183,6 +183,32 @@ def test_el_listado_muestra_la_venta_con_iva(app, limpiar, bodeguero_qa):
     assert celda.text() == "$11.900"
 
 
+def test_la_exportacion_lleva_lo_que_muestra_el_listado(app, limpiar, bodeguero_qa, tmp_path):
+    """Lo pidió el taller para filtrar por categoría y marca en Excel. Un
+    supervisor no ve el costo en pantalla, así que tampoco en el archivo."""
+    from src.ui import InventarioWidget
+    from src.xlsx import leer_xlsx
+
+    with SessionLocal() as db:
+        db.add(Producto(nombre=NOMBRE, marca="Mobil", categoria="Aceite motor",
+                        precio_costo=1000, precio_venta=10000, stock_actual=3,
+                        stock_minimo=1, activo=False))
+        db.commit()
+
+    widget = InventarioWidget()
+    widget.busqueda.setText(NOMBRE)
+    ruta = tmp_path / "inventario.xlsx"
+    widget.exportar_a(ruta)
+    assert leer_xlsx(ruta) == [{
+        "Nombre": NOMBRE, "Marca": "Mobil", "Categoría": "Aceite motor", "Ubicación": None,
+        "Stock": "3", "Mín.": "1", "Venta c/IVA": "11900", "Activo": "No",
+    }]
+
+    widget.ve_costo = True
+    widget.exportar_a(ruta)
+    assert leer_xlsx(ruta)[0]["Costo"] == "1000"
+
+
 def test_el_historial_de_kardex_ordena_y_dice_de_dónde_viene(db):
     from src.ui.inventario import movimientos_de, origen_de
 
