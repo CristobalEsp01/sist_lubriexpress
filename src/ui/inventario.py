@@ -4,11 +4,14 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QFormLayout, QHBoxLayout,
     QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QPushButton, QSpinBox,
-    QSplitter, QTableWidgetItem, QVBoxLayout, QWidget,
+    QSplitter, QTableWidgetItem, QVBoxLayout, QWidget, QFileDialog,
 )
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload
+
+import openpyxl 
 
 from ..auth import Sesion
 from ..database import SessionLocal
@@ -704,6 +707,10 @@ class InventarioWidget(QWidget):
         self.boton_minimos = QPushButton("Mínimo por categoría")
         self.boton_minimos.clicked.connect(self.fijar_minimos)
 
+        self.boton_exportar = QPushButton("Exportar Excel")
+        self.boton_exportar.setProperty("clase", "secundario") # Opcional: darle un estilo
+        self.boton_exportar.clicked.connect(self.exportar_a_excel)
+
         # El rol manda: el botón nace apagado y lo dice, y el slot vuelve a
         # preguntar. Editar y Ajustar además exigen una fila (recargar_kardex).
         self.supervisa = puede("inventario")
@@ -712,9 +719,11 @@ class InventarioWidget(QWidget):
         self.boton_ingreso.setEnabled(self.supervisa)
         self.boton_excel.setEnabled(self.supervisa)
         self.boton_minimos.setEnabled(self.supervisa)
+        self.boton_exportar.setEnabled(self.supervisa)
+
         if not self.supervisa:
             for boton in (boton_nuevo, self.boton_editar, self.boton_ingreso,
-                          self.boton_ajuste, self.boton_excel, self.boton_minimos):
+                          self.boton_ajuste, self.boton_excel, self.boton_minimos, self.boton_exportar):
                 boton.setToolTip("Reservado a supervisores y administradores")
 
         self.tabla = con_aviso_vacio(
@@ -744,7 +753,7 @@ class InventarioWidget(QWidget):
         # la caja de búsqueda hasta dejarla en "Bus…".
         barra_superior = barra(
             self.busqueda, self.solo_criticos, self.boton_vender, self.boton_editar,
-            boton_nuevo, estira=0,
+            boton_nuevo, self.boton_exportar, estira=0,
         )
         barra_bodega = barra(
             QLabel("Bodega:"), self.boton_ingreso, self.boton_ajuste, self.boton_excel,
@@ -972,3 +981,57 @@ class InventarioWidget(QWidget):
             # Si el usuario confirma, recargamos la tabla principal para ver los nuevos números
             self.recargar()
 
+    def exportar_a_excel(self) -> None:
+        if not self.supervisa:
+            return
+            
+        ruta, _ = QFileDialog.getSaveFileName(
+            self, 
+            "Guardar Inventario", 
+            "Inventario_Actual.xlsx", 
+            "Archivos de Excel (*.xlsx)"
+        )
+        
+        if not ruta:
+            return
+
+        try:
+            with SessionLocal() as db:
+                productos = db.scalars(
+                    select(Producto)
+                    .options(joinedload(Producto.ubicacion)) # <--- LA MAGIA ESTÁ AQUÍ
+                    .where(Producto.activo.is_(True))
+                    .order_by(Producto.nombre)
+                ).all()
+
+            libro = openpyxl.Workbook()
+            hoja = libro.active
+            hoja.title = "Inventario Físico"
+
+            # Encabezados solicitados
+            encabezados = ["Nombre", "Precio Venta", "Costo", "Stock", "Ubicación"]
+            hoja.append(encabezados)
+
+            for celda in hoja[1]:
+                celda.font = openpyxl.styles.Font(bold=True)
+
+            for p in productos:
+                costo_real = float(p.precio_costo) if p.precio_costo and self.ve_costo else "Oculto"
+                
+                # Extraer la descripción de la ubicación de forma segura
+                nombre_ubicacion = p.ubicacion.descripcion if p.ubicacion else "Sin ubicación"
+                
+                fila = [
+                    p.nombre,
+                    float(p.precio_venta) if p.precio_venta else 0.0,
+                    costo_real,
+                    p.stock_actual,
+                    nombre_ubicacion # <--- CAMBIO AQUÍ
+                ]
+                hoja.append(fila)
+
+            libro.save(ruta)
+            QMessageBox.information(self, "Exportación exitosa", f"Inventario guardado en:\n{ruta}")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error al exportar", f"No se pudo guardar el archivo:\n{str(e)}")
