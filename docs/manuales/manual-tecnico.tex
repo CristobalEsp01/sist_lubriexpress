@@ -446,6 +446,19 @@ actualizar movería sus órdenes antiguas al dueño nuevo, y esa información no
 puede reconstruir. La aplicación nueva sobre una base sin ese paso falla al leer
 órdenes: el actualizador va siempre antes.
 
+\subsection{La versión 1.2.0: exportar el inventario}
+
+Agrega el aviso de cliente repetido al crear uno nuevo y el botón
+\textbf{Exportar Excel} de Inventario. No cambia el esquema. Aun así, un equipo
+que venga de la 1.1.2 no tiene el paso \texttt{ordenes.cliente\_id} de la
+sección~\ref{sec:cliente-orden}, así que el orden es el de siempre: primero
+\texttt{actualizar.exe} y después la aplicación nueva.
+
+La planilla la escribe \texttt{src/xlsx.py}, igual que la plantilla de carga y
+los reportes. El sistema no depende de \texttt{openpyxl} ni de otra biblioteca
+de Excel, y no conviene agregarla: el ejecutable tendría que empaquetarla y la
+del repositorio ya alcanza para una hoja sin estilos.
+
 \section{Problemas frecuentes}
 
 \subsection*{``No se pudo conectar usando DATABASE\_URL''}

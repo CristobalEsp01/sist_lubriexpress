@@ -64,6 +64,7 @@ Crear y editar productos & --- & Sí & Sí \\
 Ingresar mercadería & --- & Sí & Sí \\
 Ajustar stock por recuento & --- & Sí & Sí \\
 Cargar inventario desde Excel & --- & Sí & Sí \\
+Exportar el inventario a Excel & --- & Sí & Sí \\
 Fijar el mínimo de una categoría & --- & Sí & Sí \\
 Usar Finanzas: cuentas por cobrar y por pagar, con el costo de cada cuenta & --- & Sí & Sí \\
 Poner a mano el precio del Servicio Público & --- & Sí & Sí \\
@@ -191,6 +192,30 @@ La carga es todo o nada, a propósito: si entrara una parte y después se repiti
 la planilla corregida, el stock de las filas que sí entraron quedaría sumado dos
 veces. A un producto que ya existe solo se le suma el stock; sus precios no se
 pisan desde una planilla.
+
+\subsection{Exportar el inventario a Excel}
+
+\textbf{Exportar Excel}, en la fila de \emph{Bodega}, guarda en una planilla lo
+que la tabla tiene a la vista: nombre, marca, categoría, ubicación, stock,
+mínimo y precio de venta con IVA. El sistema propone guardarla en
+\texttt{Documentos\textbackslash Lubri-Express\textbackslash Inventario}, con la
+fecha del día en el nombre; se puede elegir otra carpeta u otro nombre.
+
+\begin{itemize}
+  \item \textbf{Sale lo que se está viendo.} Con una búsqueda puesta o con
+        \textbf{Solo stock crítico} marcado, la planilla trae solo esos
+        productos. Para la bodega entera, se borra la búsqueda antes de
+        exportar.
+  \item La columna \emph{Activo} dice \emph{No} en los productos inactivos, que
+        en la tabla aparecen en gris.
+  \item El \textbf{costo} sale solo cuando exporta un administrador, igual que
+        en la tabla.
+\end{itemize}
+
+En Excel o LibreOffice se puede filtrar después por marca o por categoría, por
+ejemplo para salir a contar una repisa. Si el sistema avisa que no pudo guardar
+la planilla, casi siempre es porque un archivo con ese mismo nombre está
+abierto en Excel: se cierra y se exporta de nuevo.
 
 \subsection{Stock mínimo por categoría}
 
