@@ -263,3 +263,75 @@ def test_no_se_cobra_un_producto_desactivado_despues_de_agregarlo(
     with SessionLocal() as db:
         assert db.scalar(select(Venta).where(Venta.numero_boleta == "QA-0009")) is None
         assert db.get(Producto, producto_qa).stock_actual == 10  # intacto
+
+
+def test_la_venta_guarda_el_descuento_y_el_total_lo_refleja(app, usuario_qa, producto_qa,
+                                                            sin_modales):
+    from src.ui.ventas import DetalleVentaDialog, PuntoVentaWidget
+
+    widget = PuntoVentaWidget()
+    widget.agregar_producto(producto_qa, cantidad=2)              # 12.000 neto
+    assert not widget.valor_descuento.isEnabled()                 # sin descuento, apagado
+    widget.tipo_descuento.setCurrentIndex(1)                      # porcentaje
+    widget.valor_descuento.setValue(10)
+    assert widget.totales.descuento.text() == "- $1.200"
+    assert widget.total.text() == "$12.850"                       # 10.800 + 2.052 = 12.852
+
+    widget.boleta.setText("QA-0100")
+    widget.combo_medio_pago.setCurrentText("Efectivo")
+    widget.generar_venta()
+
+    with SessionLocal() as db:
+        venta = db.scalar(select(Venta).where(Venta.numero_boleta == "QA-0100"))
+        assert (int(venta.subtotal), int(venta.descuento_porcentaje), int(venta.descuento_monto),
+                int(venta.impuesto), int(venta.ajuste_redondeo), int(venta.total_final)
+                ) == (12000, 10, 0, 2052, -2, 12850)
+        venta_id = venta.id
+    assert widget.tipo_descuento.currentIndex() == 0              # la siguiente parte sin descuento
+
+    detalle = DetalleVentaDialog(venta_id, "QA-0100")
+    assert detalle.totales.neto.text() == "$12.000"
+    assert detalle.totales.descuento.text() == "- $1.200"
+
+
+def test_quitar_productos_topa_el_monto_al_nuevo_neto(app, usuario_qa, producto_qa, sin_modales,
+                                                      monkeypatch):
+    """Un monto fijado con dos unidades no puede quedar mayor que la venta
+    cuando se baja a una: se ajusta y se avisa."""
+    from PySide6.QtWidgets import QInputDialog
+
+    from src.ui.ventas import PuntoVentaWidget
+
+    widget = PuntoVentaWidget()
+    widget.agregar_producto(producto_qa, cantidad=2)              # 12.000 neto
+    widget.tipo_descuento.setCurrentIndex(2)                      # monto
+    widget.valor_descuento.setValue(10000)
+    assert widget.total.text() == "$2.380"
+    assert widget.aviso_descuento.isHidden()
+
+    widget.tabla_carrito.selectRow(0)
+    monkeypatch.setattr(QInputDialog, "getInt", staticmethod(lambda *a, **k: (1, True)))
+    widget.cambiar_cantidad()                                     # 6.000 neto
+
+    assert widget.valor_descuento.value() == 6000
+    assert not widget.aviso_descuento.isHidden()
+    assert widget.total.text() == "$0"
+
+
+def test_el_descuento_cabe_en_la_ventana_minima(app, usuario_qa):
+    """Con el selector de descuento, el carrito tiene que seguir mostrando
+    filas y el total entero a 960×640."""
+    from src.ui import VentanaPrincipal
+
+    ventana = VentanaPrincipal()
+    ventana.resize(ventana.minimumSize())
+    ventana.show()
+    ventana.pestanias.setCurrentWidget(ventana.ventas)
+    punto = ventana.ventas.punto_venta
+    app.processEvents()
+
+    cifra = punto.totales.total
+    assert cifra.height() >= cifra.sizeHint().height()
+    tabla = punto.tabla_carrito
+    assert tabla.viewport().height() >= 3 * tabla.verticalHeader().defaultSectionSize()
+    ventana.close()

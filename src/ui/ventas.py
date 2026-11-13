@@ -21,17 +21,21 @@ from sqlalchemy.orm import joinedload
 from ..auth import Sesion
 from ..database import SessionLocal
 from ..models import Cliente, DetalleVenta, Producto, Venta
+from ..precios import aplicar_descuento
 from .catalogo import Catalogo
 from .comunes import (
-    ItemNumerico, ajustar_columnas, barra, bloque_total, clp, con_aviso_vacio, crear_tabla,
-    combo_medio_pago, hacer_buscable, layout_de_dialogo, layout_de_pantalla, medio_elegido,
-    reordenar,
+    ItemNumerico, SpinBoxConPrefijo, ajustar_columnas, barra, bloque_total, clp,
+    con_aviso_vacio, crear_tabla, combo_medio_pago, hacer_buscable, layout_de_dialogo,
+    layout_de_pantalla, medio_elegido, reordenar,
 )
 from .tema import CANAL_PANEL, ESPACIO_PANTALLA
 
 COLUMNAS_CARRITO = ["Producto", "Cantidad", "Precio Unit.", "Subtotal"]
 COLUMNAS_DETALLE = ["Producto", "Cantidad", "Precio Unit.", "Subtotal"]
 COLUMNAS_HISTORIAL = ["Fecha", "Nº Boleta", "Cliente", "Vendedor", "Total"]
+# El descuento general de Órdenes, sin los convenios: flyer y gremio son solo
+# de órdenes (decisión del 23-09-2026).
+TIPOS_DESCUENTO_VENTA = ["Sin descuento", "Porcentaje (%)", "Monto ($)"]
 
 CORRELATIVO = re.compile(r"^(.*?)(\d+)$")
 
@@ -108,6 +112,22 @@ class PuntoVentaWidget(QWidget):
 
         self.combo_medio_pago = combo_medio_pago()
 
+        # Un selector y un solo campo, como en Órdenes: porcentaje y monto no
+        # pueden coincidir (la base lo prohíbe).
+        self.tipo_descuento = QComboBox()
+        self.tipo_descuento.addItems(TIPOS_DESCUENTO_VENTA)
+        self.tipo_descuento.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.tipo_descuento.setMinimumContentsLength(12)
+        self.valor_descuento = SpinBoxConPrefijo()
+        self.valor_descuento.setEnabled(False)
+        self.tipo_descuento.currentIndexChanged.connect(self._cambiar_tipo_descuento)
+        self.valor_descuento.valueChanged.connect(self._al_cambiar_valor_descuento)
+        # Dice cuándo un monto se bajó solo porque el carrito quedó más chico.
+        self.aviso_descuento = QLabel()
+        self.aviso_descuento.setProperty("clase", "aviso")
+        self.aviso_descuento.setWordWrap(True)
+        self.aviso_descuento.hide()
+
         marco_total, self.totales = bloque_total()
         self.total = self.totales.total
 
@@ -134,6 +154,11 @@ class PuntoVentaWidget(QWidget):
         layout_carrito.addWidget(self.boleta)
         layout_carrito.addWidget(QLabel("Medio de pago *"))
         layout_carrito.addWidget(self.combo_medio_pago)
+        # Rótulo y campos en una sola fila: a 640 de alto, cada fila que se
+        # suma se la quita al carrito.
+        layout_carrito.addLayout(barra(QLabel("Descuento"), self.tipo_descuento,
+                                       self.valor_descuento, estira=2))
+        layout_carrito.addWidget(self.aviso_descuento)
         layout_carrito.addWidget(marco_total)
         layout_carrito.addLayout(barra(self.boton_vaciar, self.boton_cobrar, estira=1))
 
@@ -247,14 +272,13 @@ class PuntoVentaWidget(QWidget):
         )
         if confirmar == QMessageBox.Yes:
             self.carrito.clear()
+            self.tipo_descuento.setCurrentIndex(0)
             self._redibujar_carrito()
 
     def _redibujar_carrito(self) -> None:
         self.tabla_carrito.setRowCount(len(self.carrito))
-        total = 0
         for fila, entrada in enumerate(self.carrito):
             subtotal = entrada["cantidad"] * entrada["precio_unitario"]
-            total += subtotal
             self.tabla_carrito.setItem(fila, 0, QTableWidgetItem(entrada["nombre"]))
             self.tabla_carrito.setItem(
                 fila, 1, ItemNumerico(str(entrada["cantidad"]), entrada["cantidad"])
@@ -264,9 +288,63 @@ class PuntoVentaWidget(QWidget):
             )
             self.tabla_carrito.setItem(fila, 3, ItemNumerico(clp(subtotal), subtotal))
         ajustar_columnas(self.tabla_carrito)
-        self.totales.calcular(total)
+        self._topar_monto()
+        self._actualizar_total()
         self.boton_quitar.setEnabled(False)
         self._actualizar_boton_cobrar()
+
+    # ------------------------------------------------------------------
+    # Descuento
+    # ------------------------------------------------------------------
+    def _neto(self) -> int:
+        return int(sum(e["cantidad"] * e["precio_unitario"] for e in self.carrito))
+
+    def _descuento(self) -> tuple[int, int, int, int]:
+        """(neto, porcentaje, monto, pesos descontados) según lo elegido."""
+        neto, valor = self._neto(), self.valor_descuento.value()
+        tipo = self.tipo_descuento.currentIndex()
+        return (neto, *aplicar_descuento(neto, porcentaje=valor if tipo == 1 else 0,
+                                         monto=valor if tipo == 2 else 0))
+
+    def _actualizar_total(self) -> None:
+        neto, _, _, pesos = self._descuento()
+        self.totales.calcular(neto, pesos)
+
+    def _cambiar_tipo_descuento(self, indice: int) -> None:
+        """Tope 100 y sufijo % para el porcentaje; pesos hasta el neto para el
+        monto; apagado sin descuento."""
+        self.valor_descuento.blockSignals(True)
+        self.valor_descuento.setValue(0)
+        self.valor_descuento.setEnabled(indice in (1, 2))
+        if indice == 1:
+            self.valor_descuento.setRange(0, 100)
+            self.valor_descuento.setPrefix("")
+            self.valor_descuento.setSuffix(" %")
+        else:
+            self.valor_descuento.setRange(0, self._neto())
+            self.valor_descuento.setPrefix("$ ")
+            self.valor_descuento.setSuffix("")
+            self.valor_descuento.setGroupSeparatorShown(True)
+        self.valor_descuento.blockSignals(False)
+        self.aviso_descuento.hide()
+        self._actualizar_total()
+
+    def _al_cambiar_valor_descuento(self) -> None:
+        self.aviso_descuento.hide()
+        self._actualizar_total()
+
+    def _topar_monto(self) -> None:
+        """El monto no puede pasar del neto: si el carrito se achicó, se baja
+        y se avisa, para no cobrar un descuento que ya no corresponde."""
+        if self.tipo_descuento.currentIndex() != 2:
+            return
+        neto, antes = self._neto(), self.valor_descuento.value()
+        self.valor_descuento.blockSignals(True)
+        self.valor_descuento.setMaximum(neto)
+        self.valor_descuento.blockSignals(False)
+        if self.valor_descuento.value() < antes:
+            self.aviso_descuento.setText(f"El descuento se ajustó al nuevo neto ({clp(neto)}).")
+            self.aviso_descuento.show()
 
     def _actualizar_boton_cobrar(self) -> None:
         self.boton_cobrar.setEnabled(bool(self.carrito) and bool(self.boleta.text().strip())
@@ -363,8 +441,8 @@ class PuntoVentaWidget(QWidget):
                     self.recargar_catalogo()
                     return
 
-        neto = sum(e["cantidad"] * e["precio_unitario"] for e in self.carrito)
-        impuesto, ajuste, total = self.totales.calcular(neto)
+        neto, porcentaje, monto, pesos = self._descuento()
+        impuesto, ajuste, total = self.totales.calcular(neto, pesos)
         cliente_id = self.cliente.currentData()
 
         with SessionLocal() as db:
@@ -372,6 +450,9 @@ class PuntoVentaWidget(QWidget):
                 usuario_id=Sesion.usuario_id,
                 cliente_id=cliente_id,
                 numero_boleta=numero_boleta,
+                subtotal=neto,
+                descuento_porcentaje=porcentaje,
+                descuento_monto=monto,
                 impuesto=impuesto,
                 ajuste_redondeo=ajuste,
                 total_final=total,
@@ -396,6 +477,12 @@ class PuntoVentaWidget(QWidget):
                         self, "Boleta repetida",
                         f"Ya existe una venta registrada con la boleta {numero_boleta}.",
                     )
+                elif "descuento_" in detalle:
+                    QMessageBox.warning(
+                        self, "Descuento no válido",
+                        "El descuento no es válido para esta venta. Revísalo e inténtalo "
+                        "de nuevo.",
+                    )
                 elif "stock_actual" in detalle:
                     QMessageBox.warning(
                         self, "Stock insuficiente",
@@ -417,6 +504,7 @@ class PuntoVentaWidget(QWidget):
         self.carrito.clear()
         self.cliente.setCurrentIndex(-1)  # la venta siguiente parte sin cliente
         self.combo_medio_pago.setCurrentIndex(-1)  # ni medio de pago
+        self.tipo_descuento.setCurrentIndex(0)     # ni descuento
         self._sugerir_boleta()  # deja lista la siguiente
         self._redibujar_carrito()
         self.recargar_catalogo()
@@ -448,8 +536,8 @@ class DetalleVentaDialog(QDialog):
     def _cargar_detalle(self, venta_id: int) -> None:
         with SessionLocal() as db:
             venta = db.get(Venta, venta_id)
-            cifras = (venta.total_final - venta.impuesto - venta.ajuste_redondeo, 0,
-                      venta.impuesto, venta.ajuste_redondeo, venta.total_final)
+            cifras = (venta.subtotal, venta.descuento_aplicado, venta.impuesto,
+                      venta.ajuste_redondeo, venta.total_final)
             detalles = db.scalars(
                 select(DetalleVenta)
                 .options(joinedload(DetalleVenta.producto))  # sin esto, un SELECT por fila
