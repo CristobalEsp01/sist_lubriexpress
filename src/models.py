@@ -9,7 +9,8 @@ Dos cosas que el esquema hace y estas clases no muestran:
   hacer `db.refresh(producto)` para no leer un `stock_actual` viejo de la caché.
 """
 from sqlalchemy import (
-    Column, Integer, String, Boolean, Numeric, Date, DateTime, Text, FetchedValue, ForeignKey, func
+    Column, Integer, String, Boolean, Numeric, Date, DateTime, Text, FetchedValue, ForeignKey,
+    LargeBinary, func
 )
 from sqlalchemy.orm import relationship
 
@@ -120,6 +121,17 @@ class CambioPrecio(Base):
 
     producto = relationship("Producto", back_populates="cambios_precio")
     usuario = relationship("Usuario")
+
+
+class FotoProducto(Base):
+    """La foto de un producto, ya achicada (src/fotos.py). Tabla aparte para
+    que consultar productos no arrastre la imagen."""
+
+    __tablename__ = "fotos_producto"
+
+    producto_id = Column(Integer, ForeignKey("productos.id", ondelete="CASCADE"), primary_key=True)
+    imagen = Column(LargeBinary, nullable=False)
+    actualizada = Column(DateTime, server_default=func.now(), nullable=False)
 
 
 class Servicio(Base):

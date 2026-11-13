@@ -325,6 +325,18 @@ CREATE TABLE "cambios_precio" (
 );
 
 -- ---------------------------------------------------------------------
+-- Foto de producto (una por producto)
+-- ---------------------------------------------------------------------
+-- Aparte de "productos" para que ninguna consulta del catálogo arrastre la
+-- imagen: se lee de a una, cuando se pide. Es un JPEG de ~480 px que deja
+-- src/fotos.py, y va en el respaldo como cualquier otra fila.
+CREATE TABLE "fotos_producto" (
+  "producto_id" INT PRIMARY KEY REFERENCES "productos"("id") ON DELETE CASCADE,
+  "imagen" BYTEA NOT NULL,
+  "actualizada" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ---------------------------------------------------------------------
 -- Tabla de Cuentas por Cobrar (facturas de Mercado Público y afines)
 -- ---------------------------------------------------------------------
 -- Toda orden con folio de Mercado Público abre su cuenta sola (trigger de más

@@ -922,6 +922,18 @@ ALTER TABLE "ventas"
             'CONSTRAINT descuento_dentro_de_la_venta CHECK ("descuento_monto" <= "subtotal")',
         ),
     ),
+    # 1.3.0: la foto de cada producto.
+    Paso(
+        nombre="fotos_producto",
+        comprobacion="SELECT to_regclass('public.fotos_producto') IS NOT NULL",
+        sql='''
+CREATE TABLE "fotos_producto" (
+  "producto_id" INT PRIMARY KEY REFERENCES "productos"("id") ON DELETE CASCADE,
+  "imagen" BYTEA NOT NULL,
+  "actualizada" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+''',
+    ),
 ]
 
 # Lo que se cuenta antes y después. Un cambio de esquema no borra filas; si la
