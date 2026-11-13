@@ -309,10 +309,12 @@ class IngresoMercaderiaDialog(QDialog):
         self.catalogo.tabla.itemSelectionChanged.connect(self._al_elegir)
         self.catalogo.elegido.connect(self._al_confirmar)
         self.catalogo.tabla.doubleClicked.connect(self._ir_a_cantidad)
-        # Enter en el buscador elige y pasa a la cantidad. Sin el filtro, el
-        # Enter seguía hasta "Añadir a la lista" (el botón por defecto) y
-        # añadía con cantidad 1 antes de que nadie la escribiera.
+        # Enter en el buscador o en la tabla elige y pasa a la cantidad. Sin
+        # el filtro, los dos dejan seguir el Enter hasta "Añadir a la lista"
+        # (el botón por defecto) y se añadía con cantidad 1 antes de que nadie
+        # la escribiera.
         self.catalogo.busqueda.installEventFilter(self)
+        self.catalogo.tabla.installEventFilter(self)
         self.panel_foto = PanelFoto(ancho=180)
         self.spin_cantidad = QSpinBox()
         self.spin_cantidad.setRange(1, 10000)
@@ -450,7 +452,8 @@ class IngresoMercaderiaDialog(QDialog):
             self.spin_cantidad.selectAll()
 
     def eventFilter(self, objeto, evento) -> bool:
-        if (objeto is self.catalogo.busqueda and evento.type() == QEvent.KeyPress
+        if (evento.type() == QEvent.KeyPress
+                and (objeto is self.catalogo.busqueda or objeto is self.catalogo.tabla)
                 and evento.key() in (Qt.Key_Return, Qt.Key_Enter)):
             self.catalogo.elegir()
             self._ir_a_cantidad()
@@ -949,6 +952,9 @@ class InventarioWidget(QWidget):
             aviso += f" — {clp(valorizado)} a precio costo"
         self.resumen.setText(f"{len(filas)} producto(s){aviso}")
         self.recargar_kardex()
+        # Tras guardar una foto en la ficha, o vender en otra pestaña, el panel
+        # tiene que mostrar lo de ahora y no lo de cuando se eligió la fila.
+        self._mostrar_foto()
 
     def resizeEvent(self, evento) -> None:
         super().resizeEvent(evento)

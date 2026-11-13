@@ -651,6 +651,7 @@ def test_elegir_un_producto_en_el_ingreso_muestra_su_foto_y_propone_sus_valores(
     assert dialogo._elegido["id"] == producto_id
     assert dialogo.lista_ingreso == []
     assert dialogo.focusWidget() is dialogo.spin_cantidad
+    dialogo.close()
 
     assert dialogo.panel_foto.estado == "con_foto"
     assert (dialogo.spin_costo.value(), dialogo.spin_venta.value()) == (4214, 15882)
@@ -731,3 +732,59 @@ print(cortados, file=__import__("sys").stderr)
     ancho_nombre, cortados = map(int, salida.stdout.split()[-2:])
     assert cortados == 0, salida.stderr
     assert ancho_nombre >= 280
+
+
+def test_el_panel_muestra_la_foto_recien_guardada(app, bodeguero_qa):
+    """Se carga una foto con Editar → Pegar imagen → Guardar, y el listado se
+    recarga: el panel seguía diciendo "Sin foto" y parecía que no se guardó."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QImage
+
+    from src.fotos import guardar, preparar
+    from src.ui import InventarioWidget
+
+    with SessionLocal() as db:
+        producto = Producto(nombre=NOMBRE_INGRESO, precio_costo=1, precio_venta=2, stock_actual=1)
+        db.add(producto)
+        db.commit()
+        producto_id = producto.id
+
+    inventario = InventarioWidget()
+    inventario.setAttribute(Qt.WA_DontShowOnScreen)
+    inventario.resize(1366, 700)
+    inventario.show()
+    app.processEvents()
+    inventario.busqueda.setText(NOMBRE_INGRESO)
+    inventario.tabla.selectRow(0)
+    assert inventario.panel_foto.estado == "sin_foto"
+
+    with SessionLocal() as db:
+        guardar(db, producto_id, preparar(QImage(100, 100, QImage.Format_RGB32)))
+        db.commit()
+    inventario.recargar()                 # lo que hace editar() al cerrar la ficha
+    assert inventario.panel_foto.estado == "con_foto"
+    inventario.close()
+
+
+def test_enter_sobre_una_fila_del_ingreso_lleva_a_la_cantidad_sin_anadir(app, bodeguero_qa):
+    """La tabla deja pasar el Enter al botón por defecto del diálogo: elegir
+    una fila con clic y apretar Enter añadía el producto con cantidad 1, y
+    después Enter con la cantidad lo sumaba otra vez."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    from src.ui.inventario import IngresoMercaderiaDialog
+
+    with SessionLocal() as db:
+        db.add(Producto(nombre=NOMBRE_INGRESO, precio_costo=1, precio_venta=2, stock_actual=1))
+        db.commit()
+
+    dialogo = IngresoMercaderiaDialog()
+    dialogo.setAttribute(Qt.WA_DontShowOnScreen)     # visible: así el Enter llega al diálogo
+    dialogo.show()
+    elegir(dialogo, NOMBRE_INGRESO)
+    dialogo.catalogo.tabla.setFocus()
+    QTest.keyClick(dialogo.catalogo.tabla, Qt.Key_Return)
+    assert dialogo.lista_ingreso == []
+    assert dialogo.focusWidget() is dialogo.spin_cantidad
+    dialogo.close()
