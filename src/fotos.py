@@ -40,8 +40,13 @@ def preparar(imagen: QImage) -> bytes:
     datos = QByteArray()
     salida = QBuffer(datos)
     salida.open(QIODevice.WriteOnly)
-    lienzo.save(salida, "JPG", CALIDAD)
+    escrito = lienzo.save(salida, "JPG", CALIDAD)
     salida.close()
+    # Sin el plugin de JPEG (un empaquetado incompleto) Qt no escribe nada, y
+    # guardar esos 0 bytes pisaría la foto que había.
+    if not escrito or datos.isEmpty():
+        raise FotoInvalida("No se pudo convertir la imagen a JPEG. Avisa a quien mantiene "
+                           "el sistema: falta un componente del programa.")
     return bytes(datos.data())
 
 

@@ -65,3 +65,11 @@ def test_guardar_reemplaza_y_none_borra(db, app):
     db.flush()
     assert leer(db, producto.id) is None
     assert producto.id not in con_foto(db)
+
+
+def test_si_qt_no_puede_escribir_el_jpeg_no_se_guarda_una_foto_vacia(app, monkeypatch):
+    """Sin el plugin de JPEG (un empaquetado incompleto), save() devuelve False
+    y deja 0 bytes: esos 0 bytes pisaban la foto que había."""
+    monkeypatch.setattr(QImage, "save", lambda *a, **k: False)
+    with pytest.raises(FotoInvalida):
+        preparar(QImage(50, 50, QImage.Format_RGB32))
