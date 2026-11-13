@@ -24,6 +24,20 @@ def clp(valor) -> str:
     return f"${int(valor):,}".replace(",", ".")
 
 
+def aplicar_descuento(neto: int, porcentaje: int = 0, monto: int = 0) -> tuple[int, int, int]:
+    """(porcentaje, monto a guardar, pesos descontados) de un descuento general.
+
+    Lo usan Órdenes y Ventas. El porcentaje va de 0 a 100 y el monto se topa al
+    neto, y lo topado es también lo que se guarda: guardar el monto escrito
+    dejaba en la base un descuento mayor que el documento.
+    """
+    porcentaje = min(max(int(porcentaje), 0), 100)
+    if porcentaje:
+        return porcentaje, 0, int(round(neto * porcentaje / 100))
+    tope = min(max(int(monto), 0), max(int(neto), 0))
+    return 0, tope, tope
+
+
 def redondear_decena(monto) -> int:
     """Ley de redondeo: terminaciones de 1 a 5 bajan a la decena, de 6 a 9 suben."""
     monto_entero = int(monto)

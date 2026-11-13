@@ -1148,3 +1148,26 @@ def test_una_orden_abierta_no_cambia_de_cliente_si_el_auto_se_vende(
     nueva = ordenes.OrdenesWidget()
     nueva._iniciar_nueva_orden(taller.vehiculo_id)
     assert nueva.label_cliente.text().startswith(NOMBRE_COMPRADOR)
+
+
+def test_un_monto_mayor_que_la_orden_se_guarda_topado(app, taller, sin_modales):
+    """La pantalla topaba el descuento al calcular el total, pero guardaba el
+    monto escrito: el reporte de descuentos mostraba más descuento que orden."""
+    from src.ui import ordenes
+
+    widget = ordenes.OrdenesWidget()
+    widget._iniciar_nueva_orden(taller.vehiculo_id)
+    widget.agregar_al_carrito(taller.producto_id, 1)              # 12.900 neto
+    widget.tipo_descuento.setCurrentIndex(2)                      # monto
+    widget.valor_descuento.setValue(50000)
+    elegir_mecanico(widget, taller)
+    widget.spin_kilometraje.setValue(50000)
+    widget.pagada.setChecked(True)
+    widget.combo_medio_pago.setCurrentIndex(0)
+    widget.guardar_orden()
+
+    with SessionLocal() as db:
+        orden = db.scalar(select(Orden).where(Orden.vehiculo_id == taller.vehiculo_id))
+        assert (int(orden.subtotal), int(orden.descuento_monto), int(orden.total_final)) == (
+            12900, 12900, 0)
+        assert orden.descuento_aplicado == 12900

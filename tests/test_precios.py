@@ -1,5 +1,7 @@
 """Sin base de datos: el IVA se redondea al peso, como en la boleta."""
-from src.precios import con_iva, iva_de, redondear_decena
+import pytest
+
+from src.precios import aplicar_descuento, con_iva, iva_de, redondear_decena
 
 
 def test_el_iva_se_redondea_al_peso():
@@ -15,3 +17,14 @@ def test_ley_de_redondeo_a_la_decena():
     assert redondear_decena(10000) == 10000
     assert redondear_decena(10004.99) == 10000
     assert redondear_decena(10007.15) == 10010
+
+
+@pytest.mark.parametrize("neto, pct, monto, esperado", [
+    (10000, 10, 0, (10, 0, 1000)),
+    (10000, 0, 2500, (0, 2500, 2500)),
+    (30000, 0, 50000, (0, 30000, 30000)),   # Órdenes guardaba 50.000: más que la orden
+    (10000, 150, 0, (100, 0, 10000)),
+    (0, 0, 5000, (0, 0, 0)),
+])
+def test_el_descuento_nunca_supera_el_neto(neto, pct, monto, esperado):
+    assert aplicar_descuento(neto, pct, monto) == esperado

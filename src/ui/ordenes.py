@@ -33,7 +33,7 @@ from ..models import (
     Usuario, Vehiculo,
 )
 from ..permisos import puede
-from ..precios import iva_de
+from ..precios import aplicar_descuento, iva_de
 from ..texto import filtro_busqueda
 from ..whatsapp import PLANTILLAS, describir_vehiculo, enlace_whatsapp, redactar
 from .clientes import FormularioCliente, FormularioVehiculo
@@ -1059,10 +1059,10 @@ class OrdenesWidget(QTabWidget):
                 for fila in range(self.tabla_carrito.rowCount())
             ))
             return 0, pesos, pesos
-        if tipo == 1 and valor:
-            return valor, 0, int(round(neto * valor / 100))
-        if tipo == 2 and valor:
-            return 0, valor, min(valor, neto)
+        if tipo == 1:
+            return aplicar_descuento(neto, porcentaje=valor)
+        if tipo == 2:
+            return aplicar_descuento(neto, monto=valor)
         return 0, 0, 0
 
     def _flyer_disponible(self, folio: int) -> bool:
