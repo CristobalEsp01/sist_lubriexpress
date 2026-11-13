@@ -892,6 +892,36 @@ CREATE INDEX idx_ordenes_cliente ON "ordenes"("cliente_id");
             CONGELAR_CLIENTE,
         ),
     ),
+    # 1.3.0: descuento en Ventas. Las ventas existentes reciben su neto como
+    # subtotal, exacto porque ninguna tenía descuento.
+    Paso(
+        nombre="ventas.descuento",
+        comprobacion="""
+            SELECT EXISTS (SELECT 1 FROM information_schema.columns
+                            WHERE table_name = 'ventas' AND column_name = 'descuento_monto')
+        """,
+        sql='''
+ALTER TABLE "ventas"
+  ADD COLUMN "subtotal" DECIMAL(10,2) NOT NULL DEFAULT 0 CHECK ("subtotal" >= 0),
+  ADD COLUMN "descuento_porcentaje" DECIMAL(5,2) NOT NULL DEFAULT 0
+      CHECK ("descuento_porcentaje" >= 0 AND "descuento_porcentaje" <= 100),
+  ADD COLUMN "descuento_monto" DECIMAL(10,2) NOT NULL DEFAULT 0 CHECK ("descuento_monto" >= 0);
+UPDATE "ventas" SET "subtotal" = "total_final" - "impuesto" - "ajuste_redondeo";
+ALTER TABLE "ventas"
+  ADD CONSTRAINT descuento_exclusivo_venta
+      CHECK (NOT ("descuento_porcentaje" > 0 AND "descuento_monto" > 0)),
+  ADD CONSTRAINT descuento_dentro_de_la_venta CHECK ("descuento_monto" <= "subtotal");
+''',
+        declara=(
+            '"subtotal" DECIMAL(10,2) NOT NULL DEFAULT 0 CHECK ("subtotal" >= 0)',
+            '"descuento_porcentaje" DECIMAL(5,2) NOT NULL DEFAULT 0 '
+            'CHECK ("descuento_porcentaje" >= 0 AND "descuento_porcentaje" <= 100)',
+            '"descuento_monto" DECIMAL(10,2) NOT NULL DEFAULT 0 CHECK ("descuento_monto" >= 0)',
+            'CONSTRAINT descuento_exclusivo_venta '
+            'CHECK (NOT ("descuento_porcentaje" > 0 AND "descuento_monto" > 0))',
+            'CONSTRAINT descuento_dentro_de_la_venta CHECK ("descuento_monto" <= "subtotal")',
+        ),
+    ),
 ]
 
 # Lo que se cuenta antes y después. Un cambio de esquema no borra filas; si la

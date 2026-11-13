@@ -206,3 +206,34 @@ def test_los_tecnicos_migrados_pasan_a_ser_mecanicos_de_sus_ordenes(db):
     # Una segunda pasada no encuentra nada ni duplica al mecánico.
     assert A.mecanicos_de_lo_migrado(db, aplicar=True)[tecnico.nombre] == 0
     assert db.query(Mecanico).filter_by(nombre=tecnico.nombre).count() == 1
+
+
+def test_las_ventas_que_ya_existian_quedan_con_su_neto_como_subtotal():
+    """Antes del descuento en Ventas el neto no se guardaba: se obtenía
+    restando. El paso lo deja escrito, y es exacto porque ninguna venta vieja
+    tenía descuento."""
+    exigir_base_de_datos()
+    from src.database import engine
+
+    with engine.connect() as conexion:
+        try:
+            conexion.exec_driver_sql(
+                'ALTER TABLE "ventas" DROP CONSTRAINT IF EXISTS descuento_exclusivo_venta,'
+                ' DROP CONSTRAINT IF EXISTS descuento_dentro_de_la_venta,'
+                ' DROP COLUMN IF EXISTS "subtotal", DROP COLUMN IF EXISTS "descuento_porcentaje",'
+                ' DROP COLUMN IF EXISTS "descuento_monto"')
+            usuario = conexion.exec_driver_sql(
+                f'''INSERT INTO "usuarios" ("nombre", "username", "password_hash", "rol")
+                    VALUES ('QA', 'qa_{rut_de_prueba()}', 'x', 'ADMINISTRADOR') RETURNING "id"''').scalar()
+            venta = conexion.exec_driver_sql(
+                f'''INSERT INTO "ventas" ("usuario_id", "impuesto", "ajuste_redondeo", "total_final")
+                    VALUES ({usuario}, 1900, 0, 11900) RETURNING "id"''').scalar()
+
+            paso, = [p for p in A.pendientes(conexion) if p.nombre == "ventas.descuento"]
+            A.aplicar(conexion, paso)
+
+            assert conexion.exec_driver_sql(
+                f'''SELECT "subtotal", "descuento_porcentaje", "descuento_monto"
+                    FROM "ventas" WHERE "id" = {venta}''').one() == (10000, 0, 0)
+        finally:
+            conexion.rollback()

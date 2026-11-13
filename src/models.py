@@ -146,7 +146,19 @@ class Mecanico(Base):
     activo = Column(Boolean, default=True, nullable=False)
 
 
-class Orden(Base):
+class ConDescuento:
+    """Órdenes y ventas guardan el descuento igual: porcentaje o monto sobre
+    `subtotal`, nunca los dos (lo impide un CHECK en cada tabla)."""
+
+    @property
+    def descuento_aplicado(self) -> int:
+        """El descuento en pesos, venga como monto o como porcentaje del neto."""
+        if self.descuento_monto:
+            return int(self.descuento_monto)
+        return int(round(self.subtotal * (self.descuento_porcentaje or 0) / 100))
+
+
+class Orden(ConDescuento, Base):
     __tablename__ = "ordenes"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -183,13 +195,6 @@ class Orden(Base):
     mecanico = relationship("Mecanico")
     detalles = relationship("DetalleOrden", back_populates="orden")
     pagos = relationship("PagoOrden", back_populates="orden")
-
-    @property
-    def descuento_aplicado(self) -> int:
-        """El descuento en pesos, venga como monto o como porcentaje del neto."""
-        if self.descuento_monto:
-            return int(self.descuento_monto)
-        return int(round(self.subtotal * self.descuento_porcentaje / 100))
 
     @property
     def monto_pagado(self) -> int:
@@ -250,7 +255,7 @@ class PagoOrden(Base):
     usuario = relationship("Usuario")
 
 
-class Venta(Base):
+class Venta(ConDescuento, Base):
     __tablename__ = "ventas"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -260,8 +265,12 @@ class Venta(Base):
     numero_boleta = Column(String(50), unique=True)
     impuesto = Column(Numeric(10, 2), default=0, nullable=False)
     ajuste_redondeo = Column(Numeric(10, 2), default=0, nullable=False)  # ley de redondeo
-    total_final = Column(Numeric(10, 2), nullable=False)  # neto + impuesto + ajuste
+    total_final = Column(Numeric(10, 2), nullable=False)  # subtotal - descuento + impuesto + ajuste
     medio_pago = Column(String(20), default="EFECTIVO", nullable=False)
+    # Como en Orden: neto antes del descuento, y porcentaje o monto, no ambos.
+    subtotal = Column(Numeric(10, 2), default=0, nullable=False)
+    descuento_porcentaje = Column(Numeric(5, 2), default=0, nullable=False)
+    descuento_monto = Column(Numeric(10, 2), default=0, nullable=False)
 
     usuario = relationship("Usuario")
     cliente = relationship("Cliente")

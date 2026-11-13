@@ -267,3 +267,21 @@ def test_la_orden_se_queda_con_el_dueno_que_tenia_el_auto_al_abrirla(db, datos):
     db.flush()
 
     assert (antes.cliente_id, despues.cliente_id) == (cliente.id, comprador.id)
+
+
+@pytest.mark.parametrize("campos", [
+    {"subtotal": 10000, "descuento_porcentaje": 10, "descuento_monto": 500},   # los dos a la vez
+    {"subtotal": 1000, "descuento_monto": 1500},                               # más que la venta
+    {"subtotal": 10000, "descuento_porcentaje": 101},                          # más del 100 %
+])
+def test_el_descuento_de_una_venta_no_puede_ser_doble_ni_mayor_que_ella(db, datos, campos):
+    usuario = datos[0]
+    with pytest.raises(IntegrityError):
+        with db.begin_nested():
+            db.add(Venta(usuario=usuario, total_final=0, **campos))
+            db.flush()
+
+
+def test_el_descuento_aplicado_de_una_venta_sale_del_porcentaje_o_del_monto():
+    assert Venta(subtotal=10000, descuento_porcentaje=10).descuento_aplicado == 1000
+    assert Venta(subtotal=10000, descuento_monto=2500).descuento_aplicado == 2500

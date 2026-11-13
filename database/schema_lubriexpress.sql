@@ -225,12 +225,21 @@ CREATE TABLE "ventas" (
   "cliente_id" INT REFERENCES "clientes"("id"),
   "fecha_venta" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "numero_boleta" VARCHAR(50) UNIQUE,
-  -- total_final = neto + impuesto + ajuste; el neto se obtiene restando.
+  -- total_final = subtotal - descuento + impuesto + ajuste. subtotal es el
+  -- neto antes del descuento, como en "ordenes".
   "impuesto" DECIMAL(10,2) NOT NULL DEFAULT 0 CHECK ("impuesto" >= 0),
   "total_final" DECIMAL(10,2) NOT NULL CHECK ("total_final" >= 0),
   "ajuste_redondeo" DECIMAL(10,2) NOT NULL DEFAULT 0,
   "medio_pago" VARCHAR(20) NOT NULL DEFAULT 'EFECTIVO'
-      CHECK ("medio_pago" IN ('EFECTIVO', 'TARJETA', 'TRANSFERENCIA'))
+      CHECK ("medio_pago" IN ('EFECTIVO', 'TARJETA', 'TRANSFERENCIA')),
+  "subtotal" DECIMAL(10,2) NOT NULL DEFAULT 0 CHECK ("subtotal" >= 0),
+  "descuento_porcentaje" DECIMAL(5,2) NOT NULL DEFAULT 0
+      CHECK ("descuento_porcentaje" >= 0 AND "descuento_porcentaje" <= 100),
+  "descuento_monto" DECIMAL(10,2) NOT NULL DEFAULT 0 CHECK ("descuento_monto" >= 0),
+  -- Porcentaje o monto, nunca los dos; y nunca más que la venta.
+  CONSTRAINT descuento_exclusivo_venta
+      CHECK (NOT ("descuento_porcentaje" > 0 AND "descuento_monto" > 0)),
+  CONSTRAINT descuento_dentro_de_la_venta CHECK ("descuento_monto" <= "subtotal")
 );
 
 -- ---------------------------------------------------------------------
