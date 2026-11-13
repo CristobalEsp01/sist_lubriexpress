@@ -40,3 +40,6 @@ docs/manuales/*.aux
 docs/manuales/*.log
 docs/manuales/*.out
 docs/manuales/*.toc
+
+# Errores inesperados de la aplicación (src/errores.py).
+errores.log

@@ -31,6 +31,12 @@ def main() -> int:
 
     app = QApplication(sys.argv)
 
+    # Lo que reviente en un slot queda en errores.log y se avisa: sin esto el
+    # .exe, que no tiene consola, lo perdía sin rastro.
+    from src.ui.errores import instalar
+
+    instalar()
+
     from src.ui.tema import aplicar
 
     aplicar(app)
