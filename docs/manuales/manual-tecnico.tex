@@ -262,6 +262,14 @@ El cliente de OneDrive sube solo lo que cae en su carpeta, así que con copiar e
 archivo basta. Si la carpeta no existe, el script avisa y el respaldo local
 igual queda hecho.
 
+Desde la versión 1.3.0, \textbf{en OneDrive también se conservan solo los
+últimos 30}. Antes se acumulaban todos, y con las fotos de los productos cada
+respaldo pesa entre 25 y 30\,KB por foto: unos 13\,MB con 500 fotos. Solo se
+borran archivos \texttt{lubriexpress-*.sql.gz}; lo demás que haya en esa carpeta
+no se toca. Si OneDrive tiene bloqueado un archivo porque lo está subiendo, el
+script lo salta, lo avisa y lo borra en el respaldo siguiente: el respaldo
+nunca falla por eso.
+
 \texttt{respaldar.exe --listar} muestra lo que hay guardado.
 
 Si PostgreSQL no está instalado en el equipo sino dentro de un contenedor de
@@ -280,6 +288,19 @@ restaurar.exe respaldos\lubriexpress-20260916-2030.sql.gz
 \textbf{Pisa la base entera.} Por eso pide escribir el nombre de la base para
 confirmar. Conviene probar una restauración al menos una vez, contra una base de
 prueba, antes de necesitarla de verdad.
+
+Desde la versión 1.3.0 restaura sobre un esquema limpio y en una sola
+transacción: borra el esquema \texttt{public}, lo vuelve a crear y carga el
+respaldo encima. \textbf{Si algo falla, la base queda exactamente como estaba}
+y el mensaje lo dice. Antes, un respaldo de una versión anterior fallaba (las
+tablas nuevas apuntan a las viejas y no dejaban borrarlas) y, al fallar, dejaba
+la base sin la mitad de sus restricciones. Por lo mismo, el usuario de
+\texttt{DATABASE\_URL} tiene que poder borrar el esquema \texttt{public}; en el
+taller es \texttt{postgres}, que puede.
+
+Un respaldo de una versión anterior queda con su esquema viejo. Al terminar,
+\texttt{restaurar.exe} lo detecta y avisa que hay que correr
+\texttt{actualizar.exe} antes de abrir el programa.
 
 \subsection{Dejarlo automático}
 
@@ -459,6 +480,36 @@ los reportes. El sistema no depende de \texttt{openpyxl} ni de otra biblioteca
 de Excel, y no conviene agregarla: el ejecutable tendría que empaquetarla y la
 del repositorio ya alcanza para una hoja sin estilos.
 
+\subsection{La versión 1.3.0: fotos, descuento en ventas y captura de errores}
+
+Agrega la foto de cada producto, el descuento en las ventas de mostrador y un
+aviso para los errores inesperados. \textbf{Cambia el esquema}, así que el orden
+es el de siempre: primero \texttt{actualizar.exe} y después la aplicación nueva.
+Los pasos son dos:
+
+\begin{itemize}
+  \item \texttt{ventas.descuento}: agrega a las ventas el subtotal, el
+        porcentaje y el monto de descuento, con las mismas restricciones de las
+        órdenes (porcentaje o monto, nunca los dos, y nunca más que la venta).
+        A las ventas que ya existen les deja su neto como subtotal, que es
+        exacto porque ninguna tenía descuento.
+  \item \texttt{fotos\_producto}: la tabla de las fotos, una por producto.
+        Va aparte de \texttt{productos} para que ninguna consulta del catálogo
+        arrastre las imágenes.
+\end{itemize}
+
+Las fotos se guardan \textbf{dentro de la base}, achicadas a 480\,px en JPEG
+(\texttt{src/fotos.py}), así que entran solas en el respaldo y en la
+restauración. Cada una suma entre 25 y 30\,KB a cada respaldo diario; por eso
+OneDrive pasa a conservar solo los últimos 30 (sección de respaldos).
+
+\textbf{Errores inesperados.} Lo que falle sin estar previsto ya no se pierde: la
+aplicación muestra un solo aviso ---``se perdió la conexión con la base de
+datos'' si el servidor se detuvo--- y anota el detalle, con fecha, en
+\texttt{errores.log}, junto al ejecutable. El archivo tiene tope: al pasar de
+512\,KB conserva la mitad más nueva. Es lo primero que hay que pedir cuando
+alguien reporta un problema.
+
 \section{Problemas frecuentes}
 
 \subsection*{``No se pudo conectar usando DATABASE\_URL''}
@@ -477,6 +528,19 @@ con el \texttt{.spec} del repositorio.
 Se guardan en la carpeta \emph{Documentos} \textbf{del usuario que tiene la
 sesión de Windows abierta}, en \texttt{Documentos\textbackslash Lubri-Express}.
 Si hay varias cuentas en el equipo, cada una tiene la suya.
+
+\subsection*{Apareció un aviso de error inesperado}
+El detalle está en \texttt{errores.log}, junto al ejecutable: la fecha, el error y
+dónde ocurrió. Si dice \texttt{OperationalError}, el servicio de PostgreSQL se
+detuvo o la red se cortó; se revisa como el problema de conexión de arriba.
+
+\subsection*{Una foto no se carga}
+Pegar con Ctrl+V necesita que en Chrome se haya usado \emph{Copiar imagen}, no
+\emph{Copiar dirección de la imagen}. Los archivos \texttt{.webp} se leen; si un
+\texttt{.webp} no abre en el ejecutable, falta el plugin \texttt{qwebp} en
+\texttt{\_internal\textbackslash PySide6\textbackslash Qt\textbackslash
+plugins\textbackslash imageformats\textbackslash}: rehacer el empaquetado con el
+\texttt{.spec} del repositorio.
 
 \subsection*{El stock no cuadra con la repisa}
 Se corrige contando, con \textbf{Ajustar stock} (queda registrado en el Kardex).

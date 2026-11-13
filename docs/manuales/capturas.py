@@ -215,8 +215,33 @@ def sembrar() -> dict:
                 "servicio_publico": db.query(Servicio).filter(Servicio.precio_variable.is_(True)).first().id}
 
 
+def foto_de_fantasia():
+    """Una botella dibujada: las fotos de verdad tienen marca y derechos."""
+    from PySide6.QtCore import QRectF, Qt
+    from PySide6.QtGui import QColor, QFont, QImage, QPainter
+
+    imagen = QImage(400, 400, QImage.Format_RGB32)
+    imagen.fill(QColor("#F1F5F9"))
+    pintor = QPainter(imagen)
+    pintor.setRenderHint(QPainter.Antialiasing)
+    pintor.setPen(Qt.NoPen)
+    pintor.setBrush(QColor("#1D4ED8"))
+    pintor.drawRoundedRect(QRectF(130, 60, 140, 300), 24, 24)
+    pintor.drawRect(QRectF(170, 30, 60, 40))
+    pintor.setBrush(QColor("#FFFFFF"))
+    pintor.drawRoundedRect(QRectF(145, 160, 110, 110), 10, 10)
+    pintor.setPen(QColor("#0F172A"))
+    pintor.setFont(QFont("DejaVu Sans", 22, QFont.Bold))
+    pintor.drawText(QRectF(145, 160, 110, 110), Qt.AlignCenter, "5W30\n4 L")
+    pintor.end()
+    return imagen
+
+
 def capturar(datos: dict) -> None:
-    from src.ui import LoginDialog, VentanaPrincipal
+    from PySide6.QtCore import Qt
+
+    from src.fotos import guardar as guardar_foto, leer, preparar
+    from src.ui import FormularioProducto, LoginDialog, VentanaPrincipal
     from src.ui.carga_excel import CargaExcelDialog
     from src.ui.clientes import FormularioVehiculo
     from src.ui.inventario import AjusteStockDialog, IngresoMercaderiaDialog, MinimoPorCategoriaDialog
@@ -230,14 +255,26 @@ def capturar(datos: dict) -> None:
     guardar(login, "login")
     login.close()
 
+    with SessionLocal() as db:
+        if leer(db, datos["producto"]) is None:
+            guardar_foto(db, datos["producto"], preparar(foto_de_fantasia()))
+            db.commit()
+
     Sesion.iniciar(SimpleNamespace(id=datos["usuario"], nombre="Fabián Soto", rol="ADMINISTRADOR"))
     v = VentanaPrincipal(); v.resize(1160, 700); v.show()
 
-    v.pestanias.setCurrentWidget(v.inventario); v.inventario.tabla.selectRow(0)
+    # Ancha, como en el portátil del taller: así cabe la foto al lado de la tabla.
+    v.resize(1366, 720)
+    v.pestanias.setCurrentWidget(v.inventario)
+    fila = next(f for f in range(v.inventario.tabla.rowCount())
+                if v.inventario.tabla.item(f, 0).data(Qt.UserRole) == datos["producto"])
+    v.inventario.tabla.selectRow(fila)
     guardar(v, "inventario")
+    v.resize(1160, 700)
     v.pestanias.setCurrentWidget(v.ventas)
     punto = v.ventas.findChild(PuntoVentaWidget)
     punto.agregar_producto(datos["producto"], cantidad=2)
+    punto.tipo_descuento.setCurrentIndex(1); punto.valor_descuento.setValue(10)
     guardar(v, "ventas")
     v.pestanias.setCurrentWidget(v.clientes); v.clientes.tabla.selectRow(0)
     guardar(v, "clientes")
@@ -300,12 +337,14 @@ def capturar(datos: dict) -> None:
     servicio_publico.descripcion.setText("Mantención 60.000 km")
     servicio_publico.presupuesto.setValue(118400)
     ingreso = IngresoMercaderiaDialog()
-    ingreso.combo_productos.setCurrentIndex(0)
+    ingreso.catalogo.busqueda.setText("5W30")
+    ingreso.catalogo.tabla.selectRow(ingreso.catalogo.visibles()[0])
     ingreso.spin_cantidad.setValue(12)
     ingreso.spin_costo.setValue(21500)   # el proveedor subió el precio
     ingreso.agregar_a_lista()
 
     for nombre, dialogo in [
+        ("dialogo_producto", FormularioProducto(producto_id=datos["producto"])),
         ("dialogo_ingreso", ingreso),
         ("dialogo_ajuste", AjusteStockDialog(producto_id=datos["producto"])),
         ("dialogo_minimos", MinimoPorCategoriaDialog()),

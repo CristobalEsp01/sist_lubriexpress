@@ -120,6 +120,40 @@ cuánto (sin IVA) y quién lo cambió. No mueven stock, así que no traen cantid
 ni saldo. El historial empieza con esta versión del sistema; los cambios
 anteriores no quedaron registrados.
 
+Cuando la ventana es ancha ---maximizada en el computador del taller---, a la
+derecha de la tabla aparece la \textbf{foto del producto elegido}, con su marca,
+la repisa, el precio con IVA y el stock. En una ventana angosta la foto no cabe
+y se oculta, para no apretar el nombre; se sigue viendo al editar el producto.
+
+\subsection{La foto del producto}
+\label{sec:foto}
+
+\dialogo{dialogo_producto}{Ficha del producto, con su foto a la derecha.}
+
+La foto sirve para confirmar que el producto es el que se tiene en la mano:
+hay filtros que se llaman casi igual y solo se distinguen por la caja. Cada
+producto tiene una sola foto. La cargan el supervisor y el administrador, en la
+ficha del producto (\textbf{Nuevo producto} o \textbf{Editar}):
+
+\begin{enumerate}
+  \item Buscar la imagen del producto en internet, con Chrome.
+  \item Clic derecho sobre la imagen y \textbf{Copiar imagen} (no ``Copiar
+        dirección de la imagen'': eso copia un texto, y el sistema avisa que no
+        es una imagen).
+  \item En la ficha, \textbf{Pegar imagen}. También sirve hacer clic en el
+        recuadro de la foto y apretar Ctrl+V.
+  \item \textbf{Guardar}. La foto se guarda junto con el producto.
+\end{enumerate}
+
+Si la imagen ya está descargada, \textbf{Elegir archivo\ldots} la busca en el
+computador, o se puede arrastrar el archivo hasta el recuadro. \textbf{Quitar
+foto} la saca. El sistema achica la imagen por su cuenta, así que da lo mismo
+lo grande que venga. Si el archivo no es una imagen o viene en un formato que
+el sistema no lee, avisa y deja la foto que había.
+
+La foto se ve en Inventario, al recibir mercadería y, en Ventas y Órdenes, al
+pasar el mouse por el producto o con el botón \textbf{Ver foto}.
+
 \subsection{Recibir mercadería}
 
 \dialogo{dialogo_ingreso}{Ingreso de mercadería: se arma la lista y se confirma
@@ -127,9 +161,12 @@ una sola vez.}
 
 \begin{enumerate}
   \item \textbf{Ingresar Mercadería}.
-  \item Buscar el producto. Al elegirlo, \textbf{Costo unit.}, \textbf{Venta
-        neto} y \textbf{Ubicación} se llenan solos con lo que el producto
-        tiene hoy.
+  \item Buscar el producto en la lista de arriba, que muestra la marca, el
+        stock y la repisa, y elegir su fila. A la derecha aparece su foto:
+        es el momento de confirmar que es el que llegó. Al elegirlo,
+        \textbf{Costo unit.}, \textbf{Venta neto} y \textbf{Ubicación} se
+        llenan solos con lo que el producto tiene hoy. Con Enter en el buscador
+        se elige el producto y el cursor pasa a la cantidad.
   \item Poner la cantidad que llegó y, \textbf{si el proveedor cambió el
         precio}, corregir el costo. Si hay que subir el precio de venta, se
         corrige ahí mismo: es sin IVA, y al lado se ve lo que paga el cliente.
@@ -218,6 +255,7 @@ la planilla, casi siempre es porque un archivo con ese mismo nombre está
 abierto en Excel: se cierra y se exporta de nuevo.
 
 \subsection{Stock mínimo por categoría}
+\label{sec:minimos}
 
 \dialogo{dialogo_minimos}{El mínimo de toda una categoría, de una vez.}
 
@@ -241,10 +279,19 @@ producto puntual puede tener después su propio mínimo, editándolo.
   \item Elegir el \textbf{medio de pago}: efectivo, tarjeta o transferencia.
         También es obligatorio y viene sin elegir a propósito: la caja cuenta
         como plata del cajón solo lo cobrado en efectivo.
+  \item Si corresponde, un \textbf{Descuento}: \emph{Porcentaje (\%)} o
+        \emph{Monto (\$)}, como en las órdenes. Los convenios (flyer y gremio)
+        son solo de las órdenes.
   \item \textbf{Generar Venta}.
 \end{enumerate}
 
-El pie muestra el neto, el IVA y el total. Al cobrar, el stock baja solo y queda
+El pie muestra el neto, el descuento si lo hay, el IVA y el total. El
+descuento en pesos no puede ser mayor que la venta: si se quitan productos del
+carrito y el monto queda más grande que lo que queda, el sistema lo baja y lo
+avisa. Para revisar un producto antes de agregarlo, su foto se ve al pasar el
+mouse por la fila o con \textbf{Ver foto} (sección~\ref{sec:foto}).
+
+Al cobrar, el stock baja solo y queda
 la salida en el Kardex. Si entremedio alguien vendió lo último que quedaba, el
 sistema lo avisa y no deja cobrar de más.
 
@@ -582,10 +629,11 @@ reabastecimiento:
   \item \textbf{Por mecánico}: cuántas órdenes trabajó cada mecánico y por
         cuánto. Las órdenes anteriores al registro de mecánicos salen como
         ``Sin asignar''.
-  \item \textbf{Órdenes con descuento}: cada orden que llevó descuento
-        —general, flyer o gremio—, quién la ingresó, cuánto se descontó y el
-        total. Con ``Mes pasado'' es el reporte mensual. Doble clic sobre una
-        fila abre la orden.
+  \item \textbf{Descuentos}: cada orden y cada venta de mostrador que llevó
+        descuento —general, flyer o gremio—, quién la ingresó, cuánto se
+        descontó y el total. La columna \emph{Documento} dice si fue una orden
+        (OT) o una boleta. Con ``Mes pasado'' es el reporte mensual. Doble clic
+        sobre una fila abre la orden o la venta.
   \item \textbf{Público vs Mercado Público}: cuánto entró del público general
         ---ventas de mostrador y órdenes sin folio--- y cuánto de Mercado
         Público ---órdenes con folio---, día por día o mes por mes según el
@@ -596,7 +644,7 @@ reabastecimiento:
   \item \textbf{Reabastecimiento}: qué hay que reponer. Solo cuenta los
         productos que tienen mínimo; arriba dice cuántos no lo tienen. Si la
         lista sale vacía y ese número es alto, falta fijar mínimos
-        (sección 2.4).
+        (sección~\ref{sec:minimos}).
 \end{itemize}
 
 \pantalla{reabastecimiento}{Reabastecimiento: los productos en su mínimo o por
@@ -747,7 +795,7 @@ Puede estar desactivado. En Inventario se ve en gris y su fila lo dice.
 \subsection*{Aparecen muchos productos como ``stock crítico''}
 El mínimo empieza en cero para todo lo que vino del sistema anterior, así que
 cualquier producto sin stock figura como crítico. Se corrige fijando los mínimos
-por categoría (sección 2.4).
+por categoría (sección~\ref{sec:minimos}).
 
 \subsection*{Guardé una orden y el auto todavía no estaba listo}
 
@@ -771,5 +819,17 @@ del sistema anterior no traen el detalle de cómo se pagaron, así que no suman.
 
 \subsection*{El sistema dice que no se pudo conectar a la base de datos}
 Es un problema de instalación, no de uso. Está en el Manual técnico.
+
+\subsection*{Apareció un aviso de ``error inesperado''}
+Lo que se estaba haciendo no se guardó: hay que revisarlo y volver a
+intentarlo. Si el aviso habla de la \textbf{conexión con la base de datos}, el
+servidor se detuvo y hay que avisar a quien mantiene el sistema. En cualquier
+caso, el detalle queda en el archivo \texttt{errores.log}, en la carpeta del
+programa: es lo que hay que enviarle a quien da soporte.
+
+\subsection*{Pegué la foto y dice que no es una imagen}
+Se copió la dirección de la imagen y no la imagen. En Chrome, clic derecho sobre
+la foto y \textbf{Copiar imagen}. Si tampoco funciona, guardarla en el
+computador y usar \textbf{Elegir archivo\ldots}.
 
 \end{document}
