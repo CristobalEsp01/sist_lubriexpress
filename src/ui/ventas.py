@@ -75,7 +75,7 @@ class PuntoVentaWidget(QWidget):
         layout_catalogo.setSpacing(ESPACIO_PANTALLA)
         layout_catalogo.addLayout(barra(self.busqueda, self.catalogo.categoria, self.boton_agregar))
         layout_catalogo.addWidget(self.tabla_catalogo)
-        layout_catalogo.addWidget(self.resumen)
+        layout_catalogo.addLayout(barra(self.resumen, self.catalogo.boton_foto))
 
         # ---------------- Carrito y cobro (derecha) ----------------
         self.tabla_carrito = con_aviso_vacio(

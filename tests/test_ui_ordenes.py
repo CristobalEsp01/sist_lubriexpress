@@ -1171,3 +1171,16 @@ def test_un_monto_mayor_que_la_orden_se_guarda_topado(app, taller, sin_modales):
         assert (int(orden.subtotal), int(orden.descuento_monto), int(orden.total_final)) == (
             12900, 12900, 0)
         assert orden.descuento_aplicado == 12900
+
+
+def test_un_servicio_no_ofrece_foto(app, taller):
+    from src.ui import ordenes
+
+    widget = ordenes.OrdenesWidget()
+    widget._iniciar_nueva_orden(taller.vehiculo_id)
+    catalogo = widget.catalogo
+    catalogo.busqueda.setText(NOMBRE_SERVICIO)
+    fila, = catalogo.visibles()
+    catalogo.tabla.selectRow(fila)
+    assert not catalogo.boton_foto.isEnabled()
+    assert catalogo._tooltip_foto(fila) is None

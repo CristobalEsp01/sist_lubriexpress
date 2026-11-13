@@ -517,7 +517,7 @@ class OrdenesWidget(QTabWidget):
         layout_izq.addLayout(barra(self.catalogo.busqueda, self.catalogo.categoria,
                                    self.catalogo.boton, self.boton_servicio_publico))
         layout_izq.addLayout(barra(self.catalogo.pestanas, QWidget(), self.catalogo.resumen,
-                                   estira=1))
+                                   self.catalogo.boton_foto, estira=1))
         layout_izq.addWidget(self.catalogo.tabla)
         layout_izq.addLayout(barra(en_la_orden, QWidget(), self.boton_quitar, estira=1))
         layout_izq.addWidget(self.tabla_carrito, 1)

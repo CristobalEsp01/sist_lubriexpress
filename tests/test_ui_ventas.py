@@ -335,3 +335,40 @@ def test_el_descuento_cabe_en_la_ventana_minima(app, usuario_qa):
     tabla = punto.tabla_carrito
     assert tabla.viewport().height() >= 3 * tabla.verticalHeader().defaultSectionSize()
     ventana.close()
+
+
+def test_ver_foto_solo_se_enciende_con_un_producto_con_foto(app, usuario_qa, producto_qa,
+                                                            monkeypatch):
+    """En el mesón la foto se revisa a pedido: al pasar el mouse o con "Ver
+    foto". Sin foto el botón se apaga, en vez de abrir un recuadro vacío."""
+    from PySide6.QtGui import QImage
+
+    from src.fotos import guardar, preparar
+    from src.ui import catalogo as modulo
+    from src.ui.ventas import PuntoVentaWidget
+
+    widget = PuntoVentaWidget()
+    catalogo = widget.catalogo
+
+    def fila_del_producto() -> int:
+        catalogo.busqueda.setText(NOMBRE_PRODUCTO)
+        fila, = catalogo.visibles()
+        catalogo.tabla.selectRow(fila)
+        return fila
+
+    fila = fila_del_producto()
+    assert not catalogo.boton_foto.isEnabled()
+    assert catalogo._tooltip_foto(fila) is None
+
+    with SessionLocal() as db:
+        guardar(db, producto_qa, preparar(QImage(300, 200, QImage.Format_RGB32)))
+        db.commit()
+    catalogo.cargar()
+    fila = fila_del_producto()
+    assert catalogo.boton_foto.isEnabled()
+    assert "data:image/jpeg;base64," in catalogo._tooltip_foto(fila)
+
+    vistas = []
+    monkeypatch.setattr(modulo, "ver_foto", lambda producto_id, parent: vistas.append(producto_id))
+    catalogo.boton_foto.click()
+    assert vistas == [producto_qa]

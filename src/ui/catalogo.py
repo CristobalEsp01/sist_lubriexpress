@@ -5,26 +5,37 @@ rearmar la tabla costaba ~180). El stock mostrado puede quedar viejo: quien
 agrega lo relee de la base.
 
 Entrega las piezas sueltas para que cada pantalla las ubique con sus márgenes.
+
+La foto de un producto se ve a pedido, al pasar el mouse por su fila o con
+"Ver foto": se sabe cuáles tienen al cargar, pero las imágenes se leen de a
+una y solo cuando se piden.
 """
+import base64
+
 from PySide6.QtCore import QEvent, QObject, Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QLabel, QLineEdit, QPushButton, QTabBar, QTableWidgetItem,
+    QApplication, QComboBox, QLabel, QLineEdit, QPushButton, QTabBar, QTableWidgetItem, QToolTip,
 )
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 
 from ..database import SessionLocal
+from ..fotos import a_imagen, con_foto, leer
 from ..models import Producto, Servicio, Ubicacion
 from ..texto import normalizar
 from .comunes import (
     BADGE_ALERTA, ROL_INSIGNIA, ItemNumerico, clp, con_aviso_vacio, crear_tabla, reordenar,
 )
+from .foto import ver_foto
 from .tema import ALERTA, fuente_tabular
 
 COLUMNAS = ["Nombre", "Marca", "Stock", "Ubicación", "Precio neto"]
 # Texto de búsqueda, normalizado una vez al cargar.
 ROL_CLAVE = Qt.UserRole + 1
 ROL_CATEGORIA = Qt.UserRole + 2
+ROL_FOTO = Qt.UserRole + 3   # el producto tiene foto
+ANCHO_TOOLTIP = 240
 TODAS = "Todas las categorías"
 PESTANAS = ["Todo", "Productos", "Servicios"]
 FLECHAS = (Qt.Key_Up, Qt.Key_Down, Qt.Key_PageUp, Qt.Key_PageDown)
@@ -82,6 +93,16 @@ class Catalogo(QObject):
         self.resumen = QLabel()
         self.resumen.setProperty("clase", "resumen")
 
+        self.boton_foto = QPushButton("Ver foto")
+        self.boton_foto.setAutoDefault(False)
+        self.boton_foto.setEnabled(False)
+        self.boton_foto.clicked.connect(self._ver_foto)
+        self._fotos: dict[int, bytes | None] = {}
+        # Guardado y no pedido en cada evento: mientras Qt destruye la tabla,
+        # el filtro sigue recibiendo eventos y tabla.viewport() revienta.
+        self._vista = self.tabla.viewport()
+        self._vista.installEventFilter(self)
+
     def cargar(self) -> None:
         """Relee el catálogo: al abrir la pantalla o tras mover stock."""
         with SessionLocal() as db:
@@ -98,13 +119,16 @@ class Catalogo(QObject):
                 # propio botón en la orden.
                 .where(Servicio.activo.is_(True), Servicio.precio_variable.is_(False))
             ).all() if self.servicios else []
+            fotos = con_foto(db)
+        self._fotos.clear()     # una foto cambiada en Inventario se vuelve a leer
 
         self.tabla.setSortingEnabled(False)
         self.tabla.setRowCount(len(productos) + len(servicios))
         for fila, producto in enumerate(productos):
             pid, nombre, marca, categoria, stock, minimo, repisa, precio = producto
             self._fila(fila, {"producto_id": pid}, nombre, marca or "", repisa or "", int(precio),
-                       f"{nombre} {marca or ''} {categoria or ''} {repisa or ''}", categoria)
+                       f"{nombre} {marca or ''} {categoria or ''} {repisa or ''}", categoria,
+                       pid in fotos)
             celda = ItemNumerico(str(stock), stock)
             # Bajo el mínimo, marcado como en Inventario.
             if stock <= minimo:
@@ -123,11 +147,12 @@ class Catalogo(QObject):
         self.filtrar()
 
     def _fila(self, fila: int, item: dict, nombre: str, marca: str, repisa: str, precio: int,
-              clave: str, categoria: str | None) -> None:
+              clave: str, categoria: str | None, foto: bool = False) -> None:
         celda = QTableWidgetItem(nombre)
         celda.setData(Qt.UserRole, item)
         celda.setData(ROL_CLAVE, normalizar(clave))
         celda.setData(ROL_CATEGORIA, categoria or "")
+        celda.setData(ROL_FOTO, foto)
         self.tabla.setItem(fila, 0, celda)
         self.tabla.setItem(fila, 1, QTableWidgetItem(marca))
         self.tabla.setItem(fila, 3, QTableWidgetItem(repisa))
@@ -206,6 +231,34 @@ class Catalogo(QObject):
 
     def _actualizar_boton(self) -> None:
         self.boton.setEnabled(self._a_agregar() is not None)
+        fila = self.tabla.currentRow()
+        self.boton_foto.setEnabled(self.seleccionado() is not None
+                                   and bool(self.tabla.item(fila, 0).data(ROL_FOTO)))
+
+    def _tooltip_foto(self, fila: int) -> str | None:
+        """La foto de la fila como HTML para el tooltip, o None si no tiene o
+        no se pudo leer: en ese caso no se muestra nada."""
+        celda = self.tabla.item(fila, 0)
+        if celda is None or not celda.data(ROL_FOTO):
+            return None
+        producto_id = celda.data(Qt.UserRole)["producto_id"]
+        if producto_id not in self._fotos:
+            try:
+                with SessionLocal() as db:
+                    self._fotos[producto_id] = leer(db, producto_id)
+            except SQLAlchemyError:
+                return None
+        datos = self._fotos[producto_id]
+        imagen = a_imagen(datos) if datos else None
+        if imagen is None or imagen.isNull():
+            return None
+        return (f'<img src="data:image/jpeg;base64,{base64.b64encode(datos).decode()}" '
+                f'width="{min(ANCHO_TOOLTIP, imagen.width())}">')
+
+    def _ver_foto(self) -> None:
+        elegido = self.seleccionado()
+        if elegido and "producto_id" in elegido:
+            ver_foto(elegido["producto_id"], self.tabla)
 
     def elegir(self, *_) -> None:
         elegido = self._a_agregar()
@@ -217,8 +270,17 @@ class Catalogo(QObject):
         self.busqueda.selectAll()
 
     def eventFilter(self, objeto, evento) -> bool:
+        tipo = evento.type()
+        if tipo == QEvent.ToolTip and objeto is self._vista:
+            fila = self.tabla.rowAt(evento.pos().y())
+            html = self._tooltip_foto(fila) if fila >= 0 else None
+            if html:
+                QToolTip.showText(evento.globalPos(), html, self._vista)
+            else:
+                QToolTip.hideText()
+            return True
         # Las flechas mueven la fila elegida sin salir del campo.
-        if evento.type() == QEvent.KeyPress and evento.key() in FLECHAS:
+        if tipo == QEvent.KeyPress and objeto is self.busqueda and evento.key() in FLECHAS:
             QApplication.sendEvent(self.tabla, evento)
             return True
         return False
