@@ -132,14 +132,25 @@ def test_el_reporte_de_descuentos_junta_los_tres_tipos_y_quien_ingreso(db, app, 
     gremio = orden(descuento_monto=1500, convenio="GREMIO")
     orden()                                         # sin descuento: no va
     orden(descuento_monto=700, estado="ANULADA")    # anulada: no se hizo
+    # Las ventas de mostrador también descuentan desde la 1.3.0: van después
+    # de las órdenes del mismo día porque se hicieron más tarde.
+    boleta = f"QA-D{rut_de_prueba()}"
+    db.add_all([
+        Venta(usuario=usuario, numero_boleta=boleta, fecha_venta=datetime(2019, 3, 10, 18),
+              subtotal=20000, descuento_porcentaje=10, impuesto=3420, total_final=21420),
+        Venta(usuario=usuario, numero_boleta=f"{boleta}-sin", subtotal=5000, impuesto=950,
+              fecha_venta=datetime(2019, 3, 10, 19), total_final=5950),   # sin descuento: no va
+    ])
     db.flush()
 
     comunes = (DIA, "Cliente descuento", vehiculo.patente, usuario.nombre)
     assert reportes.descuentos(db, DIA, DIA) == [
-        (porcentaje.id, *comunes, "General (10 %)", 1000, 10000),
-        (monto.id, *comunes, "General (monto)", 500, 10000),
-        (flyer.id, *comunes, f"Flyer N° {folio:04d} (10 %)", 1000, 10000),
-        (gremio.id, *comunes, "Gremio/Sindicato (15 %)", 1500, 10000),
+        (f"OT {porcentaje.id}", *comunes, "General (10 %)", 1000, 10000),
+        (f"OT {monto.id}", *comunes, "General (monto)", 500, 10000),
+        (f"OT {flyer.id}", *comunes, f"Flyer N° {folio:04d} (10 %)", 1000, 10000),
+        (f"OT {gremio.id}", *comunes, "Gremio/Sindicato (15 %)", 1500, 10000),
+        (f"Boleta {boleta}", DIA, "Venta sin cliente", "", usuario.nombre, "General (10 %)",
+         2000, 21420),
     ]
 
     # Solo el administrador lo ve; los demás, solo la lista de compras.
@@ -152,9 +163,9 @@ def test_el_reporte_de_descuentos_junta_los_tres_tipos_y_quien_ingreso(db, app, 
 
     monkeypatch.setattr(Sesion, "rol", "ADMINISTRADOR")
     widget = ReportesWidget()
-    widget.lista.setCurrentRow([d.titulo for d in widget.definiciones].index("Órdenes con descuento"))
+    widget.lista.setCurrentRow([d.titulo for d in widget.definiciones].index("Descuentos"))
     assert widget.grafico.isHidden()          # una lista de órdenes no tiene forma que graficar
-    widget.filas = [(1, DIA, "Ana", "AB1234", "Paloma", "General (monto)", 500, 9500)]
+    widget.filas = [("OT 1", DIA, "Ana", "AB1234", "Paloma", "General (monto)", 500, 9500)]
     widget._llenar_resumen(widget.definicion())
     assert widget.resumen.itemAt(0).widget().findChild(QLabel).text() == "$500"
 
@@ -172,7 +183,7 @@ def test_el_reporte_de_descuentos_nombra_al_cliente_de_la_orden(db):
     vehiculo.cliente = Cliente(nombre_completo="Comprador QA")
     db.flush()
 
-    assert [f[2] for f in reportes.descuentos(db, DIA, DIA) if f[0] == orden.id] == [
+    assert [f[2] for f in reportes.descuentos(db, DIA, DIA) if f[0] == f"OT {orden.id}"] == [
         "Dueño anterior QA"
     ]
 
@@ -306,7 +317,7 @@ def test_la_pantalla_grafica_solo_lo_que_se_lee(app, monkeypatch):
 
     titulos = [d.titulo for d in widget.definiciones]
     assert titulos == ["Ingresos por período", "Ventas por producto", "Por usuario",
-                       "Por mecánico", "Órdenes con descuento", "Público vs Mercado Público",
+                       "Por mecánico", "Descuentos", "Público vs Mercado Público",
                        "Reabastecimiento"]
     con_grafico = {d.titulo for d in widget.definiciones if d.grafico}
     assert con_grafico == {"Ingresos por período", "Público vs Mercado Público", "Por usuario",
@@ -333,24 +344,64 @@ def test_la_pantalla_grafica_solo_lo_que_se_lee(app, monkeypatch):
     monkeypatch.setattr(pantalla.DialogoDetalleOrden, "__init__",
                         lambda self, orden_id, parent=None: abiertas.append(orden_id))
     monkeypatch.setattr(pantalla.DialogoDetalleOrden, "exec", lambda self: 0)
-    widget.lista.setCurrentRow(titulos.index("Órdenes con descuento"))
+    widget.lista.setCurrentRow(titulos.index("Descuentos"))
     widget.filas = [
-        (7, DIA, "Ana", "AB1234", "Paloma", "Flyer N° 0042 (10 %)", 1000, 9000),
-        (8, DIA, "Luis", "CD5678", "Paloma", "Gremio/Sindicato (15 %)", 1500, 8500),
-        (9, DIA, "Eva", "EF9012", "Paloma", "General (monto)", 500, 9500),
-        (10, DIA, "Tom", "GH3456", "Paloma", "General (10 %)", 800, 7200),
+        ("OT 7", DIA, "Ana", "AB1234", "Paloma", "Flyer N° 0042 (10 %)", 1000, 9000),
+        ("OT 8", DIA, "Luis", "CD5678", "Paloma", "Gremio/Sindicato (15 %)", 1500, 8500),
+        ("OT 9", DIA, "Eva", "EF9012", "Paloma", "General (monto)", 500, 9500),
+        ("Boleta B-10", DIA, "Venta sin cliente", "", "Paloma", "General (10 %)", 800, 7200),
     ]
     widget._llenar_tabla(widget.definicion())
     widget._llenar_resumen(widget.definicion())
     cifras = [widget.resumen.itemAt(i).widget().findChild(QLabel).text()
               for i in range(widget.resumen.count()) if widget.resumen.itemAt(i).widget()]
-    assert cifras == ["$3.800", "4", "2", "1", "1"]   # descontado, órdenes, general, flyer, gremio
-    fila = next(f for f in range(widget.tabla.rowCount()) if widget.tabla.item(f, 0).text() == "8")
+    assert cifras == ["$3.800", "4", "2", "1", "1"]   # descontado, documentos, general, flyer, gremio
+    fila = next(f for f in range(widget.tabla.rowCount())
+                if widget.tabla.item(f, 0).text() == "OT 8")
     widget.tabla.selectRow(fila)
-    widget.abrir_orden(widget.tabla.model().index(fila, 0))
+    widget.abrir_documento(widget.tabla.model().index(fila, 0))
     assert abiertas == [8]
 
     # Reabastecimiento sin gráfico, y dice cuántos productos no tienen mínimo.
     widget.lista.setCurrentRow(titulos.index("Reabastecimiento"))
     assert widget.grafico.isHidden()
     assert "sin mínimo" in widget.ayuda.text()
+
+
+def test_doble_clic_en_una_boleta_abre_la_venta(db, app, monkeypatch):
+    from src.ui import reportes as pantalla
+
+    usuario = Usuario(nombre="Mesón QA", username=f"qa_rep_{rut_de_prueba()}",
+                      password_hash="x", rol="USUARIO_NORMAL")
+    venta = Venta(usuario=usuario, numero_boleta=f"QA-B{rut_de_prueba()}", subtotal=10000,
+                  descuento_monto=1000, impuesto=1710, total_final=10710)
+    db.add_all([usuario, venta])
+    db.flush()
+    abiertas = []
+    monkeypatch.setattr(pantalla, "SessionLocal", lambda: _SinCerrar(db))
+    monkeypatch.setattr(pantalla.DetalleVentaDialog, "__init__",
+                        lambda self, venta_id, numero, parent=None: abiertas.append(venta_id))
+    monkeypatch.setattr(pantalla.DetalleVentaDialog, "exec", lambda self: 0)
+    monkeypatch.setattr(Sesion, "rol", "ADMINISTRADOR")
+
+    widget = pantalla.ReportesWidget()
+    widget.lista.setCurrentRow([d.titulo for d in widget.definiciones].index("Descuentos"))
+    widget.filas = [(f"Boleta {venta.numero_boleta}", DIA, "Venta sin cliente", "", "Mesón QA",
+                     "General (monto)", 1000, 10710)]
+    widget._llenar_tabla(widget.definicion())
+    widget.abrir_documento(widget.tabla.model().index(0, 0))
+    assert abiertas == [venta.id]
+
+
+class _SinCerrar:
+    """La sesión de la prueba, prestada a la pantalla: lo que la prueba creó
+    sin commit solo existe dentro de ella."""
+
+    def __init__(self, db):
+        self.db = db
+
+    def __enter__(self):
+        return self.db
+
+    def __exit__(self, *_):
+        return False

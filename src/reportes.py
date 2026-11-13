@@ -31,8 +31,8 @@ COLUMNAS_USUARIOS = ["Usuario", "Ventas", "Total ventas", "Órdenes", "Total ór
 COLUMNAS_MECANICOS = ["Mecánico", "Órdenes", "Total órdenes"]
 # Las órdenes guardadas antes de que existiera el mecánico.
 SIN_MECANICO = "Sin asignar"
-COLUMNAS_DESCUENTOS = ["N° OT", "Fecha", "Cliente", "Patente", "Ingresó", "Tipo de descuento",
-                       "Descuento", "Total"]
+COLUMNAS_DESCUENTOS = ["Documento", "Fecha", "Cliente", "Patente", "Ingresó",
+                       "Tipo de descuento", "Descuento", "Total"]
 COLUMNAS_REABASTECIMIENTO = ["Producto", "Marca", "Categoría", "Stock", "Mínimo", "Faltante"]
 
 
@@ -163,9 +163,16 @@ def por_mecanico(db, desde: date, hasta: date) -> list[tuple]:
                   key=lambda f: (-f[2], f[0]))
 
 
+def _tipo_general(documento) -> str:
+    if documento.descuento_porcentaje:
+        return f"General ({int(documento.descuento_porcentaje)} %)"
+    return "General (monto)"
+
+
 def descuentos(db, desde: date, hasta: date) -> list[tuple]:
-    """Las órdenes que llevaron descuento, de cualquier tipo, y quién las
-    ingresó. Solo las ventas de mostrador no entran: no tienen descuento."""
+    """Las órdenes y ventas que llevaron descuento, de cualquier tipo, y quién
+    las ingresó. El documento va como "OT 123" o "Boleta B-1043"; las ventas no
+    tienen patente y pueden no tener cliente."""
     ini, fin = _rango(desde, hasta)
     filas = []
     for orden, cliente, patente, usuario in db.execute(
@@ -173,17 +180,23 @@ def descuentos(db, desde: date, hasta: date) -> list[tuple]:
         .join(Orden.vehiculo).join(Orden.cliente).join(Orden.usuario)
         .where(Orden.fecha_creacion >= ini, Orden.fecha_creacion < fin, VIGENTE,
                (Orden.descuento_monto > 0) | (Orden.descuento_porcentaje > 0))
-        .order_by(Orden.id)
     ):
-        if orden.convenio:
-            tipo = convenios.rotulo(orden.convenio, orden.folio_flyer)
-        elif orden.descuento_porcentaje:
-            tipo = f"General ({int(orden.descuento_porcentaje)} %)"
-        else:
-            tipo = "General (monto)"
-        filas.append((orden.id, orden.fecha_creacion.date(), cliente, patente, usuario, tipo,
+        tipo = (convenios.rotulo(orden.convenio, orden.folio_flyer) if orden.convenio
+                else _tipo_general(orden))
+        filas.append((orden.fecha_creacion, f"OT {orden.id}", cliente, patente, usuario, tipo,
                       orden.descuento_aplicado, int(orden.total_final)))
-    return filas
+    for venta, cliente, usuario in db.execute(
+        select(Venta, Cliente.nombre_completo, Usuario.nombre)
+        .outerjoin(Venta.cliente).join(Venta.usuario)
+        .where(Venta.fecha_venta >= ini, Venta.fecha_venta < fin,
+               (Venta.descuento_monto > 0) | (Venta.descuento_porcentaje > 0))
+    ):
+        filas.append((venta.fecha_venta, f"Boleta {venta.numero_boleta}",
+                      cliente or "Venta sin cliente", "", usuario, _tipo_general(venta),
+                      venta.descuento_aplicado, int(venta.total_final)))
+    # Por fecha y hora; el instante se usa para ordenar y se muestra solo el día.
+    filas.sort(key=lambda f: (f[0], f[1]))
+    return [(documento, instante.date(), *resto) for instante, documento, *resto in filas]
 
 
 def reabastecimiento(db) -> list[tuple]:

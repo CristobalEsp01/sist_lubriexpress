@@ -18,9 +18,11 @@ from PySide6.QtWidgets import (
     QComboBox, QDateEdit, QFrame, QHBoxLayout, QLabel, QLayout, QListWidget, QMessageBox,
     QHeaderView, QPushButton, QSplitter, QTableWidgetItem, QVBoxLayout, QWidget,
 )
+from sqlalchemy import select
 
 from .. import reportes
 from ..database import SessionLocal
+from ..models import Venta
 from ..permisos import puede
 from ..xlsx import escribir_xlsx
 from .comunes import (
@@ -28,6 +30,7 @@ from .comunes import (
     layout_de_pantalla, reordenar,
 )
 from .ordenes import DialogoDetalleOrden
+from .ventas import DetalleVentaDialog
 from .tema import ACENTO, CANAL_PANEL, ESPACIO_PANTALLA, INFO, TINTA_SUAVE
 
 CARPETA = "Reportes"
@@ -73,8 +76,9 @@ REPORTES = [
         reportes.COLUMNAS_MECANICOS, {2}, (1, 2), 2, 2,
         reportes.por_mecanico, horizontal=True),
     Definicion(
-        "Órdenes con descuento", "Toda orden con descuento general, flyer o gremio, y quién la ingresó.",
-        reportes.COLUMNAS_DESCUENTOS, {6, 7}, (0, 6, 7), 0, 6,
+        "Descuentos",
+        "Toda orden o venta con descuento (general, flyer o gremio) y quién la ingresó.",
+        reportes.COLUMNAS_DESCUENTOS, {6, 7}, (6, 7), 1, 6,
         reportes.descuentos, grafico=False),
     Definicion(
         "Público vs Mercado Público",
@@ -157,7 +161,7 @@ class ReportesWidget(QWidget):
             crear_tabla(self.definiciones[0].columnas, ancha=0, orden=0,
                         numericas=self.definiciones[0].numericas),
             "Sin datos en el período elegido.")
-        self.tabla.doubleClicked.connect(self.abrir_orden)
+        self.tabla.doubleClicked.connect(self.abrir_documento)
         self.grafico = QChartView()
         self.grafico.setRenderHint(QPainter.Antialiasing)
         self.grafico.setMinimumHeight(150)
@@ -244,7 +248,7 @@ class ReportesWidget(QWidget):
         self.tabla.setColumnCount(len(definicion.columnas))
         self.tabla.setHorizontalHeaderLabels(definicion.columnas)
         self._ajustar_cabecera(definicion)
-        self.tabla.setToolTip("Doble clic abre la orden."
+        self.tabla.setToolTip("Doble clic abre la orden o la venta."
                               if definicion.funcion is reportes.descuentos else "")
         self.recargar()
 
@@ -360,7 +364,7 @@ class ReportesWidget(QWidget):
         elif definicion.funcion is reportes.descuentos:
             por_tipo = [sum(f[5].startswith(tipo) for f in self.filas)
                         for tipo in ("General", "Flyer", "Gremio")]
-            cifras = [(clp(total), "descontado"), (f"{len(self.filas)}", "órdenes"),
+            cifras = [(clp(total), "descontado"), (f"{len(self.filas)}", "con descuento"),
                       *zip(map(str, por_tipo), ("generales", "con flyer", "gremio/sindicato"))]
         elif definicion.funcion is reportes.reabastecimiento:
             cifras = [(f"{len(self.filas)}", "productos por reponer"),
@@ -439,12 +443,19 @@ class ReportesWidget(QWidget):
         valores.applyNiceNumbers()   # marcas redondas: $5.000.000 y no $3.251.348
         self.grafico.setChart(chart)
 
-    def abrir_orden(self, indice) -> None:
-        """Desde el reporte de descuentos, la orden entera: qué se le
-        descontó y a qué."""
+    def abrir_documento(self, indice) -> None:
+        """Desde el reporte de descuentos, la orden o la venta entera: qué se
+        le descontó y a qué."""
         if self.definicion().funcion is not reportes.descuentos:
             return
-        DialogoDetalleOrden(int(self.tabla.item(indice.row(), 0).text()), self).exec()
+        tipo, _, numero = self.tabla.item(indice.row(), 0).text().partition(" ")
+        if tipo == "OT":
+            DialogoDetalleOrden(int(numero), self).exec()
+            return
+        with SessionLocal() as db:
+            venta_id = db.scalar(select(Venta.id).where(Venta.numero_boleta == numero))
+        if venta_id is not None:
+            DetalleVentaDialog(venta_id, numero, self).exec()
 
     # ------------------------------------------------------------------
     # Exportar
