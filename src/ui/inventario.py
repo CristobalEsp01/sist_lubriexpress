@@ -9,9 +9,10 @@ from PySide6.QtWidgets import (
     QSplitter, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 from sqlalchemy import func, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import selectinload
 
+from .. import fotos
 from ..auth import Sesion
 from ..database import SessionLocal
 from ..models import CambioPrecio, KardexMovimiento, Producto, Ubicacion, Usuario, Venta
@@ -26,7 +27,10 @@ from .comunes import (
     exigir_permiso, hacer_buscable, layout_de_dialogo, layout_de_pantalla, reordenar,
 )
 from .carga_excel import CargaExcelDialog
-from .tema import ALERTA, CANAL_PANEL, ESPACIO_BARRA, EXITO, TINTA_SUAVE, fuente_tabular
+from .foto import RecuadroFoto
+from .tema import (
+    ALERTA, CANAL_PANEL, ESPACIO_BARRA, ESPACIO_DIALOGO, EXITO, TINTA_SUAVE, fuente_tabular,
+)
 
 COLUMNAS_PRODUCTO = ["Nombre", "Marca", "Categoría", "Ubicación", "Stock", "Mín.", "Costo", "Venta c/IVA"]
 COLUMNAS_KARDEX = ["Fecha", "Tipo", "Cantidad", "Saldo", "Costo unit.", "Usuario", "Origen"]
@@ -135,6 +139,9 @@ class FormularioProducto(QDialog):
         self.stock_minimo = QSpinBox(maximum=999_999)
         self.activo = QCheckBox("Producto activo (disponible en ventas y órdenes)")
         self.activo.setChecked(True)
+        # La foto confirma que el producto es el que se tiene en la mano. La
+        # cargan los mismos que pueden editar el producto.
+        self.foto = RecuadroFoto(editable=puede("inventario"))
 
         form = QFormLayout()
         form.setSpacing(11)
@@ -152,8 +159,13 @@ class FormularioProducto(QDialog):
 
         botones = botonera(self)
 
+        cuerpo = QHBoxLayout()
+        cuerpo.setSpacing(ESPACIO_DIALOGO)
+        cuerpo.addLayout(form, 1)
+        cuerpo.addWidget(self.foto, 0, Qt.AlignTop)
+
         layout = layout_de_dialogo(self)
-        layout.addLayout(form)
+        layout.addLayout(cuerpo)
         layout.addWidget(botones)
 
         self._cargar_ubicaciones()
@@ -214,6 +226,7 @@ class FormularioProducto(QDialog):
             self.stock_actual.setValue(p.stock_actual)
             self.stock_minimo.setValue(p.stock_minimo)
             self.activo.setChecked(p.activo)
+            self.foto.cargar(fotos.leer(db, self.producto_id))
 
     def accept(self) -> None:
         if not self.nombre.text().strip():
@@ -226,10 +239,12 @@ class FormularioProducto(QDialog):
             )
             if confirmar != QMessageBox.Yes:
                 return
-        self.guardar()
-        super().accept()
+        if self.guardar():
+            super().accept()
 
-    def guardar(self) -> None:
+    def guardar(self) -> bool:
+        """El producto y su foto, en una sola transacción. Si la base lo
+        rechaza, avisa y el formulario queda abierto con lo escrito."""
         with SessionLocal() as db:
             producto = db.get(Producto, self.producto_id) if self.producto_id else Producto()
             producto.nombre = self.nombre.text().strip()
@@ -244,8 +259,19 @@ class FormularioProducto(QDialog):
             if self.producto_id is None:
                 producto.stock_actual = self.stock_actual.value()
                 db.add(producto)
-            db.commit()
+            try:
+                db.flush()                  # el id del producto nuevo, para su foto
+                if self.foto.cambiada:
+                    fotos.guardar(db, producto.id, self.foto.datos)
+                db.commit()
+            except SQLAlchemyError as error:
+                db.rollback()
+                motivo = getattr(error, "orig", None) or error
+                QMessageBox.warning(self, "No se pudo guardar el producto",
+                                    f"La base de datos rechazó el cambio:\n\n{motivo}")
+                return False
             self.producto_id = producto.id
+        return True
 
     @staticmethod
     def _ubicacion_o_crear(db, descripcion: str) -> Ubicacion | None:

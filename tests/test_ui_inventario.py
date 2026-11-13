@@ -552,3 +552,61 @@ def test_el_ingreso_fija_el_precio_de_venta_y_la_ubicacion(app, bodeguero_qa, mo
             CambioPrecio.producto_id.in_([filtro_id, aceite_id])).order_by(CambioPrecio.id))
         assert [(c.producto_id, int(c.precio_anterior), int(c.precio_nuevo)) for c in cambios] == [
             (filtro_id, 2000, 2500), (aceite_id, 5000, 7000)]
+
+
+def test_la_foto_se_guarda_con_el_producto_y_se_puede_quitar(app, limpiar, bodeguero_qa):
+    from PySide6.QtGui import QImage
+    from PySide6.QtWidgets import QApplication
+
+    from src.fotos import a_imagen, leer
+    from src.ui import FormularioProducto
+
+    alta = FormularioProducto()
+    assert alta.foto.editable                         # el supervisor carga fotos
+    alta.nombre.setText(NOMBRE)
+    alta.precio_costo.setValue(1000)
+    alta.precio_venta.setValue(2000)
+    QApplication.clipboard().setImage(QImage(900, 600, QImage.Format_RGB32))
+    alta.foto.pegar()
+    alta.accept()
+
+    with SessionLocal() as db:
+        assert a_imagen(leer(db, alta.producto_id)).width() == 480
+
+    edicion = FormularioProducto(producto_id=alta.producto_id)
+    assert edicion.foto.datos is not None and not edicion.foto.cambiada
+    edicion.foto.quitar()
+    edicion.accept()
+    with SessionLocal() as db:
+        assert leer(db, alta.producto_id) is None
+
+
+def test_si_la_base_falla_el_formulario_queda_abierto_con_lo_escrito(app, limpiar, bodeguero_qa,
+                                                                      monkeypatch):
+    """Antes un error al guardar salía por el excepthook y el formulario se
+    cerraba igual: lo escrito se perdía sin que nadie supiera por qué."""
+    from PySide6.QtGui import QImage
+    from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
+    from sqlalchemy.exc import OperationalError
+
+    from src.ui import FormularioProducto, inventario
+
+    avisos = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: avisos.append(a[1]))
+
+    def caida(*_):
+        raise OperationalError("INSERT", {}, Exception("servidor detenido"))
+
+    monkeypatch.setattr(inventario.fotos, "guardar", caida)
+    alta = FormularioProducto()
+    alta.nombre.setText(NOMBRE)
+    alta.precio_costo.setValue(1000)
+    alta.precio_venta.setValue(2000)
+    QApplication.clipboard().setImage(QImage(50, 50, QImage.Format_RGB32))
+    alta.foto.pegar()
+    alta.accept()
+
+    assert avisos == ["No se pudo guardar el producto"]
+    assert alta.result() != QDialog.Accepted and alta.nombre.text() == NOMBRE
+    with SessionLocal() as db:
+        assert db.scalar(select(Producto).where(Producto.nombre == NOMBRE)) is None
