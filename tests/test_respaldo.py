@@ -65,6 +65,46 @@ def test_se_conservan_los_ultimos_y_se_copia_a_la_nube(tmp_path, monkeypatch):
     assert R.copiar_a_la_nube(ultimo) is None           # carpeta ausente: avisa y sigue
 
 
+def test_la_nube_tambien_conserva_solo_los_ultimos(tmp_path, monkeypatch):
+    """OneDrive acumulaba todos los respaldos sin borrar ninguno. Con fotos en
+    la base cada uno pesa megas, y la cuenta se llenaba en meses."""
+    nube = tmp_path / "onedrive"
+    nube.mkdir()
+    for dia in range(1, 32):
+        (nube / f"lubriexpress-202608{dia:02d}-1200.sql.gz").write_bytes(b"x")
+    (nube / "otra-cosa.txt").write_text("no se toca")
+    nuevo = tmp_path / "lubriexpress-20260901-1200.sql.gz"
+    nuevo.write_bytes(b"y")
+
+    monkeypatch.setenv("RESPALDO_ONEDRIVE", str(nube))
+    R.copiar_a_la_nube(nuevo)
+
+    assert len(R.respaldos_guardados(nube)) == 30
+    assert (nube / nuevo.name).exists() and (nube / "otra-cosa.txt").exists()
+
+
+def test_un_respaldo_bloqueado_no_detiene_la_rotacion(tmp_path, monkeypatch, capsys):
+    """En Windows, OneDrive bloquea el archivo que está subiendo. Borrar ese no
+    puede tumbar el respaldo de hoy, que ya quedó hecho."""
+    for dia in range(1, 6):
+        (tmp_path / f"lubriexpress-2026090{dia}-1200.sql.gz").write_bytes(b"x")
+    bloqueado = "lubriexpress-20260901-1200.sql.gz"
+    borrar = Path.unlink
+
+    def unlink(ruta, *args, **kwargs):
+        if ruta.name == bloqueado:
+            raise PermissionError("en uso por otro proceso")
+        return borrar(ruta, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    borrados = R.rotar(tmp_path, cuantos=2)
+
+    assert [b.name for b in borrados] == [
+        "lubriexpress-20260902-1200.sql.gz", "lubriexpress-20260903-1200.sql.gz",
+    ]
+    assert "no se pudo borrar" in capsys.readouterr().out
+
+
 def test_el_volcado_exige_un_pg_dump_de_la_version_del_servidor(monkeypatch):
     """Un pg_dump más nuevo que el servidor escribe órdenes que este no entiende
     al restaurar (`transaction_timeout` en PostgreSQL 16): el archivo queda

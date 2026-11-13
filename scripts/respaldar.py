@@ -3,7 +3,9 @@
 Genera un volcado comprimido en `respaldos/`, conserva los últimos 30 y, si
 `RESPALDO_ONEDRIVE` apunta a una carpeta, deja ahí una copia: el cliente de
 OneDrive sube solo lo que cae en su carpeta, así que copiar el archivo es todo
-lo que hace falta para el respaldo en la nube.
+lo que hace falta para el respaldo en la nube. Allá también se conservan los
+últimos 30: con las fotos de los productos cada respaldo pesa megas, y
+acumularlos todos llenaba la cuenta en meses.
 
 Uso, en el PC del taller (junto al ejecutable):
 
@@ -133,10 +135,16 @@ def rotar(carpeta: Path | None = None, cuantos: int = CUANTOS_SE_CONSERVAN) -> l
     """Borra los más viejos y devuelve lo que se borró. El nombre lleva la
     fecha, así que ordenar alfabéticamente es ordenar cronológicamente."""
     carpeta = carpeta or carpeta_de_respaldos()
-    sobran = respaldos_guardados(carpeta)[:-cuantos] if cuantos else []
-    for viejo in sobran:
-        viejo.unlink()
-    return sobran
+    borrados = []
+    for viejo in respaldos_guardados(carpeta)[:-cuantos] if cuantos else []:
+        try:
+            viejo.unlink()
+        except PermissionError:
+            # OneDrive bloquea lo que está subiendo: se borra en el próximo.
+            print(f"Aviso: no se pudo borrar {viejo.name}: queda para el próximo respaldo.")
+            continue
+        borrados.append(viejo)
+    return borrados
 
 
 def copiar_a_la_nube(archivo: Path) -> Path | None:
@@ -149,7 +157,9 @@ def copiar_a_la_nube(archivo: Path) -> Path | None:
         print(f"Aviso: RESPALDO_ONEDRIVE apunta a '{carpeta}', que no existe. "
               "El respaldo local sí quedó hecho.")
         return None
-    return Path(shutil.copy2(archivo, carpeta / archivo.name))
+    copia = Path(shutil.copy2(archivo, carpeta / archivo.name))
+    rotar(carpeta)
+    return copia
 
 
 def respaldar(carpeta: Path | None = None) -> Path:
