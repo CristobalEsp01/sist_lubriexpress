@@ -27,9 +27,10 @@ PLAZO_COBRO_DIAS = 30
 def neto_de_orden(orden: Orden) -> int:
     """Lo que la orden vendió sin IVA y con el descuento ya aplicado.
 
-    Se obtiene restando lo cobrado de más, igual que el esquema lo dice para
-    las ventas: total_final = neto + impuesto + ajuste. Así coincide con lo que
-    la orden realmente calculó, sin volver a aplicar el descuento acá.
+    Se obtiene restando lo cobrado de más: total_final = subtotal - descuento
+    + impuesto + ajuste, así que total - impuesto - ajuste es el neto ya
+    descontado. Coincide con lo que la orden realmente calculó, sin volver a
+    aplicar el descuento acá.
     """
     return int(orden.total_final - orden.impuesto - orden.ajuste_redondeo)
 

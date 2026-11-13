@@ -27,10 +27,11 @@ consola de psql abierta.
 | `vehiculos` | Cuelgan de un cliente. Patente única |
 | `ubicaciones` | Dónde está guardado físicamente un producto |
 | `productos` | Inventario. `stock_actual` lo manejan los triggers |
+| `fotos_producto` | La foto de cada producto (una por producto), JPEG de ~480 px en `BYTEA`. Aparte de `productos` para que ninguna consulta del catálogo arrastre la imagen; se borra en cascada con el producto |
 | `servicios` | Mano de obra (cambio de aceite, scanner). Se cobra en una orden; no tiene stock ni Kardex |
 | `ordenes` / `detalle_ordenes` | Órdenes de trabajo del taller. Cada línea del detalle es un producto o un servicio. `estado` dice si el auto sigue adentro |
 | `pagos_orden` | Abonos de una orden. Solo se agrega: lo pagado es la suma, y el estado de la orden sale de ahí |
-| `ventas` / `detalle_ventas` | Ventas de mostrador |
+| `ventas` / `detalle_ventas` | Ventas de mostrador. Desde la 1.3.0 llevan descuento general (porcentaje o monto), como las órdenes, sin convenios |
 | `kardex_movimientos` | Historial de inventario. Solo se agrega, nunca se edita |
 | `movimientos_caja` | Caja chica del día: el efectivo del cajón que no pasa por una venta. Solo se agrega |
 | `cuentas_por_cobrar` / `pagos_cobro` | Facturas por cobrar, casi siempre a organismos de Mercado Público. Las abre el trigger desde una orden con folio, o se ingresan a mano. Los abonos solo se agregan |
@@ -90,7 +91,8 @@ No se pasa `stock_resultante` ni se toca `productos`: el trigger completa ambas 
 | Restricción | Qué impide |
 |---|---|
 | `productos.stock_actual >= 0` | Vender o consumir más de lo que hay. La transacción completa se revierte |
-| `descuento_exclusivo_orden` | Aplicar porcentaje y monto fijo de descuento a la vez |
+| `descuento_exclusivo_orden` / `descuento_exclusivo_venta` | Aplicar porcentaje y monto fijo de descuento a la vez |
+| `descuento_dentro_de_la_venta` | Una venta con un descuento en pesos mayor que su subtotal |
 | `detalle_orden_un_item` | Una línea de orden sin producto ni servicio, o con ambos |
 | `origen_movimiento_valido` | Un movimiento de Kardex que no calce con su origen (una `SALIDA_VENTA` sin venta, o con orden) |
 | `cantidad_movida <> 0` | Movimientos vacíos |
@@ -138,7 +140,13 @@ el historial no depende de la tasa vigente y una factura puede desglosarse sin
 recalcular nada.
 
 - `ordenes`: `total_final = subtotal − descuento + impuesto + ajuste_redondeo`, con `subtotal` neto.
-- `ventas`: `total_final = neto + impuesto + ajuste_redondeo`; el neto se obtiene restando.
+- `ventas`: igual que las órdenes desde la 1.3.0, `total_final = subtotal − descuento + impuesto + ajuste_redondeo`.
+  Las ventas anteriores recibieron como `subtotal` su neto (`total_final − impuesto − ajuste_redondeo`),
+  exacto porque ninguna tenía descuento.
+
+El descuento general se calcula con `aplicar_descuento` de [`src/precios.py`](../src/precios.py),
+que usan las dos pantallas: el porcentaje va de 0 a 100 y el monto se topa al neto, y
+lo topado es lo que se guarda.
 
 `ajuste_redondeo` es la ley de redondeo a la decena (de −5 a +4). Se aplica a
 todo pago, no solo al efectivo: decisión del taller.
