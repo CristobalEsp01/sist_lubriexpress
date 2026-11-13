@@ -692,3 +692,42 @@ def test_el_inventario_muestra_la_foto_si_la_ventana_da_y_el_nombre_se_lee(app, 
     assert inventario.panel_foto.estado == "sin_foto"
     assert inventario.panel_foto.nombre.text() == NOMBRE_INGRESO
     ventana.close()
+
+
+def test_la_ficha_con_foto_no_corta_los_campos_ni_los_botones():
+    """Con la foto al lado, la ficha abría con su ancho de antes (440 px): el
+    nombre se leía a medias y "Pegar imagen" salía cortado. En otro proceso y
+    con el tema aplicado, que es lo que decide los anchos."""
+    import subprocess
+    import sys
+
+    from conftest import RAIZ, exigir_base_de_datos
+
+    exigir_base_de_datos()
+    script = """
+import os
+os.environ["QT_QPA_PLATFORM"] = "offscreen"
+from types import SimpleNamespace
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QApplication
+app = QApplication([])
+from src.ui import tema
+tema.aplicar(app)
+from src.auth import Sesion
+Sesion.iniciar(SimpleNamespace(id=1, nombre="QA", rol="SUPERVISOR"))
+from src.ui import FormularioProducto
+ficha = FormularioProducto()
+ficha.setAttribute(Qt.WA_DontShowOnScreen)
+ficha.show()
+app.processEvents()
+cortados = [w.text() for w in (ficha.foto.boton_pegar, ficha.foto.boton_elegir,
+                                ficha.foto.boton_quitar, ficha.activo)
+            if w.width() < w.sizeHint().width()]
+print(ficha.nombre.width(), len(cortados))
+print(cortados, file=__import__("sys").stderr)
+"""
+    salida = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True,
+                            cwd=RAIZ, timeout=60)
+    ancho_nombre, cortados = map(int, salida.stdout.split()[-2:])
+    assert cortados == 0, salida.stderr
+    assert ancho_nombre >= 280

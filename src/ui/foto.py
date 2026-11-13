@@ -25,7 +25,7 @@ from ..database import SessionLocal
 from ..fotos import FotoInvalida, a_imagen, desde_archivo, leer, preparar
 from ..models import Producto
 from ..precios import con_iva
-from .comunes import barra, clp, layout_de_dialogo
+from .comunes import clp, layout_de_dialogo
 
 LADO_RECUADRO = 200
 FILTRO_ARCHIVOS = "Imágenes (*.jpg *.jpeg *.png *.webp *.bmp *.gif)"
@@ -75,8 +75,9 @@ class RecuadroFoto(QFrame):
         columna = QVBoxLayout()
         columna.setContentsMargins(0, 0, 0, 0)
         columna.addWidget(self.imagen)
-        columna.addLayout(barra(self.boton_pegar, self.boton_elegir))
-        columna.addWidget(self.boton_quitar)
+        # Uno bajo el otro: lado a lado, en los 200 px de la foto, se cortaban.
+        for boton in (self.boton_pegar, self.boton_elegir, self.boton_quitar):
+            columna.addWidget(boton)
         columna.addStretch()
         self.setLayout(columna)
         self._mostrar()

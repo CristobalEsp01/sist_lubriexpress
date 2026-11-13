@@ -115,7 +115,8 @@ class FormularioProducto(QDialog):
         super().__init__(parent)
         self.producto_id = producto_id
         self.setWindowTitle("Nuevo producto" if producto_id is None else "Editar producto")
-        self.setMinimumWidth(440)
+        # Los 440 de los campos, más la foto al lado.
+        self.setMinimumWidth(760)
 
         self.nombre = QLineEdit()
         self.nombre.setPlaceholderText("Ej: Aceite 5W30 Sintético 4L")
