@@ -355,6 +355,15 @@ QLabel[clase="aviso"] {{
     border-radius: 6px;
     padding: 8px 12px;
 }}
+/* El recuadro de la foto de un producto: la imagen o, sin ella, un texto
+   apagado que dice por qué está vacío. */
+QLabel[clase="foto"] {{
+    background: {SUPERFICIE};
+    border: 1px solid {BORDE};
+    border-radius: 8px;
+    color: {TINTA_SUAVE};
+    padding: 6px;
+}}
 QLabel[clase="aviso-vacio"] {{
     background: transparent;
     color: {TINTA_SUAVE};
