@@ -1,7 +1,7 @@
 """Mantenedor de Inventario: listado de productos, alta y edición."""
 from datetime import date
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QHBoxLayout,
@@ -27,13 +27,20 @@ from .comunes import (
     exigir_permiso, hacer_buscable, layout_de_dialogo, layout_de_pantalla, reordenar,
 )
 from .carga_excel import CargaExcelDialog
-from .foto import RecuadroFoto
+from .catalogo import Catalogo
+from .foto import PanelFoto, RecuadroFoto
 from .tema import (
     ALERTA, CANAL_PANEL, ESPACIO_BARRA, ESPACIO_DIALOGO, EXITO, TINTA_SUAVE, fuente_tabular,
 )
 
 COLUMNAS_PRODUCTO = ["Nombre", "Marca", "Categoría", "Ubicación", "Stock", "Mín.", "Costo", "Venta c/IVA"]
 COLUMNAS_KARDEX = ["Fecha", "Tipo", "Cantidad", "Saldo", "Costo unit.", "Usuario", "Origen"]
+# Tope de Marca, Categoría y Ubicación: ajustadas a su texto más largo, a 960 px
+# dejaban el nombre en 39 px. Lo mismo que hace el catálogo de ventas.
+TOPES_PRODUCTO = {1: 160, 2: 130, 3: 110}
+# Ancho de la pantalla desde el que la foto cabe al lado de la tabla sin
+# apretar el nombre. El portátil del taller, maximizado, tiene 1366.
+ANCHO_PARA_FOTO = 1240
 COLUMNAS_INGRESO = ["Producto", "Stock Actual", "Ingreso", "Nuevo Stock", "Costo unit.",
                     "Venta neto", "Ubicación"]
 MAX_CLP = 99_999_999
@@ -288,12 +295,24 @@ class IngresoMercaderiaDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Ingreso de Mercadería")
-        self.resize(1050, 440)
+        self.resize(1050, 640)
         self.setModal(True)
 
         self.lista_ingreso = []
+        self._elegido: dict | None = None
 
-        self.combo_productos = hacer_buscable(QComboBox())
+        # El catálogo y no un desplegable: el desplegable mostraba solo el
+        # nombre, y "F. Petroleo P 927x" (Mann) y "Filtro de Petroleo P 927x"
+        # (STP) se confundían. Acá se ven marca, stock y repisa, y la foto.
+        self.catalogo = Catalogo(self)
+        self.catalogo.tabla.itemSelectionChanged.connect(self._al_elegir)
+        self.catalogo.elegido.connect(self._al_confirmar)
+        self.catalogo.tabla.doubleClicked.connect(self._ir_a_cantidad)
+        # Enter en el buscador elige y pasa a la cantidad. Sin el filtro, el
+        # Enter seguía hasta "Añadir a la lista" (el botón por defecto) y
+        # añadía con cantidad 1 antes de que nadie la escribiera.
+        self.catalogo.busqueda.installEventFilter(self)
+        self.panel_foto = PanelFoto(ancho=180)
         self.spin_cantidad = QSpinBox()
         self.spin_cantidad.setRange(1, 10000)
 
@@ -321,28 +340,31 @@ class IngresoMercaderiaDialog(QDialog):
         # anotar dónde quedó. Casi todo lo migrado llegó sin ubicación.
         self.combo_ubicacion = hacer_buscable(QComboBox(), libre=True)
         self.combo_ubicacion.lineEdit().setPlaceholderText("Ej: Pasillo 1 - Repisa B")
-        self.combo_productos.currentIndexChanged.connect(self._proponer_valores)
 
         self.boton_agregar = QPushButton("Añadir a la lista")
         self.boton_agregar.setEnabled(False)
         self.boton_agregar.clicked.connect(self.agregar_a_lista)
-        self.combo_productos.currentIndexChanged.connect(
-            lambda indice: self.boton_agregar.setEnabled(indice >= 0)
-        )
-        # Enter en cualquier campo añade a la lista; confirmar el ingreso —que
-        # mueve stock— exige un click deliberado.
+        # Enter en la cantidad o los precios añade a la lista; confirmar el
+        # ingreso —que mueve stock— exige un click deliberado.
         self.boton_agregar.setDefault(True)
 
-        # Dos filas: en una sola, a este ancho, el producto quedaba en "Bus…".
-        # "Añadir" va al final porque es lo último que se hace.
+        # Arriba se elige: catálogo y foto. Abajo, cuánto llegó y a qué precio,
+        # y "Añadir" al final porque es lo último que se hace.
+        columna_catalogo = QVBoxLayout()
+        columna_catalogo.addLayout(barra(self.catalogo.busqueda, self.catalogo.categoria))
+        columna_catalogo.addWidget(self.catalogo.tabla)
+        columna_catalogo.addWidget(self.catalogo.resumen)
+        eleccion = QHBoxLayout()
+        eleccion.setSpacing(ESPACIO_DIALOGO)
+        eleccion.addLayout(columna_catalogo, 1)
+        eleccion.addWidget(self.panel_foto, 0, Qt.AlignTop)
         fila_producto = barra(
-            QLabel("Producto"), self.combo_productos,
-            QLabel("Cantidad"), self.spin_cantidad, estira=1,
+            QLabel("Cantidad"), self.spin_cantidad,
+            QLabel("Costo unit."), self.spin_costo,
+            QLabel("Venta neto"), self.spin_venta, self.venta_con_iva, estira=6,
         )
         fila_precios = barra(
-            QLabel("Costo unit."), self.spin_costo,
-            QLabel("Venta neto"), self.spin_venta, self.venta_con_iva,
-            QLabel("Ubicación"), self.combo_ubicacion, self.boton_agregar, estira=6,
+            QLabel("Ubicación"), self.combo_ubicacion, self.boton_agregar, estira=1,
         )
 
         self.tabla = con_aviso_vacio(
@@ -376,51 +398,73 @@ class IngresoMercaderiaDialog(QDialog):
         barra_inferior.addWidget(self.boton_confirmar)
 
         layout = layout_de_dialogo(self)
+        layout.addLayout(eleccion, 3)
         layout.addLayout(fila_producto)
         layout.addLayout(fila_precios)
-        layout.addWidget(self.tabla)
+        layout.addWidget(self.tabla, 2)
         layout.addLayout(barra_inferior)
 
         self._cargar_productos()
-        self.combo_productos.setFocus()
+        self.catalogo.busqueda.setFocus()
 
     def _cargar_productos(self) -> None:
-        self.combo_productos.clear()
+        # Nace sin nada elegido. Abrir con un producto ya elegido convierte un
+        # "Añadir" sin mirar en stock sumado al producto equivocado, y eso se
+        # descubre recién cuando no cuadra el inventario.
+        self.catalogo.cargar()
         with SessionLocal() as db:
-            productos = db.scalars(
-                select(Producto).where(Producto.activo.is_(True)).order_by(Producto.nombre)
-                # Sin esto, leer la ubicación de 2.372 productos son 2.372 consultas.
-                .options(selectinload(Producto.ubicacion))
-            ).all()
-            for p in productos:
-                # El nombre viaja en los datos, no se lee de currentText(): con
-                # el combo editable ese texto puede ser un filtro a medio
-                # escribir y quedaría guardado como nombre del producto.
-                self.combo_productos.addItem(
-                    p.nombre,
-                    {"id": p.id, "nombre": p.nombre, "stock": p.stock_actual,
-                     "costo": int(p.precio_costo), "venta": int(p.precio_venta),
-                     "ubicacion": p.ubicacion.descripcion if p.ubicacion else ""},
-                )
             self.combo_ubicacion.addItems([""] + list(db.scalars(
                 select(Ubicacion.descripcion).distinct().order_by(Ubicacion.descripcion)
             )))
-        # Nace vacío, con su texto de fondo. Abrir con el primer producto del
-        # catálogo ya elegido convierte un "Añadir" sin mirar en stock sumado al
-        # producto equivocado, y eso se descubre recién cuando no cuadra el
-        # inventario. Ventas y órdenes ya abren así.
-        self.combo_productos.setCurrentIndex(-1)
-        self.combo_productos.lineEdit().setPlaceholderText("Busca por nombre o marca")
+
+    def _al_elegir(self) -> None:
+        """Lo elegido en el catálogo, leído de la base: el costo no viaja en
+        la tabla, y el nombre no se toma del buscador, que puede tener un
+        filtro a medio escribir."""
+        seleccionado = self.catalogo.seleccionado()
+        self._elegido = None
+        if seleccionado is not None:
+            with SessionLocal() as db:
+                p = db.get(Producto, seleccionado["producto_id"])
+                self._elegido = {
+                    "id": p.id, "nombre": p.nombre, "stock": p.stock_actual,
+                    "costo": int(p.precio_costo), "venta": int(p.precio_venta),
+                    "ubicacion": p.ubicacion.descripcion if p.ubicacion else "",
+                }
+        self.boton_agregar.setEnabled(self._elegido is not None)
+        self.panel_foto.mostrar(self._elegido["id"] if self._elegido else None)
+        self._proponer_valores()
+
+    def _al_confirmar(self, item: dict) -> None:
+        """Enter o doble clic: si la búsqueda dejó un solo producto sin
+        seleccionarlo, se selecciona ese."""
+        for fila in self.catalogo.visibles():
+            if self.catalogo.tabla.item(fila, 0).data(Qt.UserRole) == item:
+                self.catalogo.tabla.selectRow(fila)
+                break
+
+    def _ir_a_cantidad(self, *_) -> None:
+        if self._elegido is not None:
+            self.spin_cantidad.setFocus()
+            self.spin_cantidad.selectAll()
+
+    def eventFilter(self, objeto, evento) -> bool:
+        if (objeto is self.catalogo.busqueda and evento.type() == QEvent.KeyPress
+                and evento.key() in (Qt.Key_Return, Qt.Key_Enter)):
+            self.catalogo.elegir()
+            self._ir_a_cantidad()
+            return True
+        return super().eventFilter(objeto, evento)
 
     def _proponer_valores(self) -> None:
         """Lo que el producto tiene hoy: casi siempre no cambió."""
-        datos = self.combo_productos.currentData() or {}
+        datos = self._elegido or {}
         self.spin_costo.setValue(datos.get("costo", 0))
         self.spin_venta.setValue(datos.get("venta", 0))
         self.combo_ubicacion.setCurrentText(datos.get("ubicacion", ""))
 
     def agregar_a_lista(self) -> None:
-        datos = self.combo_productos.currentData()
+        datos = self._elegido
         if not datos:
             return
         if self.spin_venta.value() < self.spin_costo.value() and QMessageBox.question(
@@ -784,12 +828,22 @@ class InventarioWidget(QWidget):
             self.boton_exportar, self.boton_minimos, estira=6,
         )
 
+        # La foto del producto elegido, al lado de la tabla cuando la ventana
+        # da (ver resizeEvent).
+        self.panel_foto = PanelFoto()
+        self.panel_foto.hide()
+        self.tabla.itemSelectionChanged.connect(self._mostrar_foto)
+        tabla_y_foto = QHBoxLayout()
+        tabla_y_foto.setSpacing(CANAL_PANEL)
+        tabla_y_foto.addWidget(self.tabla, 1)
+        tabla_y_foto.addWidget(self.panel_foto, 0, Qt.AlignTop)
+
         arriba = QWidget()
         layout_arriba = QVBoxLayout(arriba)
         layout_arriba.setContentsMargins(0, 0, 0, CANAL_PANEL)
         layout_arriba.addLayout(barra_superior)
         layout_arriba.addLayout(barra_bodega)
-        layout_arriba.addWidget(self.tabla)
+        layout_arriba.addLayout(tabla_y_foto)
 
         abajo = QWidget()
         layout_abajo = QVBoxLayout(abajo)
@@ -875,6 +929,8 @@ class InventarioWidget(QWidget):
                 celda.setForeground(QColor(ALERTA))
                 celda.setFont(fuente_tabular(negrita=True))
         reordenar(self.tabla)
+        for columna, tope in TOPES_PRODUCTO.items():
+            self.tabla.setColumnWidth(columna, min(self.tabla.columnWidth(columna), tope))
 
         if self.busqueda.text().strip():
             self.tabla.aviso.setText("Ningún producto coincide con la búsqueda.")
@@ -892,6 +948,18 @@ class InventarioWidget(QWidget):
             aviso += f" — {clp(valorizado)} a precio costo"
         self.resumen.setText(f"{len(filas)} producto(s){aviso}")
         self.recargar_kardex()
+
+    def resizeEvent(self, evento) -> None:
+        super().resizeEvent(evento)
+        cabe = self.width() >= ANCHO_PARA_FOTO
+        if cabe == self.panel_foto.isHidden():
+            self.panel_foto.setVisible(cabe)
+            self._mostrar_foto()
+
+    def _mostrar_foto(self) -> None:
+        """Escondido, el panel no consulta la base."""
+        if not self.panel_foto.isHidden():
+            self.panel_foto.mostrar(self._id_seleccionado())
 
     def recargar_kardex(self) -> None:
         producto_id = self._id_seleccionado()

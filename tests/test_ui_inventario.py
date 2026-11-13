@@ -31,6 +31,14 @@ def limpiar():
         db.commit()
 
 
+def elegir(dialogo, nombre: str) -> None:
+    """Lo que hace quien recibe la mercadería: escribe el nombre y elige la fila."""
+    catalogo = dialogo.catalogo
+    catalogo.busqueda.setText(nombre)
+    fila = next(f for f in catalogo.visibles() if catalogo.tabla.item(f, 0).text() == nombre)
+    catalogo.tabla.selectRow(fila)
+
+
 @pytest.fixture(autouse=True)
 def sin_pregunta_de_factura(monkeypatch):
     """Tras un ingreso el sistema pregunta por la factura del proveedor; las
@@ -269,15 +277,15 @@ def test_el_ingreso_de_mercaderia_suma_el_stock_una_sola_vez(app, bodeguero_qa, 
     # El combo abría con el primer producto del catálogo ya elegido, así que
     # "Añadir a la lista" sin mirar le sumaba stock al producto equivocado, y
     # eso se descubre recién cuando no cuadra el inventario.
-    assert dialogo.combo_productos.count() > 0  # si no, lo de abajo no prueba nada
-    assert dialogo.combo_productos.currentIndex() == -1
+    assert dialogo.catalogo.tabla.rowCount() > 0  # si no, lo de abajo no prueba nada
+    assert dialogo._elegido is None
     assert not dialogo.boton_agregar.isEnabled()
 
-    dialogo.combo_productos.setCurrentIndex(dialogo.combo_productos.findText(NOMBRE_INGRESO))
+    elegir(dialogo, NOMBRE_INGRESO)
     assert dialogo.boton_agregar.isEnabled()
-    # El combo es editable para poder filtrar: si el nombre saliera de
-    # currentText(), este filtro a medio escribir quedaría guardado como nombre.
-    dialogo.combo_productos.lineEdit().setText("qa fil")
+    # El nombre viaja con lo elegido, no se lee del buscador: lo que queda
+    # escrito ahí puede ser un filtro a medio escribir.
+    dialogo.catalogo.busqueda.setText("qa fil")
     dialogo.spin_cantidad.setValue(6)
     dialogo.agregar_a_lista()
     assert dialogo.lista_ingreso[0]["nombre"] == NOMBRE_INGRESO
@@ -474,7 +482,7 @@ def test_el_ingreso_registra_el_costo_de_esa_compra(app, bodeguero_qa, monkeypat
         producto_id = producto.id
 
     dialogo = IngresoMercaderiaDialog()
-    dialogo.combo_productos.setCurrentIndex(dialogo.combo_productos.findText(NOMBRE_INGRESO))
+    elegir(dialogo, NOMBRE_INGRESO)
     # Elegir el producto propone su costo actual: la mayoría de las veces no
     # cambió, y tener que retipearlo invita a dejarlo en cero.
     assert dialogo.spin_costo.value() == 1000
@@ -518,7 +526,7 @@ def test_el_ingreso_fija_el_precio_de_venta_y_la_ubicacion(app, bodeguero_qa, mo
         filtro_id, aceite_id = filtro.id, aceite.id
 
     dialogo = IngresoMercaderiaDialog()
-    dialogo.combo_productos.setCurrentIndex(dialogo.combo_productos.findText(filtro.nombre))
+    elegir(dialogo, filtro.nombre)
     # Propone lo que el producto tiene hoy, igual que el costo.
     assert (dialogo.spin_venta.value(), dialogo.venta_con_iva.text()) == (2000, "con IVA $2.380")
     assert dialogo.combo_ubicacion.currentText() == ""
@@ -531,7 +539,7 @@ def test_el_ingreso_fija_el_precio_de_venta_y_la_ubicacion(app, bodeguero_qa, mo
     assert dialogo.tabla.item(0, 6).text() == UBICACION_INGRESO
 
     # Vender bajo el costo se pregunta, igual que en el formulario del producto.
-    dialogo.combo_productos.setCurrentIndex(dialogo.combo_productos.findText(aceite.nombre))
+    elegir(dialogo, aceite.nombre)
     dialogo.spin_costo.setValue(6000)
     dialogo.combo_ubicacion.setCurrentText(UBICACION_INGRESO)   # la misma repisa, nueva
     monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.No)
@@ -610,3 +618,77 @@ def test_si_la_base_falla_el_formulario_queda_abierto_con_lo_escrito(app, limpia
     assert alta.result() != QDialog.Accepted and alta.nombre.text() == NOMBRE
     with SessionLocal() as db:
         assert db.scalar(select(Producto).where(Producto.nombre == NOMBRE)) is None
+
+
+def test_elegir_un_producto_en_el_ingreso_muestra_su_foto_y_propone_sus_valores(
+        app, bodeguero_qa):
+    """El desplegable mostraba solo el nombre, y "F. Petroleo P 927x" y
+    "Filtro de Petroleo P 927x" se confundían: el ingreso le sumaba stock al
+    que no era. Ahora se elige en el catálogo, con marca y repisa, y la foto."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QImage
+    from PySide6.QtTest import QTest
+
+    from src.fotos import guardar, preparar
+    from src.ui.inventario import IngresoMercaderiaDialog
+
+    with SessionLocal() as db:
+        repisa = Ubicacion(descripcion=UBICACION_INGRESO)
+        producto = Producto(nombre=NOMBRE_INGRESO, marca="Mann", precio_costo=4214,
+                            precio_venta=15882, stock_actual=3, stock_minimo=1, ubicacion=repisa)
+        db.add(producto)
+        db.flush()
+        guardar(db, producto.id, preparar(QImage(300, 300, QImage.Format_RGB32)))
+        db.commit()
+        producto_id = producto.id
+
+    dialogo = IngresoMercaderiaDialog()
+    assert dialogo.panel_foto.estado == "vacio"
+    # Enter en el buscador elige y lleva a la cantidad; no añade a la lista
+    # con cantidad 1 antes de que alguien la escriba.
+    dialogo.catalogo.busqueda.setText(NOMBRE_INGRESO)
+    QTest.keyClick(dialogo.catalogo.busqueda, Qt.Key_Return)
+    assert dialogo._elegido["id"] == producto_id
+    assert dialogo.lista_ingreso == []
+    assert dialogo.focusWidget() is dialogo.spin_cantidad
+
+    assert dialogo.panel_foto.estado == "con_foto"
+    assert (dialogo.spin_costo.value(), dialogo.spin_venta.value()) == (4214, 15882)
+    assert dialogo.combo_ubicacion.currentText() == UBICACION_INGRESO
+
+
+def test_el_inventario_muestra_la_foto_si_la_ventana_da_y_el_nombre_se_lee(app, bodeguero_qa):
+    """A 960 px el nombre del inventario se leía en 39 px, con Marca a 280:
+    las columnas de texto tienen tope y la foto aparece solo cuando cabe
+    (el portátil del taller, maximizado, tiene 1366)."""
+    from PySide6.QtCore import Qt
+
+    from src.ui import VentanaPrincipal
+
+    with SessionLocal() as db:
+        db.add(Producto(nombre=NOMBRE_INGRESO, marca="Mann", precio_costo=1, precio_venta=2,
+                        stock_actual=1))
+        db.commit()
+
+    ventana = VentanaPrincipal()
+    # Sin pasar por la plataforma: la offscreen achica las ventanas según lo
+    # que se mostró antes, y el ancho dejaba de ser el pedido.
+    ventana.setAttribute(Qt.WA_DontShowOnScreen)
+    ventana.resize(ventana.minimumSize())
+    ventana.show()
+    ventana.pestanias.setCurrentWidget(ventana.inventario)
+    app.processEvents()
+    inventario = ventana.inventario
+    assert inventario.panel_foto.isHidden()
+    assert inventario.tabla.columnWidth(0) >= 140
+
+    ventana.resize(1366, 740)
+    app.processEvents()
+    assert not inventario.panel_foto.isHidden()
+    assert inventario.tabla.columnWidth(0) >= 200
+
+    inventario.busqueda.setText(NOMBRE_INGRESO)
+    inventario.tabla.selectRow(0)
+    assert inventario.panel_foto.estado == "sin_foto"
+    assert inventario.panel_foto.nombre.text() == NOMBRE_INGRESO
+    ventana.close()
