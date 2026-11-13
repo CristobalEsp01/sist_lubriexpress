@@ -318,23 +318,47 @@ def test_quitar_productos_topa_el_monto_al_nuevo_neto(app, usuario_qa, producto_
     assert widget.total.text() == "$0"
 
 
-def test_el_descuento_cabe_en_la_ventana_minima(app, usuario_qa):
+def test_el_descuento_cabe_en_la_ventana_minima(usuario_qa):
     """Con el selector de descuento, el carrito tiene que seguir mostrando
-    filas y el total entero a 960×640."""
-    from src.ui import VentanaPrincipal
+    tres filas y el total entero a 960×640, sin quitarle ancho al catálogo. En otro proceso y con el tema
+    aplicado, que es lo que decide las alturas: sin él la prueba medía 3 filas
+    donde la pantalla real mostraba 1,8."""
+    import subprocess
+    import sys
 
-    ventana = VentanaPrincipal()
-    ventana.resize(ventana.minimumSize())
-    ventana.show()
-    ventana.pestanias.setCurrentWidget(ventana.ventas)
-    punto = ventana.ventas.punto_venta
-    app.processEvents()
+    from conftest import RAIZ
 
-    cifra = punto.totales.total
-    assert cifra.height() >= cifra.sizeHint().height()
-    tabla = punto.tabla_carrito
-    assert tabla.viewport().height() >= 3 * tabla.verticalHeader().defaultSectionSize()
-    ventana.close()
+    script = f"""
+import os
+os.environ["QT_QPA_PLATFORM"] = "offscreen"
+from types import SimpleNamespace
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QApplication
+app = QApplication([])
+from src.ui import tema
+tema.aplicar(app)
+from src.auth import Sesion
+Sesion.iniciar(SimpleNamespace(id={usuario_qa}, nombre="QA", rol="USUARIO_NORMAL"))
+from src.ui import VentanaPrincipal
+v = VentanaPrincipal()
+v.setAttribute(Qt.WA_DontShowOnScreen)
+v.resize(960, 640)
+v.show()
+v.pestanias.setCurrentWidget(v.ventas)
+app.processEvents()
+p = v.ventas.punto_venta
+t, total = p.tabla_carrito, p.totales.total
+print(t.viewport().height() / t.verticalHeader().defaultSectionSize(),
+      total.height() - total.sizeHint().height(), p.tabla_catalogo.columnWidth(0))
+"""
+    salida = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True,
+                            cwd=RAIZ, timeout=60)
+    filas, sobra_total, nombre = map(float, salida.stdout.split()[-3:])
+    assert filas >= 3, salida.stderr
+    assert sobra_total >= 0
+    # Y el catálogo de la izquierda no paga el espacio: en la 1.2.0 el nombre
+    # tenía 44 px; el combo de cliente, ajustado al nombre más largo, lo bajaba.
+    assert nombre >= 60
 
 
 def test_ver_foto_solo_se_enciende_con_un_producto_con_foto(app, usuario_qa, producto_qa,

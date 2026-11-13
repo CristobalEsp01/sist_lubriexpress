@@ -10,7 +10,7 @@ import re
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QComboBox, QDialog, QDialogButtonBox, QHBoxLayout, QInputDialog, QLabel,
+    QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QInputDialog, QLabel,
     QLineEdit, QMessageBox, QPushButton, QSplitter, QTabWidget, QTableWidgetItem,
     QVBoxLayout, QWidget,
 )
@@ -105,6 +105,10 @@ class PuntoVentaWidget(QWidget):
 
         self.cliente = hacer_buscable(QComboBox())
         self.cliente.lineEdit().setPlaceholderText("Sin cliente — busca por RUT o nombre")
+        # Ajustado al cliente de nombre más largo pedía 434 px, y ese mínimo se
+        # lo quitaba al catálogo de la izquierda a 960 px.
+        self.cliente.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.cliente.setMinimumContentsLength(18)
         self._cargar_clientes()
 
         self.boleta = QLineEdit(placeholderText="Ej: B-1043")
@@ -148,16 +152,15 @@ class PuntoVentaWidget(QWidget):
         layout_carrito.setSpacing(ESPACIO_PANTALLA)
         layout_carrito.addLayout(barra_carrito)
         layout_carrito.addWidget(self.tabla_carrito, 1)
-        layout_carrito.addWidget(QLabel("Cliente (opcional)"))
-        layout_carrito.addWidget(self.cliente)
-        layout_carrito.addWidget(QLabel("N.º de boleta *"))
-        layout_carrito.addWidget(self.boleta)
-        layout_carrito.addWidget(QLabel("Medio de pago *"))
-        layout_carrito.addWidget(self.combo_medio_pago)
-        # Rótulo y campos en una sola fila: a 640 de alto, cada fila que se
-        # suma se la quita al carrito.
-        layout_carrito.addLayout(barra(QLabel("Descuento"), self.tipo_descuento,
-                                       self.valor_descuento, estira=2))
+        # Rótulo a la izquierda y no encima: con el descuento, los rótulos
+        # encima dejaban el carrito en 1,8 filas a 960×640.
+        datos_cobro = QFormLayout()
+        datos_cobro.setSpacing(ESPACIO_PANTALLA)
+        datos_cobro.addRow("Cliente", self.cliente)
+        datos_cobro.addRow("N.º de boleta *", self.boleta)
+        datos_cobro.addRow("Medio de pago *", self.combo_medio_pago)
+        datos_cobro.addRow("Descuento", barra(self.tipo_descuento, self.valor_descuento, estira=1))
+        layout_carrito.addLayout(datos_cobro)
         layout_carrito.addWidget(self.aviso_descuento)
         layout_carrito.addWidget(marco_total)
         layout_carrito.addLayout(barra(self.boton_vaciar, self.boton_cobrar, estira=1))
